@@ -61,7 +61,7 @@ if [[ ! -f $NIMBLE_JIRA_TICKET_FILE ]]; then
 fi
 
 case "$command" in 
-	jira)
+	jira|j)
 		if [[ -z "$argument" ]]; then
 			jira_ticket=$(get_jira)
 			echo "$jira_ticket"
@@ -70,7 +70,7 @@ case "$command" in
 
 		set_jira "$argument"
 		;;
-	commit)
+	commit|c)
 		if [[ -z "$argument" ]]; then
 			echo 'Please provide commit message'
 			exit 1
