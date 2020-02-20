@@ -1,0 +1,86 @@
+#!/bin/sh
+
+set -e
+
+NIMBLE_JIRA_TICKET_FILE=$HOME/.nimble_jira_ticket
+
+help() {
+	echo "
+Nimble git utility
+Usage: nimble [command]
+
+Commands:
+	jira	[<jira-ticket>] 	- Add or get jira ticket
+	commit 	[commit-message] 	- Commit with ticket number
+	* 				- Help
+"
+	exit 1
+}
+
+normalize_current_branch() {
+	branch=$(git rev-parse --abbrev-ref HEAD)
+	normal=$(echo $branch | tr '/' '_' | tr '-' '_')
+	echo "${normal}_jira"
+}
+
+remove_if_present() {
+	# For macOS
+	# https://stackoverflow.com/a/5694430
+	sed -i '' "/$1/d" $NIMBLE_JIRA_TICKET_FILE 
+}
+	
+get_jira() {
+	branch=$(normalize_current_branch)
+	jira_ticket=$(sed -n "s/^$branch=//p" $NIMBLE_JIRA_TICKET_FILE)
+	if [[ -z "$jira_ticket" ]]; then
+		echo 'No jira ticket for current branch'
+		exit 1
+	fi
+
+	echo "$jira_ticket"
+}
+
+set_jira() {
+	branch=$(normalize_current_branch)
+	remove_if_present "$branch"
+	echo "$branch=$1" >> $NIMBLE_JIRA_TICKET_FILE
+	echo "Jira ticket set successfully for current branch."
+}
+
+ncommit() {
+	jira_ticket=$(get_jira)
+	git commit -m "[$jira_ticket] $1"
+}
+
+command="$1"
+argument="$2"
+
+# Create jira ticket file if not present
+if [[ ! -f $NIMBLE_JIRA_TICKET_FILE ]]; then
+	touch "$NIMBLE_JIRA_TICKET_FILE"
+fi
+
+case "$command" in 
+	jira|j)
+		if [[ -z "$argument" ]]; then
+			jira_ticket=$(get_jira)
+			echo "$jira_ticket"
+			exit 0
+		fi
+
+		set_jira "$argument"
+		;;
+	commit|c)
+		if [[ -z "$argument" ]]; then
+			echo 'Please provide commit message'
+			exit 1
+		fi
+
+		ncommit "$argument"
+		exit 0
+		;;
+	*) 
+		help
+		;;
+esac
+
