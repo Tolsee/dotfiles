@@ -1,0 +1,14 @@
+#!/bin/bash
+
+nvim_config_dir=$HOME/.config/nvim
+nvim_old_config_dir=$HOME/.config/nvim-old
+
+if [[ -L "$nvim_config_dir" ]]
+then
+	rm $nvim_config_dir
+elif [[ -d "$nvim_config_dir" ]] 
+then
+	mv $nvim_config_dir $nvim_old_config_dir
+fi
+
+ln -s $PWD/nvim/.config/nvim $nvim_config_dir
