@@ -14,7 +14,6 @@ vim.opt.wrap = false
 
 vim.opt.swapfile = false
 vim.opt.backup = false
-vim.opt.undofile = true
 
 vim.opt.termguicolors = true
 
@@ -24,4 +23,6 @@ vim.opt.scrolloff = 8
 vim.opt.cmdheight = 1
 vim.opt.colorcolumn = "80"
 vim.g.mapleader = " "
+
+vim.opt.encoding = 'utf8'
 

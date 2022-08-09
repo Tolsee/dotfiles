@@ -17,6 +17,17 @@ return require("packer").startup(function()
     run = ":TSUpdate"
   })
   use("nvim-treesitter/nvim-treesitter-context")
+
+  -- File explorer/Fuzzy search
+  use {
+    'kyazdani42/nvim-tree.lua',
+    requires = {
+        'kyazdani42/nvim-web-devicons', -- optional, for file icons
+    } 
+  }
+  use("nvim-lua/plenary.nvim")
+  use("nvim-lua/popup.nvim")
+  use("nvim-telescope/telescope.nvim")
 end)
 
 
