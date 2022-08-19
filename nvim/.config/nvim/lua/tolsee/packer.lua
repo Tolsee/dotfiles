@@ -1,10 +1,18 @@
 return require("packer").startup(function()
-  use('neovim/nvim-lspconfig')
-  use('hrsh7th/cmp-nvim-lsp')
-  use('hrsh7th/cmp-buffer')
-  use('hrsh7th/nvim-cmp')
+  -- LSP and completion
+  use("neovim/nvim-lspconfig")
+  use("hrsh7th/cmp-nvim-lsp")
+  use("hrsh7th/cmp-buffer")
+  use("hrsh7th/nvim-cmp")
+  use("tzachar/cmp-tabnine", { run = "./install.sh" })
+  use("onsails/lspkind-nvim")
+  use("nvim-lua/lsp_extensions.nvim")
+  use("glepnir/lspsaga.nvim")
+  use("simrat39/symbols-outline.nvim")
+  use("L3MON4D3/LuaSnip")
+  use("saadparwaiz1/cmp_luasnip")
 
-  -- FZF 
+  -- FZF
   -- TODO: Look if we can remove this
   use { 'junegunn/fzf', run = function() vim.fn['fzf#install']() end }
   use('junegunn/fzf.vim')
@@ -12,7 +20,7 @@ return require("packer").startup(function()
   -- UI
   use("gruvbox-community/gruvbox")
   use("folke/tokyonight.nvim")
-  
+
   use("nvim-treesitter/nvim-treesitter", {
     run = ":TSUpdate"
   })
@@ -28,6 +36,10 @@ return require("packer").startup(function()
   use("nvim-lua/plenary.nvim")
   use("nvim-lua/popup.nvim")
   use("nvim-telescope/telescope.nvim")
+
+  -- Formatting and lint
+  use("rainerborene/vim-reek")
+  use("sbdchd/neoformat")
 end)
 
 

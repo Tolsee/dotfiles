@@ -16,6 +16,10 @@ require("telescope").setup({
 				["<C-q>"] = actions.send_to_qflist,
 			},
 		},
+
+        layout_strategy = 'bottom_pane',
+        layout_config = { height = 0.8 },
+        theme = "ivy"
 	},
 })
 

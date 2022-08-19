@@ -1,23 +1,20 @@
+local themes = require("telescope.themes")
 local Remap = require("tolsee.keymap")
 local nnoremap = Remap.nnoremap
 
-nnoremap("<C-p>", ":Telescope")
-nnoremap("<leader>ps", function()
-    require('telescope.builtin').grep_string({ search = vim.fn.input("Grep For > ")})
-end)
-nnoremap("<C-p>", function()
-    require('telescope.builtin').git_files()
-end)
-nnoremap("<Leader>pf", function()
-    require('telescope.builtin').find_files()
+nnoremap("<leader>fs", function()
+    require('telescope.builtin').live_grep(themes.get_ivy())
 end)
 
-nnoremap("<leader>pw", function()
-    require('telescope.builtin').grep_string { search = vim.fn.expand("<cword>") }
+nnoremap("<leader>ff", function()
+    require('telescope.builtin').find_files(themes.get_ivy())
 end)
-nnoremap("<leader>pb", function()
-    require('telescope.builtin').buffers()
+
+nnoremap("<leader>fg", function()
+    require('telescope.builtin').git_files(themes.get_ivy())
 end)
-nnoremap("<leader>vh", function()
-    require('telescope.builtin').help_tags()
+
+nnoremap("<leader>fb", function()
+    require('telescope.builtin').buffers(themes.get_ivy())
 end)
+
