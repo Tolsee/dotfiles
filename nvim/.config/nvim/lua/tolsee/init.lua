@@ -3,6 +3,8 @@ require("tolsee.packer")
 require("tolsee.web_dev_icons")
 require("tolsee.nvim_tree")
 require("tolsee.telescope")
+require("tolsee.reek")
+require("tolsee.neotest")
 
 vim.g.netrw_browse_split = 0
 vim.g.netrw_banner = 0

@@ -1,4 +1,6 @@
 return require("packer").startup(function()
+  use 'wbthomason/packer.nvim'
+
   -- LSP and completion
   use("neovim/nvim-lspconfig")
   use("hrsh7th/cmp-nvim-lsp")
@@ -39,7 +41,20 @@ return require("packer").startup(function()
 
   -- Formatting and lint
   use("rainerborene/vim-reek")
-  use("sbdchd/neoformat")
+  use({
+    "jose-elias-alvarez/null-ls.nvim",
+    requires = { "nvim-lua/plenary.nvim" },
+  })
+  use({
+    "nvim-neotest/neotest",
+    requires = {
+        "nvim-lua/plenary.nvim",
+        "nvim-treesitter/nvim-treesitter",
+        "antoinemadec/FixCursorHold.nvim",
+        "olimorris/neotest-rspec",
+    }
+  })
+  use("ThePrimeagen/vim-be-good")
 end)
 
 

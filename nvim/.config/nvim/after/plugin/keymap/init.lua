@@ -8,3 +8,6 @@ local nmap = Remap.nmap
 nnoremap("<leader>y", "\"+y")
 vnoremap("<leader>y", "\"+y")
 nmap("<leader>Y", "\"+Y")
+
+nnoremap("<leader>for", ":!rubocop -A % <Enter>")
+nnoremap("<leader>rt", ":!rspec % <Enter>")
