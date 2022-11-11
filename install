@@ -1,7 +1,9 @@
 #!/bin/bash
 
 nvim_config_dir=$HOME/.config/nvim
+alacritty_config_dir=$HOME/.config/alacritty
 nvim_old_config_dir=$HOME/.config/nvim-old
+alacritty_old_config_dir=$HOME/.config/alacritty-old
 
 if [[ -L "$nvim_config_dir" ]]
 then
@@ -11,4 +13,13 @@ then
 	mv $nvim_config_dir $nvim_old_config_dir
 fi
 
+if [[ -L "$alacritty_config_dir" ]]
+then
+	rm $alacritty_config_dir
+elif [[ -d "$alacritty_config_dir" ]] 
+then
+	mv $alacritty_config_dir $alacritty_old_config_dir
+fi
+
 ln -s $PWD/nvim/.config/nvim $nvim_config_dir
+ln -s $PWD/alacritty/.config/alacritty $alacritty_config_dir
