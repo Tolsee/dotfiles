@@ -8,7 +8,7 @@ eval "$(rbenv init -)"
 export PATH="$PATH:/Users/tolsee/dev/bastion-cli"
 
 # Add zplug
-export ZPLUG_HOME=/usr/local/opt/zplug
+export ZPLUG_HOME=/opt/homebrew/opt/zplug
 source $ZPLUG_HOME/init.zsh
 
 zplug "mafredri/zsh-async"
@@ -26,9 +26,6 @@ colors
 
 # Enable colored output
 export CLICOLOR=1
-
-
-
 
 # Add my tools
 # TODO: To github
@@ -50,5 +47,3 @@ export AWS_PROFILE=zenledger
 # Golang
 export GOPATH=$HOME/go
 export PATH=$PATH:$GOPATH/bin
-
-eval "$(pyenv init --path)"
