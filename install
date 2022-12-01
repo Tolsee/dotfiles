@@ -25,5 +25,5 @@ fi
 
 ln -s $PWD/nvim/.config/nvim $nvim_config_dir
 ln -s $PWD/alacritty/.config/alacritty $alacritty_config_dir
-ln -s $PWD/.zshrc $zshrc_config_file
-ln -s $PWD/.tmux.conf $tmux_config_file
+ln -nsf $PWD/.zshrc $zshrc_config_file
+ln -nsf $PWD/.tmux.conf $tmux_config_file
