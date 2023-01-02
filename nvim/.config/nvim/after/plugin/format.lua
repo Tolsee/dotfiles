@@ -3,11 +3,17 @@ require("null-ls").setup({
     sources = {
         require("null-ls").builtins.formatting.stylua,
         require("null-ls").builtins.formatting.rubocop,
---        require("tolsee.reek").diagnostics.reek,
+        --  require("tolsee.reek").diagnostics.reek,
+        require("null-ls").builtins.formatting.eslint,
         require("null-ls").builtins.formatting.prettier,
         require("null-ls").builtins.diagnostics.eslint,
+        require("null-ls").builtins.diagnostics.tsc,
+        require("null-ls").builtins.code_actions.eslint,
         require("null-ls").builtins.completion.spell,
         require("null-ls").builtins.formatting.jq,
+        require("null-ls").builtins.formatting.gofmt,
+        -- require("null-ls").builtins.formatting.terrafmt,
+        require("null-ls").builtins.formatting.terraform_fmt
     },
     -- you can reuse a shared lspconfig on_attach callback here
     -- on_attach = function(client, bufnr)

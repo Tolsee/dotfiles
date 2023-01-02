@@ -25,6 +25,6 @@ vim.opt.colorcolumn = "80"
 vim.g.mapleader = " "
 
 vim.opt.encoding = 'utf8'
-vim.opt.listchars = 'trail:●'
+vim.opt.listchars:append 'trail:●'
 vim.opt.list = true
 

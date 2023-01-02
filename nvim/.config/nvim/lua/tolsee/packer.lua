@@ -19,7 +19,7 @@ return require("packer").startup(function()
   use { 'junegunn/fzf', run = function() vim.fn['fzf#install']() end }
   use('junegunn/fzf.vim')
 
-  -- UI
+  -- UI Theme
   use("gruvbox-community/gruvbox")
   use("folke/tokyonight.nvim")
 
@@ -27,13 +27,14 @@ return require("packer").startup(function()
     run = ":TSUpdate"
   })
   use("nvim-treesitter/nvim-treesitter-context")
+  use("lukas-reineke/indent-blankline.nvim")
 
   -- File explorer/Fuzzy search
   use {
     'kyazdani42/nvim-tree.lua',
     requires = {
         'kyazdani42/nvim-web-devicons', -- optional, for file icons
-    } 
+    }
   }
   use("nvim-lua/plenary.nvim")
   use("nvim-lua/popup.nvim")
@@ -54,6 +55,7 @@ return require("packer").startup(function()
         "olimorris/neotest-rspec",
     }
   })
+  use("windwp/nvim-autopairs")
   use("ThePrimeagen/vim-be-good")
 end)
 

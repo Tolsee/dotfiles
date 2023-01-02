@@ -84,8 +84,8 @@ end
 require("lspconfig").tsserver.setup(config())
 require("lspconfig").cssls.setup(config())
 -- require("lspconfig").syntax_tree.setup({})
-require("lspconfig").solargraph.setup(config({
-}))
+require("lspconfig").solargraph.setup(config({}))
+require("lspconfig").terraformls.setup{}
 
 
 require("lspconfig").gopls.setup(config({

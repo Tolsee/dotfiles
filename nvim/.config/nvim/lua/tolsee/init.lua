@@ -5,6 +5,8 @@ require("tolsee.nvim_tree")
 require("tolsee.telescope")
 require("tolsee.reek")
 require("tolsee.neotest")
+require("tolsee.autopairs")
+require("tolsee.indent_blankline")
 
 vim.g.netrw_browse_split = 0
 vim.g.netrw_banner = 0
