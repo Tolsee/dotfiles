@@ -19,7 +19,29 @@ require("telescope").setup({
 
         layout_strategy = 'bottom_pane',
         layout_config = { height = 0.8 },
-        theme = "ivy"
+        theme = "ivy",
+        -- file_ignore_patterns = { 'node_modules' },
+
+        -- vimgrep_arguments = {
+        --     'rg',
+        --     '--color=never',
+        --     '--no-heading',
+        --     '--with-filename',
+        --     '--line-number',
+        --     '--column',
+        --     '--smart-case',
+        --     '--hidden',
+        -- },
 	},
+    pickers = {
+        find_files = {
+            hidden = true,
+        },
+        live_grep = {
+            additional_args = function(opts)
+                return {"--hidden"}
+            end
+        },
+    },
 })
 

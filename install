@@ -10,7 +10,7 @@ alacritty_old_config_dir=$HOME/.config/alacritty-old
 if [[ -L "$nvim_config_dir" ]]
 then
 	rm $nvim_config_dir
-elif [[ -d "$nvim_config_dir" ]] 
+elif [[ -d "$nvim_config_dir" ]]
 then
 	mv $nvim_config_dir $nvim_old_config_dir
 fi

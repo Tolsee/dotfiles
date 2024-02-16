@@ -50,3 +50,6 @@ font:
   bold_italic:
     family: Hack Nerd Font
     style: Bold Italic
+
+env:
+  TERM: xterm-256color

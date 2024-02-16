@@ -6,13 +6,28 @@ export RUBY_CONFIGURE_OPTS="--with-openssl-dir=$(brew --prefix openssl@1.1)"
 export PATH="$HOME/.rbenv/shims:$PATH"
 export PATH="$HOME/.mix/escripts:$PATH"
 eval "$(rbenv init -)"
-export PATH="$PATH:/Users/tolsee/dev/bastion-cli"
+export PATH="$HOME/.tmuxifier/bin:$PATH"
+eval "$(tmuxifier init -)"
 
+# ----------
+# UTF-8 support
+# ----------
+export LC_ALL=en_US.UTF-8
+export LANG=en_US.UTF-8
+
+# ----------
+# spaceship-prompt configurations
+# ----------
 SPACESHIP_DIR_TRUNC=0
 SPACESHIP_DIR_TRUNC_REPO=false
+SPACESHIP_AWS_SHOW=false
 SPACESHIP_DOCKER_SHOW=false
 SPACESHIP_DOCKER_COMPOSE_SHOW=false
+SPACESHIP_KUBECTL_SHOW=true
 SPACESHIP_CHAR_SYMBOL="❯ "
+SPACESHIP_PACKAGE_SHOW=false
+SPACESHIP_NODE_SHOW=false
+
 # Add zplug
 export ZPLUG_HOME=/opt/homebrew/opt/zplug
 source $ZPLUG_HOME/init.zsh
@@ -34,26 +49,15 @@ colors
 export CLICOLOR=1
 
 # Add my tools
-# TODO: To github
 alias be='bundle exec'
 alias autorubo='be rubocop -a'
-
-# TODO: Remove this
-export ANT_HOME=/usr/local/Cellar/ant/1.10.9/libexec
-alias ant='. ../Support/vm.sh && $ANT_HOME/bin/ant'
-# export JAVA_HOME=$(/usr/libexec/java_home)
-# export PATH="$PATH:/Users/tolsee/Library/Java/JavaVirtualMachines/adopt-openj9-1.8.0_272/Contents/Home/bin"
-export PATH="$PATH:$ANT_HOME/bin"
-
-# AWS 
-# export AWS_PROFILE=zenledger-oracle
-export AWS_PROFILE=zenledger
-# export AWS_PROFILE=zen-lambda
 
 # Golang
 export GOPATH=$HOME/go
 export PATH=$PATH:$GOPATH/bin
 
+# Moon repo cli
+export PATH=$PATH:$HOME/.moon/bin
 
 # ----------
 # Google cloud
@@ -68,3 +72,35 @@ export USE_GKE_GCLOUD_AUTH_PLUGIN=True
 # Secrets
 # --------
 source ~/.secrets.zshrc
+
+# --------
+# Autocompletion
+# --------
+source <(kubectl completion zsh)
+autoload -U +X bashcompinit && bashcompinit
+complete -o nospace -C /opt/homebrew/bin/terraform terraform
+complete -o nospace -C /opt/homebrew/bin/helmfile helmfile
+source <(helmfile completion zsh)
+export PATH="/opt/homebrew/opt/libpq/bin:$PATH"
+
+
+# --------
+# Zoxide
+# --------
+eval "$(zoxide init --cmd cd zsh)"
+
+# --------
+# Projects
+# --------
+alias bbinfra='tmuxifier load-session blockbase-infrastructure'
+alias minfra='tmuxifier load-session mintly-infrastructure'
+alias binfra='tmuxifier load-session base-infrastructure'
+alias sbuild='tmuxifier load-session shared-build-tools'
+alias bbbuild='tmuxifier load-session blockbase-build-tools'
+alias mbuild='tmuxifier load-session mintly-build-tools'
+alias blockbase='tmuxifier load-session blockbase'
+alias mintly='tmuxifier load-session mintly'
+alias plat='tmuxifier load-session platform'
+alias sensand='tmuxifier load-session sensand'
+
+complete -o nospace -C /opt/homebrew/bin/vault vault

@@ -28,3 +28,4 @@ vim.opt.encoding = 'utf8'
 vim.opt.listchars:append 'trail:●'
 vim.opt.list = true
 
+vim.g.term = 'xterm-256color'

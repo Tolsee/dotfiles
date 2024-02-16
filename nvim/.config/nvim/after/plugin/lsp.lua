@@ -46,7 +46,6 @@ cmp.setup({
     },
 
     sources = {
-        { name = "cmp_tabnine" },
         { name = "nvim_lsp" },
         -- For luasnip user.
         { name = "luasnip" },
@@ -54,16 +53,7 @@ cmp.setup({
     },
 })
 
-local tabnine = require("cmp_tabnine.config")
-tabnine:setup({
-    max_lines = 1000,
-    max_num_results = 20,
-    sort = true,
-    run_on_every_keystroke = true,
-    snippet_placeholder = "..",
-})
-
-local function config(_config)
+local function config(config)
     return vim.tbl_deep_extend("force", {
         capabilities = require("cmp_nvim_lsp").default_capabilities(vim.lsp.protocol.make_client_capabilities()),
         on_attach = function()
@@ -76,9 +66,8 @@ local function config(_config)
             nnoremap("<leader>vca", function() vim.lsp.buf.code_action() end)
             nnoremap("<leader>vrr", function() vim.lsp.buf.references() end)
             nnoremap("<leader>vrn", function() vim.lsp.buf.rename() end)
-            inoremap("<C-h>", function() vim.lsp.buf.signature_help() end)
         end,
-    }, _config or {})
+    }, config or {})
 end
 
 require("lspconfig").tsserver.setup(config())
@@ -86,6 +75,19 @@ require("lspconfig").cssls.setup(config())
 -- require("lspconfig").syntax_tree.setup({})
 require("lspconfig").solargraph.setup(config({}))
 require("lspconfig").terraformls.setup{}
+require('lspconfig').lua_ls.setup{}
+require('lspconfig').jsonls.setup(config({
+    filetypes = { "json", "jsonc", "geojson" },
+}))
+
+-- local global_root = "/Users/tolsee/.nvm/versions/node/v16.14.0/lib/node_modules"
+--
+-- require("lspconfig").angularls.setup(config({
+--     cmd = { "ngserver", "--stdio", "--tsProbeLocations", global_root, "--ngProbeLocations", global_root },
+--     on_new_config = function(new_config,new_root_dir)
+--         new_config.cmd = cmd
+--     end,
+-- }))
 
 
 require("lspconfig").gopls.setup(config({
@@ -99,6 +101,18 @@ require("lspconfig").gopls.setup(config({
         },
     },
 }))
+
+require'lspconfig'.jedi_language_server.setup{}
+require'lspconfig'.pyright.setup{}
+
+-- TODO: Update this
+vim.api.nvim_create_autocmd("BufWritePre", {
+  pattern = "*.go",
+  callback = function()
+    vim.lsp.buf.code_action({ context = { organizeImports = true }, apply = true })
+  end,
+  desc = "Run goimports on save in Golang files",
+})
 
 local opts = {
     highlight_hovered_item = true,

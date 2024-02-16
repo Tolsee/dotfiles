@@ -10,6 +10,6 @@ vnoremap("<leader>y", "\"+y")
 nmap("<leader>Y", "\"+Y")
 
 nnoremap("<leader>sv", ":source $MYVIMRC<CR>")
-nnoremap("<leader>f", ":lua vim.lsp.buf.format({ timeout_ms = 5000 }) <Enter>")
+nnoremap("<leader>f", ":lua vim.lsp.buf.format({ timeout_ms = 10000 }) <Enter>")
 nnoremap("<leader>for", ":!rubocop -A % <Enter>")
 nnoremap("<leader>rt", ":!rspec % <Enter>")
