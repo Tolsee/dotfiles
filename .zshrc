@@ -9,6 +9,9 @@ eval "$(rbenv init -)"
 export PATH="$HOME/.tmuxifier/bin:$PATH"
 eval "$(tmuxifier init -)"
 
+# PKL lang
+export PATH="$HOME/.pkl/bin:$PATH"
+
 # ----------
 # UTF-8 support
 # ----------
@@ -102,5 +105,6 @@ alias blockbase='tmuxifier load-session blockbase'
 alias mintly='tmuxifier load-session mintly'
 alias plat='tmuxifier load-session platform'
 alias sensand='tmuxifier load-session sensand'
+alias data-pipeline='tmuxifier load-session data-pipeline'
 
 complete -o nospace -C /opt/homebrew/bin/vault vault

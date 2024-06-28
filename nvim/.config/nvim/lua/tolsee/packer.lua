@@ -13,7 +13,8 @@ return require("packer").startup(function()
 	use("simrat39/symbols-outline.nvim")
 	use("L3MON4D3/LuaSnip")
 	use("saadparwaiz1/cmp_luasnip")
- 
+    use("apple/pkl-neovim")
+
 	-- FZF
 	-- TODO: Look if we can remove this
 	use({
@@ -46,20 +47,7 @@ return require("packer").startup(function()
 	use("nvim-telescope/telescope.nvim")
 
 	-- Formatting and lint
-	use("rainerborene/vim-reek")
-	use({
-		"jose-elias-alvarez/null-ls.nvim",
-		requires = { "nvim-lua/plenary.nvim" },
-	})
-	use({
-		"nvim-neotest/neotest",
-		requires = {
-			"nvim-lua/plenary.nvim",
-			"nvim-treesitter/nvim-treesitter",
-			"antoinemadec/FixCursorHold.nvim",
-			"olimorris/neotest-rspec",
-		},
-	})
+    use("stevearc/conform.nvim")
 	use("windwp/nvim-autopairs")
 
 	-- Comment

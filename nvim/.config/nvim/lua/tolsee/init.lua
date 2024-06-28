@@ -2,14 +2,12 @@ require("tolsee.set")
 require("tolsee.packer")
 
 if not vim.g.vscode then
-    require("tolsee.web_dev_icons")
-    require("tolsee.nvim_tree")
-    require("tolsee.telescope")
-    require("tolsee.reek")
-    require("tolsee.neotest")
-    require("tolsee.deferred_clipboard")
-    require("tolsee.gitsigns")
-    require("tolsee.devcontainer")
+	require("tolsee.web_dev_icons")
+	require("tolsee.nvim_tree")
+	require("tolsee.telescope")
+	require("tolsee.deferred_clipboard")
+	require("tolsee.gitsigns")
+	require("tolsee.devcontainer")
 end
 
 require("tolsee.autopairs")
