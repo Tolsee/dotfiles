@@ -7,6 +7,12 @@ tmux_config_file=$HOME/.tmux.conf
 nvim_old_config_dir=$HOME/.config/nvim-old
 alacritty_old_config_dir=$HOME/.config/alacritty-old
 
+if [[ $* == *--uninstall* ]]
+then
+    unlink $nvim_config_dir
+    exit 0
+fi
+
 if [[ -L "$nvim_config_dir" ]]
 then
 	rm $nvim_config_dir
