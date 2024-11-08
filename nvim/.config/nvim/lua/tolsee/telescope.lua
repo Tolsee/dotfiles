@@ -1,6 +1,7 @@
+local telescope = require("telescope")
 local actions = require("telescope.actions")
 
-require("telescope").setup({
+telescope.setup({
 	defaults = {
 		file_sorter = require("telescope.sorters").get_fzy_sorter,
 		prompt_prefix = " >",
@@ -17,31 +18,34 @@ require("telescope").setup({
 			},
 		},
 
-        layout_strategy = 'bottom_pane',
-        layout_config = { height = 0.8 },
-        theme = "ivy",
-        -- file_ignore_patterns = { 'node_modules' },
+		layout_strategy = "bottom_pane",
+		layout_config = { height = 0.8 },
+		theme = "ivy",
+		file_ignore_patterns = { 'node_modules', '.git' },
 
-        -- vimgrep_arguments = {
-        --     'rg',
-        --     '--color=never',
-        --     '--no-heading',
-        --     '--with-filename',
-        --     '--line-number',
-        --     '--column',
-        --     '--smart-case',
-        --     '--hidden',
-        -- },
+		-- vimgrep_arguments = {
+		--     'rg',
+		--     '--color=never',
+		--     '--no-heading',
+		--     '--with-filename',
+		--     '--line-number',
+		--     '--column',
+		--     '--smart-case',
+		--     '--hidden',
+		-- },
 	},
-    pickers = {
-        find_files = {
-            hidden = false,
-        },
-        live_grep = {
-            additional_args = function(opts)
-                return {"--hidden"}
-            end
-        },
-    },
+	pickers = {
+		find_files = {
+			hidden = true,
+            ignore_patterns = { 'node_modules', '.git' },
+		},
+		live_grep = {
+			additional_args = function(opts)
+				return { "--hidden" }
+			end,
+		},
+	},
 })
 
+telescope.load_extension("ui-select")
+-- telescope.load_extension("fzy_native")

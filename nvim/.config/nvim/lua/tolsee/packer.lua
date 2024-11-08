@@ -13,7 +13,7 @@ return require("packer").startup(function()
 	use("simrat39/symbols-outline.nvim")
 	use("L3MON4D3/LuaSnip")
 	use("saadparwaiz1/cmp_luasnip")
-    use("apple/pkl-neovim")
+	use("apple/pkl-neovim")
 
 	-- FZF
 	-- TODO: Look if we can remove this
@@ -45,9 +45,10 @@ return require("packer").startup(function()
 	use("nvim-lua/plenary.nvim")
 	use("nvim-lua/popup.nvim")
 	use("nvim-telescope/telescope.nvim")
+	use({ "nvim-telescope/telescope-ui-select.nvim" })
 
 	-- Formatting and lint
-    use("stevearc/conform.nvim")
+	use("stevearc/conform.nvim")
 	use("windwp/nvim-autopairs")
 
 	-- Comment
@@ -67,8 +68,8 @@ return require("packer").startup(function()
 	-- Gitsigns
 	use("lewis6991/gitsigns.nvim")
 
-    use({
-        'https://codeberg.org/esensar/nvim-dev-container',
-        requires = { 'nvim-treesitter/nvim-treesitter' }
-    })
+	use({
+		"https://codeberg.org/esensar/nvim-dev-container",
+		requires = { "nvim-treesitter/nvim-treesitter" },
+	})
 end)
