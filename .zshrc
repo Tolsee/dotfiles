@@ -12,6 +12,11 @@ eval "$(tmuxifier init -)"
 # PKL lang
 export PATH="$HOME/.pkl/bin:$PATH"
 
+# ZVM (Zig Version Manager)
+export ZVM_INSTALL="$HOME/.zvm/self"
+export PATH="$PATH:$HOME/.zvm/bin"
+export PATH="$PATH:$ZVM_INSTALL/"
+
 # ----------
 # UTF-8 support
 # ----------

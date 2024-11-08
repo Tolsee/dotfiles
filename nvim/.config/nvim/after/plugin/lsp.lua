@@ -121,7 +121,7 @@ require("lspconfig").gopls.setup(config({
 	},
 }))
 
-require("lspconfig").jedi_language_server.setup({})
+-- require("lspconfig").jedi_language_server.setup({})
 require("lspconfig").pyright.setup({})
 
 -- TODO: Update this
