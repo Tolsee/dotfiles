@@ -33,7 +33,7 @@ SPACESHIP_DOCKER_SHOW=false
 SPACESHIP_DOCKER_COMPOSE_SHOW=false
 SPACESHIP_KUBECTL_SHOW=false
 SPACESHIP_CHAR_SYMBOL="❯ "
-SPACESHIP_PACKAGE_SHOW=false
+SPACESHIP_PACKAGE_SHOW=true
 SPACESHIP_NODE_SHOW=true
 SPACESHIP_GCLOUD_SHOW=false
 
@@ -80,7 +80,7 @@ export USE_GKE_GCLOUD_AUTH_PLUGIN=True
 # --------
 # Secrets
 # --------
-source ~/.secrets.zshrc
+# source ~/.secrets.zshrc
 
 # --------
 # Autocompletion
@@ -114,3 +114,10 @@ alias sensand='tmuxifier load-session sensand'
 alias data-pipeline='tmuxifier load-session data-pipeline'
 
 complete -o nospace -C /opt/homebrew/bin/vault vault
+
+# -----
+# NVM
+# -----
+export NVM_DIR="$HOME/.nvm"
+[ -s "/opt/homebrew/opt/nvm/nvm.sh" ] && \. "/opt/homebrew/opt/nvm/nvm.sh"  # This loads nvm
+[ -s "/opt/homebrew/opt/nvm/etc/bash_completion.d/nvm" ] && \. "/opt/homebrew/opt/nvm/etc/bash_completion.d/nvm"  # This loads nvm bash_completion

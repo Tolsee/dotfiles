@@ -88,7 +88,7 @@ local function config(config)
 	}, config or {})
 end
 
-require("lspconfig").tsserver.setup(config())
+require("lspconfig").ts_ls.setup(config())
 require("lspconfig").cssls.setup(config())
 require("lspconfig").solargraph.setup(config({}))
 require("lspconfig").terraformls.setup({})
