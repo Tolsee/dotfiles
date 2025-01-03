@@ -1,5 +1,5 @@
 require("tolsee.set")
-require("tolsee.packer")
+require("tolsee.lazy_init")
 
 if not vim.g.vscode then
 	require("tolsee.web_dev_icons")
