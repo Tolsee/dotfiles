@@ -13,8 +13,8 @@ telescope.setup({
 
 		mappings = {
 			i = {
-				["<C-x>"] = false,
-				["<C-q>"] = actions.send_to_qflist,
+				["<C-x>"] = false, 
+				["<C-q>"] = actions.smart_send_to_qflist + actions.open_qflist,
 			},
 		},
 

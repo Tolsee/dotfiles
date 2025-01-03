@@ -72,4 +72,7 @@ return require("packer").startup(function()
 		"https://codeberg.org/esensar/nvim-dev-container",
 		requires = { "nvim-treesitter/nvim-treesitter" },
 	})
+
+    -- Quickfix
+    use('kevinhwang91/nvim-bqf')
 end)

@@ -8,6 +8,7 @@ if not vim.g.vscode then
 	require("tolsee.deferred_clipboard")
 	require("tolsee.gitsigns")
 	require("tolsee.devcontainer")
+    require("tolsee.bqf")
 end
 
 require("tolsee.autopairs")

@@ -9,6 +9,9 @@ eval "$(rbenv init -)"
 export PATH="$HOME/.tmuxifier/bin:$PATH"
 eval "$(tmuxifier init -)"
 
+# Python 
+export PATH="$HOME/Library/Python/3.9/bin:$PATH"
+
 # PKL lang
 export PATH="$HOME/.pkl/bin:$PATH"
 
@@ -121,3 +124,7 @@ complete -o nospace -C /opt/homebrew/bin/vault vault
 export NVM_DIR="$HOME/.nvm"
 [ -s "/opt/homebrew/opt/nvm/nvm.sh" ] && \. "/opt/homebrew/opt/nvm/nvm.sh"  # This loads nvm
 [ -s "/opt/homebrew/opt/nvm/etc/bash_completion.d/nvm" ] && \. "/opt/homebrew/opt/nvm/etc/bash_completion.d/nvm"  # This loads nvm bash_completion
+
+# proto
+export PROTO_HOME="$HOME/.proto";
+export PATH="$PROTO_HOME/shims:$PROTO_HOME/bin:$PATH";
