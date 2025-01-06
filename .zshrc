@@ -83,7 +83,7 @@ export USE_GKE_GCLOUD_AUTH_PLUGIN=True
 # --------
 # Secrets
 # --------
-# source ~/.secrets.zshrc
+source ~/.secrets.zshrc
 
 # --------
 # Autocompletion
@@ -128,4 +128,3 @@ export NVM_DIR="$HOME/.nvm"
 # proto
 export PROTO_HOME="$HOME/.proto"
 export PATH="$PROTO_HOME/shims:$PROTO_HOME/bin:$PATH"
-export PATH="/Users/tolsee/.deno/env:$PATH"
