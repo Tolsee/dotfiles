@@ -3,7 +3,7 @@ return {
     "yetone/avante.nvim",
     event = "VeryLazy",
     opts = {
-       provider = "copilot",
+       provider = "openai",
        debug = true,
     },
     version = "0.0.13",

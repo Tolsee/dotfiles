@@ -96,7 +96,12 @@ require("lspconfig").lua_ls.setup({})
 require("lspconfig").jsonls.setup(config({
 	filetypes = { "json", "jsonc", "geojson" },
 }))
-require("lspconfig").eslint.setup({})
+require("lspconfig").eslint.setup({
+    workingDirectories = { mode = "auto" },
+    experimental = {
+        useFlatConfig = false,
+    },
+})
 require('lspconfig').clangd.setup{}
 
 
