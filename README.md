@@ -1,6 +1,6 @@
-# .dotfiles
+# dotfiles
 
-Set for configuration for my machine
+Configs for my machine
 
 ## Inspiration
 
