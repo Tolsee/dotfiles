@@ -128,3 +128,5 @@ export NVM_DIR="$HOME/.nvm"
 # proto
 export PROTO_HOME="$HOME/.proto"
 export PATH="$PROTO_HOME/shims:$PROTO_HOME/bin:$PATH"
+
+LTD_AC_ZSH_SETUP_PATH=/Users/tolsee/Library/Caches/ltd/autocomplete/zsh_setup && test -f $LTD_AC_ZSH_SETUP_PATH && source $LTD_AC_ZSH_SETUP_PATH; # ltd autocomplete setup

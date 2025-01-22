@@ -5,8 +5,14 @@ return {
     opts = {
        provider = "openai",
        debug = true,
+       openai = {
+         endpoint = "https://api.openai.com/v1",
+         model = "o1-preview",
+         timeout = 120000, -- Timeout in milliseconds
+         temperature = 1,
+         max_tokens = 4096,
+       },
     },
-    version = "0.0.13",
     build = "make",
     lazy = false,
     dependencies = {
