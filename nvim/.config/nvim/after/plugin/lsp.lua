@@ -9,8 +9,7 @@ capabilities.textDocument.completion.completionItem.snippetSupport = true
 local cmp = require("cmp")
 local source_mapping = {
 	buffer = "[Buffer]",
-	nvim_lsp = "[LSP]",
-	nvim_lua = "[Lua]",
+	nvim_lsp = "[LSP]", nvim_lua = "[Lua]",
 	cmp_tabnine = "[TN]",
 	path = "[Path]",
 }
@@ -103,6 +102,8 @@ require("lspconfig").eslint.setup({
     },
 })
 require('lspconfig').clangd.setup{}
+require('lspconfig').biome.setup{}
+require'lspconfig'.zls.setup{}
 
 
 -- local global_root = "/Users/tolsee/.nvm/versions/node/v16.14.0/lib/node_modules"
@@ -164,3 +165,7 @@ require("luasnip.loaders.from_vscode").lazy_load({
 	include = nil, -- Load all languages
 	exclude = {},
 })
+
+-- PHP
+-- require'lspconfig'.phpactor.setup{}
+require'lspconfig'.intelephense.setup(config())
