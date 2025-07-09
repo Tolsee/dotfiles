@@ -41,6 +41,11 @@ return {
                 -- Instead of true it can also be a list of languages
                 additional_vim_regex_highlighting = { "markdown" },
             },
+
+            -- Enable injections for GraphQL highlighting
+            injections = {
+                enable = true,
+            },
         })
 
         local treesitter_parser_config = require("nvim-treesitter.parsers").get_parser_configs()

@@ -95,12 +95,12 @@ require("lspconfig").lua_ls.setup({})
 require("lspconfig").jsonls.setup(config({
 	filetypes = { "json", "jsonc", "geojson" },
 }))
-require("lspconfig").eslint.setup({
-    workingDirectories = { mode = "auto" },
-    experimental = {
-        useFlatConfig = false,
-    },
-})
+-- require("lspconfig").eslint.setup({
+--     workingDirectories = { mode = "auto" },
+--     experimental = {
+--         useFlatConfig = false,
+--     },
+-- })
 require('lspconfig').clangd.setup{}
 require('lspconfig').biome.setup{}
 require'lspconfig'.zls.setup{}
@@ -129,6 +129,10 @@ require("lspconfig").gopls.setup(config({
 
 -- require("lspconfig").jedi_language_server.setup({})
 require("lspconfig").pyright.setup({})
+require("lspconfig").graphql.setup({
+    filetypes = { 'graphql', 'typescriptreact', 'javascriptreact', 'typescript', 'javascript' },
+})
+
 
 -- TODO: Update this
 vim.api.nvim_create_autocmd("BufWritePre", {
