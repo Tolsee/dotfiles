@@ -52,7 +52,10 @@ style = "Regular"
 save_to_clipboard = true
 
 [mouse]
-hide_when_typing      = true
+hide_when_typing = false
+
+[window]
+dynamic_title = true
 
 [hints]
 [[hints.enabled]]

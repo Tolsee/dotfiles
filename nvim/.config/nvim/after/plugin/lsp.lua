@@ -87,35 +87,67 @@ local function config(config)
 	}, config or {})
 end
 
-require("lspconfig").ts_ls.setup(config())
-require("lspconfig").cssls.setup(config())
-require("lspconfig").solargraph.setup(config({}))
-require("lspconfig").terraformls.setup({})
-require("lspconfig").lua_ls.setup({})
-require("lspconfig").jsonls.setup(config({
+-- TypeScript/JavaScript
+vim.lsp.config('ts_ls', config())
+vim.lsp.enable('ts_ls')
+
+-- CSS
+vim.lsp.config('cssls', config())
+vim.lsp.enable('cssls')
+
+-- Ruby
+vim.lsp.config('solargraph', config({}))
+vim.lsp.enable('solargraph')
+
+-- Terraform
+vim.lsp.config('terraformls', {})
+vim.lsp.enable('terraformls')
+
+-- Lua
+vim.lsp.config('lua_ls', {})
+vim.lsp.enable('lua_ls')
+
+-- JSON
+vim.lsp.config('jsonls', config({
 	filetypes = { "json", "jsonc", "geojson" },
 }))
--- require("lspconfig").eslint.setup({
+vim.lsp.enable('jsonls')
+
+-- ESLint (commented out)
+-- vim.lsp.config('eslint', {
 --     workingDirectories = { mode = "auto" },
 --     experimental = {
 --         useFlatConfig = false,
 --     },
 -- })
-require('lspconfig').clangd.setup{}
-require('lspconfig').biome.setup{}
-require'lspconfig'.zls.setup{}
+-- vim.lsp.enable('eslint')
+
+-- C/C++
+vim.lsp.config('clangd', {})
+vim.lsp.enable('clangd')
+
+-- Biome (JS/TS formatter/linter)
+vim.lsp.config('biome', {})
+vim.lsp.enable('biome')
+
+-- Zig
+vim.lsp.config('zls', {})
+vim.lsp.enable('zls')
 
 
 -- local global_root = "/Users/tolsee/.nvm/versions/node/v16.14.0/lib/node_modules"
 --
--- require("lspconfig").angularls.setup(config({
+-- Angular (commented out)
+-- vim.lsp.config('angularls', config({
 --     cmd = { "ngserver", "--stdio", "--tsProbeLocations", global_root, "--ngProbeLocations", global_root },
 --     on_new_config = function(new_config,new_root_dir)
 --         new_config.cmd = cmd
 --     end,
 -- }))
+-- vim.lsp.enable('angularls')
 
-require("lspconfig").gopls.setup(config({
+-- Go
+vim.lsp.config('gopls', config({
 	cmd = { "gopls", "serve" },
 	settings = {
 		gopls = {
@@ -126,12 +158,19 @@ require("lspconfig").gopls.setup(config({
 		},
 	},
 }))
+vim.lsp.enable('gopls')
 
--- require("lspconfig").jedi_language_server.setup({})
-require("lspconfig").pyright.setup({})
-require("lspconfig").graphql.setup({
+-- Python
+-- vim.lsp.config('jedi_language_server', {})
+-- vim.lsp.enable('jedi_language_server')
+vim.lsp.config('pyright', {})
+vim.lsp.enable('pyright')
+
+-- GraphQL
+vim.lsp.config('graphql', {
     filetypes = { 'graphql', 'typescriptreact', 'javascriptreact', 'typescript', 'javascript' },
 })
+vim.lsp.enable('graphql')
 
 
 -- TODO: Update this
@@ -171,5 +210,7 @@ require("luasnip.loaders.from_vscode").lazy_load({
 })
 
 -- PHP
--- require'lspconfig'.phpactor.setup{}
-require'lspconfig'.intelephense.setup(config())
+-- vim.lsp.config('phpactor', {})
+-- vim.lsp.enable('phpactor')
+vim.lsp.config('intelephense', config())
+vim.lsp.enable('intelephense')

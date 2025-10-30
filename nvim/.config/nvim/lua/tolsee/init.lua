@@ -7,7 +7,6 @@ if not vim.g.vscode then
 	require("tolsee.telescope")
 	require("tolsee.deferred_clipboard")
 	require("tolsee.gitsigns")
-	require("tolsee.devcontainer")
     require("tolsee.bqf")
 end
 
