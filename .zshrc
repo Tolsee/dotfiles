@@ -81,6 +81,16 @@ if [ -f '/Users/tolsee/google-cloud-sdk/completion.zsh.inc' ]; then . '/Users/to
 export USE_GKE_GCLOUD_AUTH_PLUGIN=True
 
 # --------
+# Zsh functions
+# --------
+for f in ~/.config/zsh-functions/*.sh; do source "$f"; done
+
+# --------
+# NPM
+# --------
+export NPM_TOKEN="$(grep -E '^//registry\.npmjs\.org/:_authToken=' ~/.npmrc | tail -n1 | cut -d= -f2-)"
+
+# --------
 # Secrets
 # --------
 source ~/.secrets.zshrc
@@ -133,3 +143,6 @@ LTD_AC_ZSH_SETUP_PATH=/Users/tolsee/Library/Caches/ltd/autocomplete/zsh_setup &&
 
 # amp
 export PATH="$HOME/.local/bin:$PATH"
+export PATH="/opt/homebrew/opt/mysql-client/bin:$PATH"
+
+alias claude-mem='bun "/Users/tolsee/.claude/plugins/marketplaces/thedotmack/plugin/scripts/worker-service.cjs"'
