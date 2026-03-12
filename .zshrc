@@ -1,6 +1,7 @@
 alias pip=pip3
 alias vim=nvim
 alias cat=bat
+alias clauded="claude --dangerously-skip-permissions"
 
 export RUBY_CONFIGURE_OPTS="--with-openssl-dir=$(brew --prefix openssl@1.1)"
 export PATH="$HOME/.rbenv/shims:$PATH"
@@ -50,6 +51,8 @@ zplug "zsh-users/zsh-syntax-highlighting"
 zplug "zsh-users/zsh-completions"
 zplug "Aloxaf/fzf-tab"
 zplug "spaceship-prompt/spaceship-prompt", use:spaceship.zsh, from:github
+
+SPACESHIP_PROMPT_ASYNC=false
 
 zplug load
 
@@ -146,3 +149,11 @@ export PATH="$HOME/.local/bin:$PATH"
 export PATH="/opt/homebrew/opt/mysql-client/bin:$PATH"
 
 alias claude-mem='bun "/Users/tolsee/.claude/plugins/marketplaces/thedotmack/plugin/scripts/worker-service.cjs"'
+
+ltd-mtls-split() {
+  local pem=~/.ltd/proxy/certificates/mtls.pem
+  openssl x509 -in "$pem" -out ~/.ltd/proxy/certificates/mtls-cert.pem && \
+  openssl pkey -in "$pem" -out ~/.ltd/proxy/certificates/mtls-key.pem && \
+  echo "cert: ~/.ltd/proxy/certificates/mtls-cert.pem" && \
+  echo "key:  ~/.ltd/proxy/certificates/mtls-key.pem"
+}
