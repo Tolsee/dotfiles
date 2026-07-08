@@ -1,0 +1,29 @@
+#!/bin/sh
+# Rename the current tmux window to its real working directory's basename.
+#
+# Why not just `#{pane_current_path}`? Panes run through devin's shell wrapper
+# (`devin shell run zsh --parent /bin/zsh`). tmux derives pane_current_path from
+# the *pane* process — the outer login shell, whose cwd is frozen at launch —
+# while every `cd` happens in the interactive shell spawned underneath. So we
+# walk the process tree to the deepest *shell* descendant and read its cwd; a
+# foreground program (nvim, claude) is skipped so we get the shell's dir, not
+# wherever the program was launched from.
+pane_pid="${1:-$(tmux display-message -p '#{pane_pid}')}"
+
+best_shell="$pane_pid"
+queue="$pane_pid"
+while [ -n "$queue" ]; do
+  next=""
+  for p in $queue; do
+    for c in $(pgrep -P "$p" 2>/dev/null); do
+      next="$next $c"
+      case "$(ps -o comm= -p "$c" 2>/dev/null)" in
+        *zsh|*bash|*sh|*fish) best_shell="$c" ;;
+      esac
+    done
+  done
+  queue="$next"
+done
+
+cwd=$(lsof -a -p "$best_shell" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p')
+[ -n "$cwd" ] && tmux rename-window "$(basename "$cwd")"

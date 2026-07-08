@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Fuzzy-jump to a project as a tmux session.
+# Inspired by ThePrimeagen's tmux-sessionizer, scoped to my project roots.
+
+if [[ $# -eq 1 ]]; then
+    selected=$1
+else
+    selected=$(find ~/dev/linktree ~/dev/hobby -mindepth 1 -maxdepth 1 -type d 2>/dev/null | fzf)
+fi
+
+[[ -z $selected ]] && exit 0
+
+selected_name=$(basename "$selected" | tr . _)
+tmux_running=$(pgrep tmux)
+
+# not in tmux and no server: just start one
+if [[ -z $TMUX ]] && [[ -z $tmux_running ]]; then
+    tmux new-session -s "$selected_name" -c "$selected"
+    exit 0
+fi
+
+# create the session detached if it doesn't exist yet
+if ! tmux has-session -t="$selected_name" 2>/dev/null; then
+    tmux new-session -ds "$selected_name" -c "$selected"
+fi
+
+tmux switch-client -t "$selected_name"

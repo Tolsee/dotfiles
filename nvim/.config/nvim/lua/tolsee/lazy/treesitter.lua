@@ -3,11 +3,8 @@ return {
     build = ":TSUpdate",
     config = function()
         require("nvim-treesitter.configs").setup({
-            -- Install parsers synchronously (only applied to `ensure_installed`)
+            ensure_installed = "all",
             sync_install = false,
-
-            -- Automatically install missing parsers when entering buffer
-            -- Recommendation: set to false if you don"t have `tree-sitter` CLI installed locally
             auto_install = false,
 
             indent = {
@@ -18,8 +15,7 @@ return {
                 -- `false` will disable the whole extension
                 enable = true,
                 disable = function(lang, buf)
-                    if lang == "html" then
-                        print("disabled")
+                    if lang == "html" or lang == "markdown" then
                         return true
                     end
 
@@ -48,6 +44,15 @@ return {
             },
         })
 
-        local treesitter_parser_config = require("nvim-treesitter.parsers").get_parser_configs()
+        local parser_config = require("nvim-treesitter.parsers").get_parser_configs()
+        parser_config.gotmpl = {
+            install_info = {
+                url = "https://github.com/ngalaiko/tree-sitter-go-template",
+                files = { "src/parser.c" },
+            },
+            filetype = "gotmpl",
+            used_by = { "gohtmltmpl", "gotexttmpl", "gotmpl", "yaml" },
+        }
+        parser_config.tsx.filetype_to_parsername = { "javascript", "typescript.tsx" }
     end
 }

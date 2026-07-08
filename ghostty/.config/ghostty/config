@@ -1,0 +1,37 @@
+# ============================================================
+#  Ghostty config — managed in ~/dev/dotfiles, symlinked to ~/.config/ghostty
+#  Theme synced with Neovim (after/plugin/colors.lua -> colorscheme tokyonight = Storm)
+#  Docs: https://ghostty.org/docs/config   Reload: Cmd+Shift+,
+# ============================================================
+
+# ---------- Font ----------
+# font-family unset -> Ghostty's bundled JetBrains Mono (Nerd icons via auto symbol fallback)
+font-size          = 14
+adjust-cell-height = 8%
+
+# ---------- Theme (matches nvim's TokyoNight Moon — bg #222436) ----------
+theme = TokyoNight Moon
+
+# ---------- Window / chrome ----------
+background-opacity      = 1
+# background-blur       = 20   # re-enable for translucency
+window-padding-x        = 12
+window-padding-y        = 10
+window-padding-balance  = true
+macos-titlebar-style    = hidden
+window-save-state       = always
+
+# ---------- Cursor ----------
+cursor-style       = block
+cursor-style-blink = false
+
+# ---------- Mouse / clipboard ----------
+# Alacritty: selection.save_to_clipboard = true
+copy-on-select          = clipboard
+# Alacritty: mouse.hide_when_typing = false
+mouse-hide-while-typing = false
+
+# ---------- Shell integration ----------
+# URL clicking is built in (Cmd+click any link).
+shell-integration          = zsh
+shell-integration-features = cursor,sudo,title

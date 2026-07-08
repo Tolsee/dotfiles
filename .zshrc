@@ -1,9 +1,23 @@
+# >>>> BEGIN MANAGED DEVIN BLOCK >>>>
+# Add ~/.local/bin to PATH for devin
+if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
+  export PATH="$HOME/.local/bin:$PATH"
+fi
+# ponytail: only inside Devin's own terminal. In plain terminals this emits VS Code
+# 633 OSC sequences + zle/precmd hooks that break line editing. Drop guard if fixed upstream.
+if [ -x "/Users/tolsee/.local/bin/devin" ] && [ -n "$DEVIN_SESSION_ID" ]; then
+  eval "$("/Users/tolsee/.local/bin/devin" shell init zsh --stage pre)"
+fi
+# <<<< END MANAGED DEVIN BLOCK <<<<
+
 alias pip=pip3
 alias vim=nvim
 alias cat=bat
 alias clauded="claude --dangerously-skip-permissions"
+alias claudea="claude --enable-auto-mode"
+alias claudet="CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 claude --enable-auto-mode"
 
-export RUBY_CONFIGURE_OPTS="--with-openssl-dir=$(brew --prefix openssl@1.1)"
+export RUBY_CONFIGURE_OPTS="--with-openssl-dir=$(brew --prefix openssl@3)"
 export PATH="$HOME/.rbenv/shims:$PATH"
 export PATH="$HOME/.mix/escripts:$PATH"
 eval "$(rbenv init -)"
@@ -45,8 +59,6 @@ SPACESHIP_GCLOUD_SHOW=false
 export ZPLUG_HOME=/opt/homebrew/opt/zplug
 source $ZPLUG_HOME/init.zsh
 
-zplug "mafredri/zsh-async"
-zplug "lukechilds/zsh-nvm"
 zplug "zsh-users/zsh-syntax-highlighting"
 zplug "zsh-users/zsh-completions"
 zplug "Aloxaf/fzf-tab"
@@ -135,8 +147,18 @@ complete -o nospace -C /opt/homebrew/bin/vault vault
 # NVM
 # -----
 export NVM_DIR="$HOME/.nvm"
-[ -s "/opt/homebrew/opt/nvm/nvm.sh" ] && \. "/opt/homebrew/opt/nvm/nvm.sh"  # This loads nvm
-[ -s "/opt/homebrew/opt/nvm/etc/bash_completion.d/nvm" ] && \. "/opt/homebrew/opt/nvm/etc/bash_completion.d/nvm"  # This loads nvm bash_completion
+# Manual lazy-load: instant shell startup. First call to any of these commands
+# sources nvm once, replaces the stubs, and re-runs the real command.
+# (Replaces lukechilds/zsh-nvm, whose lazy setup enumerated global bins across
+#  all 9 node versions — ~1s on every shell. nvim LSPs come from Mason, not nvm.)
+_nvm_lazy() {
+  unset -f nvm node npm npx pnpm pnpx yarn yarnpkg corepack 2>/dev/null
+  [ -s "$NVM_DIR/nvm.sh" ] && source "$NVM_DIR/nvm.sh"
+}
+for _c in nvm node npm npx pnpm pnpx yarn yarnpkg corepack; do
+  eval "${_c}() { _nvm_lazy; ${_c} \"\$@\"; }"
+done
+unset _c
 
 # proto
 export PROTO_HOME="$HOME/.proto"
@@ -150,10 +172,8 @@ export PATH="/opt/homebrew/opt/mysql-client/bin:$PATH"
 
 alias claude-mem='bun "/Users/tolsee/.claude/plugins/marketplaces/thedotmack/plugin/scripts/worker-service.cjs"'
 
-ltd-mtls-split() {
-  local pem=~/.ltd/proxy/certificates/mtls.pem
-  openssl x509 -in "$pem" -out ~/.ltd/proxy/certificates/mtls-cert.pem && \
-  openssl pkey -in "$pem" -out ~/.ltd/proxy/certificates/mtls-key.pem && \
-  echo "cert: ~/.ltd/proxy/certificates/mtls-cert.pem" && \
-  echo "key:  ~/.ltd/proxy/certificates/mtls-key.pem"
-}
+# >>>> BEGIN MANAGED DEVIN BLOCK >>>>
+if [ -x "/Users/tolsee/.local/bin/devin" ] && [ -n "$DEVIN_SESSION_ID" ]; then
+  eval "$("/Users/tolsee/.local/bin/devin" shell init zsh --stage post)"
+fi
+# <<<< END MANAGED DEVIN BLOCK <<<<

@@ -29,7 +29,15 @@ return {
     { "gruvbox-community/gruvbox" },
     { "folke/tokyonight.nvim" },
 
-    { "nvim-treesitter/nvim-treesitter-context" },
+    {
+        "nvim-treesitter/nvim-treesitter-context",
+        opts = {
+            on_attach = function(buf)
+                local ft = vim.bo[buf].filetype
+                return ft ~= "markdown"
+            end,
+        },
+    },
     { "lukas-reineke/indent-blankline.nvim" },
 
     -- File explorer/Fuzzy search
