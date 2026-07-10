@@ -1,0 +1,20 @@
+#!/bin/bash
+# Install the hand-rolled skills in this repo into agent skill dirs via the
+# vercel-labs `skills` CLI. Local-path install: no push/network needed.
+#
+# Usage:
+#   ./skills/install                 # default agents
+#   ./skills/install cursor amp      # override agents
+#   AGENTS="claude-code codex" ./skills/install
+set -euo pipefail
+
+cd "$(dirname "$0")"
+
+# Default agents. Override via args or $AGENTS.
+AGENTS="${AGENTS:-claude-code codex}"
+[ "$#" -gt 0 ] && AGENTS="$*"
+
+echo "Installing skills from $PWD -> agents: $AGENTS"
+# $AGENTS is intentionally unquoted: the CLI takes agents as separate args
+# (e.g. --agent claude-code codex), not one space-joined string.
+npx -y skills@latest add . --skill '*' --agent $AGENTS --global --yes
