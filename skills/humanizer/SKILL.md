@@ -32,6 +32,8 @@ When given text to humanize:
 5. **Add soul** - Don't just remove bad patterns; inject actual personality
 6. **Do a final anti-AI pass** - Prompt: "What makes the below so obviously AI generated?" Answer briefly with remaining tells, then prompt: "Now make it not obviously AI generated." and revise
 
+> **Hard invariant — never fabricate.** Humanizing is a *style* edit, not a license to invent content. Never add facts, dates, numbers, statistics, named people, studies, surveys, quotations, citations, or first-person experiences/opinions that aren't in the source. Where an example below adds a specific detail ("a 2019 survey", "founded in 1923", "people I talk to"), that is illustrating *prose rhythm only* — do not copy the invented specifics. If natural phrasing seems to need a concrete detail the source lacks, keep it vague, preserve the original uncertainty, or ask the user for the fact. A more human voice is never worth a false claim.
+
 
 ## Voice Calibration (Optional)
 
