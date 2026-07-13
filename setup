@@ -34,3 +34,33 @@ ln -s $PWD/ghostty/.config/ghostty $ghostty_config_dir
 ln -nsf $PWD/.zshrc $zshrc_config_file
 ln -nsf $PWD/.tmux.conf $tmux_config_file
 ln -nsf $PWD/zsh/functions $HOME/.config/zsh-functions
+
+# Install Antigravity CLI (agy) if not already installed
+if ! command -v agy &> /dev/null
+then
+	echo "Installing Antigravity CLI (agy)..."
+	if command -v brew &> /dev/null
+	then
+		brew install --cask antigravity-cli
+	else
+		curl -fsSL https://antigravity.google/cli/install.sh | bash
+	fi
+else
+	echo "Antigravity CLI (agy) is already installed."
+fi
+
+# Install global MCP configurations
+if [ -f "$PWD/mcps/install" ]
+then
+	echo "Installing global MCP servers..."
+	./mcps/install
+fi
+
+
+
+# Wire shared agent rules (CLAUDE.md/AGENTS.md symlinks + pointers)
+if [ -f "$PWD/agents/install" ]
+then
+	echo "Installing agent rules..."
+	./agents/install
+fi

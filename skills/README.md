@@ -6,7 +6,7 @@ Hand-rolled agent skills, installed into multiple agents via the
 ## Install
 
 ```bash
-./install                      # default agents: claude-code codex
+./install                      # default agents: claude-code codex antigravity
 ./install cursor amp zed       # override agents
 AGENTS="claude-code" ./install # or via env
 ```

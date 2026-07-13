@@ -1,0 +1,65 @@
+{
+  "mcpServers": {
+    "buildkite": {
+      "type": "http",
+      "url": "https://mcp.buildkite.com/mcp/readonly"
+    },
+    "notion": {
+      "type": "http",
+      "url": "https://mcp.notion.com/mcp"
+    },
+    "datadog-mcp": {
+      "type": "http",
+      "url": "https://mcp.datadoghq.com/api/unstable/mcp-server/mcp"
+    },
+    "figma": {
+      "type": "http",
+      "url": "https://mcp.figma.com/mcp"
+    },
+    "codegraph": {
+      "type": "stdio",
+      "command": "codegraph",
+      "args": [
+        "serve",
+        "--mcp"
+      ]
+    },
+    "grafana": {
+      "command": "sh",
+      "args": [
+        "-c",
+        "docker run --rm -i -v /Users/tolsee/.ltd/proxy/certificates:/certs:ro -e GRAFANA_URL -e GRAFANA_SERVICE_ACCOUNT_TOKEN grafana/mcp-grafana -t stdio --tls-cert-file /certs/mtls-cert.pem --tls-key-file /certs/mtls-key.pem"
+      ],
+      "env": {
+        "GRAFANA_URL": "https://grafana.platform.linktr.ee"
+      }
+    },
+    "linear": {
+      "type": "http",
+      "url": "https://mcp.linear.app/mcp"
+    },
+    "linear-server": {
+      "type": "http",
+      "url": "https://mcp.linear.app/mcp"
+    },
+    "postme": {
+      "type": "http",
+      "url": "https://postme.live/api/mcp",
+      "headers": {
+        "Authorization": "Bearer $POSTME_API_KEY"
+      },
+      "bearer_token_env_var": "POSTME_API_KEY"
+    },
+    "aws-knowledgebase-mcp": {
+      "command": "node",
+      "args": [
+        "/Users/tolsee/.ltd/linktree-knowledge/linktree-knowledge-mcp-server.js"
+      ],
+      "env": {
+        "AWS_PROFILE": "platform",
+        "AWS_REGION": "us-west-2",
+        "KNOWLEDGE_MCP_SOURCE": "codex"
+      }
+    }
+  }
+}

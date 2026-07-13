@@ -177,3 +177,6 @@ if [ -x "/Users/tolsee/.local/bin/devin" ] && [ -n "$DEVIN_SESSION_ID" ]; then
   eval "$("/Users/tolsee/.local/bin/devin" shell init zsh --stage post)"
 fi
 # <<<< END MANAGED DEVIN BLOCK <<<<
+
+# Added by Antigravity CLI installer
+export PATH="$HOME/.local/bin:$PATH"

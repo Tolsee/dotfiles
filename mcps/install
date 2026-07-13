@@ -1,0 +1,185 @@
+#!/usr/bin/env node
+const fs = require('fs');
+const path = require('path');
+
+// Determine target agents. Defaults to: claude-code, antigravity, codex.
+// Override via arguments or env AGENTS (e.g. AGENTS="antigravity" ./install)
+let agents = ['claude-code', 'antigravity', 'codex'];
+if (process.env.AGENTS) {
+  agents = process.env.AGENTS.trim().split(/\s+/);
+}
+if (process.argv.length > 2) {
+  agents = process.argv.slice(2);
+}
+
+const home = process.env.HOME || process.env.USERPROFILE;
+const sourceConfigPath = path.join(__dirname, 'mcp_config.json');
+
+if (!fs.existsSync(sourceConfigPath)) {
+  console.error(`Source MCP configuration not found at: ${sourceConfigPath}`);
+  process.exit(1);
+}
+
+let sourceConfig;
+try {
+  sourceConfig = JSON.parse(fs.readFileSync(sourceConfigPath, 'utf8'));
+} catch (e) {
+  console.error(`Failed to parse source mcp_config.json: ${e.message}`);
+  process.exit(1);
+}
+
+let mcpServers = sourceConfig.mcpServers || {};
+if (Object.keys(mcpServers).length === 0) {
+  console.log('No MCP servers defined in source mcp_config.json.');
+  process.exit(0);
+}
+
+// Function to recursively expand environment variables (e.g. $VAR) in strings using the shell env
+function expandEnvVars(value) {
+  if (typeof value === 'string') {
+    return value.replace(/\$([a-zA-Z_][a-zA-Z0-9_]*)/g, (_, name) => {
+      if (process.env[name] === undefined) {
+        console.warn(`Warning: Environment variable $${name} is not set in the shell.`);
+      }
+      return process.env[name] || `$${name}`;
+    });
+  } else if (Array.isArray(value)) {
+    return value.map(expandEnvVars);
+  } else if (typeof value === 'object' && value !== null) {
+    const res = {};
+    for (const [k, v] of Object.entries(value)) {
+      res[k] = expandEnvVars(v);
+    }
+    return res;
+  }
+  return value;
+}
+
+// Expand placeholders before writing configs
+mcpServers = expandEnvVars(mcpServers);
+
+console.log(`Installing MCP configurations for agents: ${agents.join(', ')}`);
+
+// Custom JSON to TOML serializer for Codex config
+function jsonToToml(servers) {
+  let toml = '';
+  for (const [name, config] of Object.entries(servers)) {
+    toml += `[mcp_servers.${name}]\n`;
+    for (const [key, value] of Object.entries(config)) {
+      if (typeof value === 'string') {
+        toml += `${key} = "${value}"\n`;
+      } else if (Array.isArray(value)) {
+        toml += `${key} = [${value.map(a => JSON.stringify(a)).join(', ')}]\n`;
+      } else if (typeof value === 'object' && value !== null) {
+        toml += `${key} = { ${Object.entries(value).map(([k, v]) => `${k} = "${v}"`).join(', ')} }\n`;
+      } else if (typeof value === 'boolean') {
+        toml += `${key} = ${value}\n`;
+      }
+    }
+    toml += '\n';
+  }
+  return toml;
+}
+
+// Custom TOML merger that preserves non-MCP configurations
+function mergeToml(existingToml, newMcpServers) {
+  const lines = existingToml.split('\n');
+  const keptLines = [];
+  let inMcpSection = false;
+
+  for (const line of lines) {
+    const sectionMatch = line.match(/^\s*\[([^\]]+)\]/);
+    if (sectionMatch) {
+      const sectionName = sectionMatch[1].trim();
+      if (sectionName === 'mcp_servers' || sectionName.startsWith('mcp_servers.')) {
+        inMcpSection = true;
+        continue;
+      } else {
+        inMcpSection = false;
+      }
+    }
+    if (!inMcpSection) {
+      keptLines.push(line);
+    }
+  }
+
+  // Trim trailing blank lines
+  while (keptLines.length > 0 && keptLines[keptLines.length - 1].trim() === '') {
+    keptLines.pop();
+  }
+
+  let result = keptLines.join('\n') + '\n\n';
+  result += jsonToToml(newMcpServers);
+  return result.replace(/\n{3,}/g, '\n\n').trim() + '\n';
+}
+
+agents.forEach(agent => {
+  if (agent === 'claude-code') {
+    const claudePath = path.join(home, '.claude.json');
+    try {
+      let claudeConfig = { mcpServers: {} };
+      if (fs.existsSync(claudePath)) {
+        const raw = fs.readFileSync(claudePath, 'utf8').trim();
+        if (raw) claudeConfig = JSON.parse(raw);
+      }
+      // Remove sequential-thinking explicitly from the target if it exists
+      if (claudeConfig.mcpServers) {
+        delete claudeConfig.mcpServers['sequential-thinking'];
+      }
+      claudeConfig.mcpServers = {
+        ...(claudeConfig.mcpServers || {}),
+        ...mcpServers
+      };
+      fs.writeFileSync(claudePath, JSON.stringify(claudeConfig, null, 2), 'utf8');
+      console.log(`✓ Claude Code: Global config updated (~/.claude.json)`);
+    } catch (e) {
+      console.error(`✗ Claude Code: Failed to update config: ${e.message}`);
+    }
+  } else if (agent === 'antigravity') {
+    const geminiPath = path.join(home, '.gemini/config/mcp_config.json');
+    const geminiDir = path.dirname(geminiPath);
+    try {
+      if (!fs.existsSync(geminiDir)) {
+        fs.mkdirSync(geminiDir, { recursive: true });
+      }
+      let geminiConfig = { mcpServers: {} };
+      if (fs.existsSync(geminiPath)) {
+        const raw = fs.readFileSync(geminiPath, 'utf8').trim();
+        if (raw) geminiConfig = JSON.parse(raw);
+      }
+      // Remove sequential-thinking explicitly
+      if (geminiConfig.mcpServers) {
+        delete geminiConfig.mcpServers['sequential-thinking'];
+      }
+      geminiConfig.mcpServers = {
+        ...(geminiConfig.mcpServers || {}),
+        ...mcpServers
+      };
+      fs.writeFileSync(geminiPath, JSON.stringify(geminiConfig, null, 2), 'utf8');
+      console.log(`✓ Antigravity: Global config updated (~/.gemini/config/mcp_config.json)`);
+    } catch (e) {
+      console.error(`✗ Antigravity: Failed to update config: ${e.message}`);
+    }
+  } else if (agent === 'codex') {
+    const codexPath = path.join(home, '.codex/config.toml');
+    const codexDir = path.dirname(codexPath);
+    try {
+      if (!fs.existsSync(codexDir)) {
+        fs.mkdirSync(codexDir, { recursive: true });
+      }
+      let existingToml = '';
+      if (fs.existsSync(codexPath)) {
+        existingToml = fs.readFileSync(codexPath, 'utf8');
+      }
+      const updatedToml = mergeToml(existingToml, mcpServers);
+      fs.writeFileSync(codexPath, updatedToml, 'utf8');
+      console.log(`✓ Codex: Global config updated (~/.codex/config.toml)`);
+    } catch (e) {
+      console.error(`✗ Codex: Failed to update config: ${e.message}`);
+    }
+  } else {
+    console.warn(`! Unsupported agent target: ${agent}`);
+  }
+});
+
+console.log('Done installing MCPs.');
