@@ -1,0 +1,6 @@
+interface:
+  display_name: "Project Check-in"
+  short_description: "Generate a weekly project check-in document in Linear"
+
+policy:
+  allow_implicit_invocation: false
