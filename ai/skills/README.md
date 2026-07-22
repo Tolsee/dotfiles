@@ -6,9 +6,9 @@ Hand-rolled agent skills, installed into multiple agents via the
 ## Install
 
 ```bash
-./install                      # default agents: claude-code codex antigravity
-./install cursor amp zed       # override agents
-AGENTS="claude-code" ./install # or via env
+./ai/skills/install                      # default agents: claude-code codex antigravity
+./ai/skills/install cursor amp zed       # override agents
+AGENTS="claude-code" ./ai/skills/install # or via env
 ```
 
 Skills install globally (symlinked into each agent's skill dir, e.g.
@@ -20,6 +20,8 @@ Skills install globally (symlinked into each agent's skill dir, e.g.
 - `humanizer` — remove AI-writing tells from text
 - `writing-release-posts` — write Slack release posts / changelogs
 - `project-checkin` — weekly project check-in in Linear (**manual only**)
+- `grill-me` — sharpen a plan or design through a focused interview
+- `grilling` — supporting interview loop used by `grill-me`
 
 `project-checkin` is gated to explicit invocation: its description tells the
 agent not to auto-trigger, so it only runs when you call `/project-checkin` by
@@ -27,4 +29,4 @@ name. Note there's no hard "installed but hidden" flag in the base skill spec �
 the entry still appears in the skill list; suppression is via the
 do-not-auto-trigger description and depends on the agent honoring it.
 
-Add a skill: drop a `<name>/SKILL.md` folder here and re-run `./install`.
+Add a skill: drop a `<name>/SKILL.md` folder here and re-run `./ai/skills/install`.

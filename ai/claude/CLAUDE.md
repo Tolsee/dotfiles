@@ -1,4 +1,4 @@
-@~/dev/dotfiles/agents/AGENTS.md
+@~/dev/dotfiles/ai/agents/AGENTS.md
 
 <!-- CODEGRAPH_START -->
 ## CodeGraph

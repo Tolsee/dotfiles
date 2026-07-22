@@ -1,4 +1,4 @@
-# RTK - Rust Token Killer
+# RTK — Rust Token Killer
 
 **Usage**: Token-optimized CLI proxy (60-90% savings on dev operations)
 

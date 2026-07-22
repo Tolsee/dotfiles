@@ -50,17 +50,17 @@ else
 fi
 
 # Install global MCP configurations
-if [ -f "$PWD/mcps/install" ]
+if [ -f "$PWD/ai/mcps/install" ]
 then
 	echo "Installing global MCP servers..."
-	./mcps/install
+	./ai/mcps/install
 fi
 
 
 
 # Wire shared agent rules (CLAUDE.md/AGENTS.md symlinks + pointers)
-if [ -f "$PWD/agents/install" ]
+if [ -f "$PWD/ai/agents/install" ]
 then
 	echo "Installing agent rules..."
-	./agents/install
+	./ai/agents/install
 fi

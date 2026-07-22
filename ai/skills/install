@@ -3,9 +3,9 @@
 # vercel-labs `skills` CLI. Local-path install: no push/network needed.
 #
 # Usage:
-#   ./skills/install                 # default agents
-#   ./skills/install cursor amp      # override agents
-#   AGENTS="claude-code codex" ./skills/install
+#   ./ai/skills/install                 # default agents
+#   ./ai/skills/install cursor amp      # override agents
+#   AGENTS="claude-code codex" ./ai/skills/install
 set -euo pipefail
 
 cd "$(dirname "$0")"

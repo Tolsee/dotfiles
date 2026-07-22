@@ -23,5 +23,5 @@ AGENTS="antigravity" ./install
 
 ## Adding or Updating MCP Servers
 
-1. Edit [mcps/mcp_config.json](mcp_config.json) to add, modify, or remove MCP servers.
+1. Edit [ai/mcps/mcp_config.json](mcp_config.json) to add, modify, or remove MCP servers.
 2. Run `./install` to apply the updates.

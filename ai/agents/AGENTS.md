@@ -1,6 +1,6 @@
 # Global Agent Rules
 
-Shared by all coding agents (Claude Code, Codex, Antigravity/Gemini). Source of truth: `~/dev/dotfiles/agents/AGENTS.md`.
+Shared by all coding agents (Claude Code, Codex, Antigravity/Gemini). Source of truth: `~/dev/dotfiles/ai/agents/AGENTS.md`.
 
 ## Communication
 
