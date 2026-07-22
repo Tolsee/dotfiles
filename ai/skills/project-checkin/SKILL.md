@@ -1,6 +1,7 @@
 ---
 name: project-checkin
-description: "MANUAL ONLY — do NOT auto-trigger from conversation. Invoke solely when the user explicitly runs /project-checkin (or names this skill by name). Generates a weekly project check-in document in Linear."
+description: "Generates a weekly project check-in document in Linear. Run via /project-checkin."
+disable-model-invocation: true
 allowed-tools: mcp__plugin_linear_linear__*, AskUserQuestion
 ---
 
