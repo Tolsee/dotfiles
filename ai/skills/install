@@ -1,6 +1,6 @@
 #!/bin/bash
-# Install the hand-rolled skills in this repo into agent skill dirs via the
-# vercel-labs `skills` CLI. Local-path install: no push/network needed.
+# Install repo-owned and selected upstream skills into agent skill dirs via the
+# vercel-labs `skills` CLI.
 #
 # Usage:
 #   ./ai/skills/install                 # default agents
@@ -8,13 +8,31 @@
 #   AGENTS="claude-code codex" ./ai/skills/install
 set -euo pipefail
 
-cd "$(dirname "$0")"
+SKILLS_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$SKILLS_DIR"
+
+# shellcheck source=upstream-skills
+source "$SKILLS_DIR/upstream-skills"
 
 # Default agents. Override via args or $AGENTS.
-AGENTS="${AGENTS:-claude-code codex antigravity}"
-[ "$#" -gt 0 ] && AGENTS="$*"
+if [ "$#" -gt 0 ]; then
+  SELECTED_AGENTS=("$@")
+elif [ -n "${AGENTS:-}" ]; then
+  read -r -a SELECTED_AGENTS <<< "$AGENTS"
+else
+  SELECTED_AGENTS=(claude-code codex antigravity)
+fi
 
-echo "Installing skills from $PWD -> agents: $AGENTS"
-# $AGENTS is intentionally unquoted: the CLI takes agents as separate args
-# (e.g. --agent claude-code codex), not one space-joined string.
-npx -y skills@latest add . --skill '*' --agent $AGENTS --global --yes
+echo "Installing local skills from $PWD -> agents: ${SELECTED_AGENTS[*]}"
+npx -y skills@latest add . \
+  --skill '*' \
+  --agent "${SELECTED_AGENTS[@]}" \
+  --global \
+  --yes
+
+echo "Installing selected skills from mattpocock/skills -> agents: ${SELECTED_AGENTS[*]}"
+npx -y skills@latest add mattpocock/skills \
+  --skill "${UPSTREAM_SKILLS[@]}" \
+  --agent "${SELECTED_AGENTS[@]}" \
+  --global \
+  --yes

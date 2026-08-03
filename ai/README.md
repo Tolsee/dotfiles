@@ -7,6 +7,6 @@ This directory is the single source of truth for AI-agent configuration.
 - `mcps/` — shared global MCP server definitions and installer
 - `skills/` — reusable Agent Skills and their installer
 
-Run `../setup` from the repository root to install agent rules and MCPs. Run
-`./skills/install` from this directory to install skills into the selected
-agents.
+Run `./setup` from the repository root to install agent rules, MCPs, and skills.
+From this directory, run `./skills/install` to install only the skills into the
+selected agents, or `./skills/update` to update the managed upstream skills.

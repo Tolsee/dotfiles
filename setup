@@ -56,11 +56,16 @@ then
 	./ai/mcps/install
 fi
 
-
-
 # Wire shared agent rules (CLAUDE.md/AGENTS.md symlinks + pointers)
 if [ -f "$PWD/ai/agents/install" ]
 then
 	echo "Installing agent rules..."
 	./ai/agents/install
+fi
+
+# Install global agent skills
+if [ -f "$PWD/ai/skills/install" ]
+then
+	echo "Installing agent skills..."
+	./ai/skills/install
 fi

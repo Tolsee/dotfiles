@@ -1,7 +1,9 @@
 # Skills
 
-Hand-rolled agent skills, installed into multiple agents via the
-[vercel-labs `skills`](https://github.com/vercel-labs/skills) CLI.
+Agent skills installed into multiple agents via the
+[vercel-labs `skills`](https://github.com/vercel-labs/skills) CLI. The installer
+manages both skills maintained in this repository and selected skills fetched
+from upstream repositories.
 
 ## Install
 
@@ -11,17 +13,28 @@ Hand-rolled agent skills, installed into multiple agents via the
 AGENTS="claude-code" ./ai/skills/install # or via env
 ```
 
-Skills install globally (symlinked into each agent's skill dir, e.g.
-`~/.claude/skills/`). Re-run any time to add agents or pick up edits.
+Skills install globally into each agent's skill directory (for example,
+`~/.claude/skills/`). Re-run the installer to add agents, pick up local edits,
+or refresh the selected upstream skills.
 
-## Skills
+## Update upstream skills
+
+```bash
+./ai/skills/update            # update every selected upstream skill
+./ai/skills/update wayfinder  # update one selected upstream skill
+```
+
+The update wrapper only accepts skills listed in `ai/skills/upstream-skills`.
+Local skills are not registry-managed: edit them in this repository and re-run
+`./ai/skills/install` to refresh their agent links.
+
+## Local skills
+
+These skills are maintained under `ai/skills/` in this repository:
 
 - `babysit-pr` — shepherd a PR to merge-ready (CI, comments, rebase)
-- `humanizer` — remove AI-writing tells from text
 - `writing-release-posts` — write Slack release posts / changelogs
 - `project-checkin` — weekly project check-in in Linear (**manual only**)
-- `grill-me` — sharpen a plan or design through a focused interview
-- `grilling` — supporting interview loop used by `grill-me`
 
 `project-checkin` is gated to explicit invocation: its description tells the
 agent not to auto-trigger, so it only runs when you call `/project-checkin` by
@@ -29,4 +42,24 @@ name. Note there's no hard "installed but hidden" flag in the base skill spec �
 the entry still appears in the skill list; suppression is via the
 do-not-auto-trigger description and depends on the agent honoring it.
 
-Add a skill: drop a `<name>/SKILL.md` folder here and re-run `./ai/skills/install`.
+To add a local skill, create `ai/skills/<name>/SKILL.md` and re-run
+`./ai/skills/install`. The local `--skill '*'` install picks it up
+automatically.
+
+## Upstream-managed skills
+
+These skills are installed directly from
+[`mattpocock/skills`](https://github.com/mattpocock/skills):
+
+- `grill-me`
+- `grilling`
+- `wayfinder`
+- `domain-modeling`
+- `research`
+- `prototype`
+- `setup-matt-pocock-skills`
+
+To add another skill from `mattpocock/skills`, add its name to
+`ai/skills/upstream-skills`, then re-run the installer. This shared list also
+makes it available to `./ai/skills/update`. Skills from another upstream
+repository need their own `npx skills add <owner>/<repo>` block.
