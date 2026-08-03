@@ -18,6 +18,10 @@ for f in CLAUDE.md RTK.md; do
 done
 echo "linked ~/.claude/{CLAUDE.md,RTK.md} -> $DOTFILES/ai/claude/"
 
+# Claude Code — global subagent definitions (model-tiered by task complexity)
+ln -sf "$DOTFILES/ai/claude/agents" ~/.claude/agents
+echo "linked ~/.claude/agents -> $DOTFILES/ai/claude/agents"
+
 # Codex — append pointer if missing
 if [ -e ~/.codex ]; then
   if grep -q "dotfiles/agents/AGENTS.md" ~/.codex/AGENTS.md 2>/dev/null; then
