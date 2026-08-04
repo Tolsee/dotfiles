@@ -122,9 +122,10 @@ agents.forEach(agent => {
         const raw = fs.readFileSync(claudePath, 'utf8').trim();
         if (raw) claudeConfig = JSON.parse(raw);
       }
-      // Remove sequential-thinking explicitly from the target if it exists
+      // Remove explicitly retired servers from the target if they exist.
       if (claudeConfig.mcpServers) {
         delete claudeConfig.mcpServers['sequential-thinking'];
+        delete claudeConfig.mcpServers['figma'];
       }
       claudeConfig.mcpServers = {
         ...(claudeConfig.mcpServers || {}),
@@ -147,9 +148,10 @@ agents.forEach(agent => {
         const raw = fs.readFileSync(geminiPath, 'utf8').trim();
         if (raw) geminiConfig = JSON.parse(raw);
       }
-      // Remove sequential-thinking explicitly
+      // Remove explicitly retired servers from the target if they exist.
       if (geminiConfig.mcpServers) {
         delete geminiConfig.mcpServers['sequential-thinking'];
+        delete geminiConfig.mcpServers['figma'];
       }
       geminiConfig.mcpServers = {
         ...(geminiConfig.mcpServers || {}),
