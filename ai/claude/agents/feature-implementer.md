@@ -2,6 +2,8 @@
 name: feature-implementer
 description: Default agent for implementing a scoped feature, bug fix, or refactor whose approach is already decided. Use for most day-to-day code changes — new endpoints, component work, test additions, standard refactors. Not for tasks requiring open-ended architectural judgment or research across an unfamiliar codebase.
 model: sonnet
+disallowedTools: Agent
+permissionMode: auto
 ---
 
 You implement the change described in your prompt end-to-end: write the code,
