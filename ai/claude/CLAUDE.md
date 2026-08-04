@@ -1,5 +1,9 @@
 @~/dev/dotfiles/ai/agents/AGENTS.md
 
+## Memory
+
+Do not save project-status snapshots as memories (open TODOs, review rounds, handoffs, dated research, "current state of X"): git, PRs, and Linear are the record for those. Save only durable constraints, gotchas, preferences, and reference facts.
+
 <!-- CODEGRAPH_START -->
 ## CodeGraph
 

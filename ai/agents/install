@@ -22,6 +22,18 @@ echo "linked ~/.claude/{CLAUDE.md,RTK.md} -> $DOTFILES/ai/claude/"
 ln -sf "$DOTFILES/ai/claude/agents" ~/.claude/agents
 echo "linked ~/.claude/agents -> $DOTFILES/ai/claude/agents"
 
+# Claude Code — Claude-only skills (NOT installed for codex/antigravity, so they
+# live here with --agent claude-code rather than in ai/skills/, which targets all
+# agents). Note: the skills CLI copies into ~/.agents/skills, so re-run after edits.
+if [ -d "$DOTFILES/ai/claude/skills" ]; then
+  echo "Installing Claude-only skills..."
+  npx -y skills@latest add "$DOTFILES/ai/claude/skills" \
+    --skill '*' \
+    --agent claude-code \
+    --global \
+    --yes
+fi
+
 # Codex — append pointer if missing
 if [ -e ~/.codex ]; then
   if grep -q "dotfiles/agents/AGENTS.md" ~/.codex/AGENTS.md 2>/dev/null; then
