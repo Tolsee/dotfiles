@@ -34,10 +34,6 @@
       "type": "http",
       "url": "https://mcp.linear.app/mcp"
     },
-    "linear-server": {
-      "type": "http",
-      "url": "https://mcp.linear.app/mcp"
-    },
     "postme": {
       "type": "http",
       "url": "https://postme.live/api/mcp",
@@ -45,17 +41,6 @@
         "Authorization": "Bearer $POSTME_API_KEY"
       },
       "bearer_token_env_var": "POSTME_API_KEY"
-    },
-    "aws-knowledgebase-mcp": {
-      "command": "node",
-      "args": [
-        "/Users/tolsee/.ltd/linktree-knowledge/linktree-knowledge-mcp-server.js"
-      ],
-      "env": {
-        "AWS_PROFILE": "platform",
-        "AWS_REGION": "us-west-2",
-        "KNOWLEDGE_MCP_SOURCE": "codex"
-      }
     }
   }
 }

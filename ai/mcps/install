@@ -58,6 +58,27 @@ function expandEnvVars(value) {
 // Expand placeholders before writing configs
 mcpServers = expandEnvVars(mcpServers);
 
+// Servers we no longer want anywhere. Removed from target configs if present.
+const RETIRED = ['sequential-thinking', 'figma', 'linear-server'];
+
+// Servers Claude Code gets from an official plugin. Installing them here too
+// would double every tool in the tool list, so they are written for
+// codex/antigravity only.
+const CLAUDE_PLUGIN_PROVIDED = ['datadog-mcp'];
+
+function serversFor(agent) {
+  const skip = agent === 'claude-code' ? [...RETIRED, ...CLAUDE_PLUGIN_PROVIDED] : RETIRED;
+  return Object.fromEntries(
+    Object.entries(mcpServers).filter(([name]) => !skip.includes(name))
+  );
+}
+
+function prune(servers, agent) {
+  if (!servers) return;
+  const skip = agent === 'claude-code' ? [...RETIRED, ...CLAUDE_PLUGIN_PROVIDED] : RETIRED;
+  for (const name of skip) delete servers[name];
+}
+
 console.log(`Installing MCP configurations for agents: ${agents.join(', ')}`);
 
 // Custom JSON to TOML serializer for Codex config
@@ -122,14 +143,11 @@ agents.forEach(agent => {
         const raw = fs.readFileSync(claudePath, 'utf8').trim();
         if (raw) claudeConfig = JSON.parse(raw);
       }
-      // Remove explicitly retired servers from the target if they exist.
-      if (claudeConfig.mcpServers) {
-        delete claudeConfig.mcpServers['sequential-thinking'];
-        delete claudeConfig.mcpServers['figma'];
-      }
+      // Drop retired + plugin-provided servers from the target if they exist.
+      prune(claudeConfig.mcpServers, 'claude-code');
       claudeConfig.mcpServers = {
         ...(claudeConfig.mcpServers || {}),
-        ...mcpServers
+        ...serversFor('claude-code')
       };
       fs.writeFileSync(claudePath, JSON.stringify(claudeConfig, null, 2), 'utf8');
       console.log(`✓ Claude Code: Global config updated (~/.claude.json)`);
@@ -148,14 +166,11 @@ agents.forEach(agent => {
         const raw = fs.readFileSync(geminiPath, 'utf8').trim();
         if (raw) geminiConfig = JSON.parse(raw);
       }
-      // Remove explicitly retired servers from the target if they exist.
-      if (geminiConfig.mcpServers) {
-        delete geminiConfig.mcpServers['sequential-thinking'];
-        delete geminiConfig.mcpServers['figma'];
-      }
+      // Drop retired servers from the target if they exist.
+      prune(geminiConfig.mcpServers, 'antigravity');
       geminiConfig.mcpServers = {
         ...(geminiConfig.mcpServers || {}),
-        ...mcpServers
+        ...serversFor('antigravity')
       };
       fs.writeFileSync(geminiPath, JSON.stringify(geminiConfig, null, 2), 'utf8');
       console.log(`✓ Antigravity: Global config updated (~/.gemini/config/mcp_config.json)`);
@@ -173,7 +188,7 @@ agents.forEach(agent => {
       if (fs.existsSync(codexPath)) {
         existingToml = fs.readFileSync(codexPath, 'utf8');
       }
-      const updatedToml = mergeToml(existingToml, mcpServers);
+      const updatedToml = mergeToml(existingToml, serversFor('codex'));
       fs.writeFileSync(codexPath, updatedToml, 'utf8');
       console.log(`✓ Codex: Global config updated (~/.codex/config.toml)`);
     } catch (e) {

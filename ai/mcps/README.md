@@ -25,3 +25,16 @@ AGENTS="antigravity" ./install
 
 1. Edit [ai/mcps/mcp_config.json](mcp_config.json) to add, modify, or remove MCP servers.
 2. Run `./install` to apply the updates.
+
+## Claude Code exclusions
+
+Some servers reach Claude Code through an official plugin instead (datadog).
+Installing them from here as well would duplicate every tool in Claude's tool
+list, so `install` keeps them out of `~/.claude.json` while still writing them
+for codex/antigravity, which have no plugin system. That list is
+`CLAUDE_PLUGIN_PROVIDED` in [install](install); `RETIRED` next to it names
+servers pruned from every agent. Add to those lists rather than deleting from
+`mcp_config.json` when a Claude plugin takes a server over.
+
+Servers installed by their own tooling stay out of `mcp_config.json` entirely,
+so this repo neither writes nor prunes them.

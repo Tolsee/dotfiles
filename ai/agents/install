@@ -19,7 +19,7 @@ done
 echo "linked ~/.claude/{CLAUDE.md,RTK.md} -> $DOTFILES/ai/claude/"
 
 # Claude Code — global subagent definitions (model-tiered by task complexity)
-ln -sf "$DOTFILES/ai/claude/agents" ~/.claude/agents
+ln -sfn "$DOTFILES/ai/claude/agents" ~/.claude/agents
 echo "linked ~/.claude/agents -> $DOTFILES/ai/claude/agents"
 
 # Claude Code — Claude-only skills (NOT installed for codex/antigravity, so they
