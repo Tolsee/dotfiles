@@ -1,9 +1,5 @@
 #!/bin/bash
-# Install repo-owned skills and all upstream mattpocock/skills into agent
-# skill dirs.
-#
-# Claude Code gets the upstream set via the official mattpocock-skills plugin
-# (managed, auto-updating). Other agents get every upstream skill via the
+# Install repo-owned and selected upstream skills into agent skill dirs via the
 # vercel-labs `skills` CLI.
 #
 # Usage:
@@ -14,6 +10,9 @@ set -euo pipefail
 
 SKILLS_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SKILLS_DIR"
+
+# shellcheck source=upstream-skills
+source "$SKILLS_DIR/upstream-skills"
 
 # Default agents. Override via args or $AGENTS.
 if [ "$#" -gt 0 ]; then
@@ -31,36 +30,9 @@ npx -y skills@latest add . \
   --global \
   --yes
 
-# Split agents: claude-code takes mattpocock/skills as a plugin; the rest get
-# every upstream skill via the skills CLI.
-CLAUDE_SELECTED=false
-CLI_AGENTS=()
-for agent in "${SELECTED_AGENTS[@]}"; do
-  if [ "$agent" = "claude-code" ]; then
-    CLAUDE_SELECTED=true
-  else
-    CLI_AGENTS+=("$agent")
-  fi
-done
-
-if [ "$CLAUDE_SELECTED" = true ]; then
-  if command -v claude > /dev/null 2>&1; then
-    if claude plugin list 2> /dev/null | grep -q "mattpocock-skills@"; then
-      echo "Claude Code plugin mattpocock-skills already installed."
-    else
-      echo "Installing mattpocock-skills plugin into Claude Code..."
-      claude plugin install mattpocock-skills
-    fi
-  else
-    echo "Skipping Claude Code plugin install: 'claude' CLI not found." >&2
-  fi
-fi
-
-if [ "${#CLI_AGENTS[@]}" -gt 0 ]; then
-  echo "Installing all skills from mattpocock/skills -> agents: ${CLI_AGENTS[*]}"
-  npx -y skills@latest add mattpocock/skills \
-    --skill '*' \
-    --agent "${CLI_AGENTS[@]}" \
-    --global \
-    --yes
-fi
+echo "Installing selected skills from mattpocock/skills -> agents: ${SELECTED_AGENTS[*]}"
+npx -y skills@latest add mattpocock/skills \
+  --skill "${UPSTREAM_SKILLS[@]}" \
+  --agent "${SELECTED_AGENTS[@]}" \
+  --global \
+  --yes
