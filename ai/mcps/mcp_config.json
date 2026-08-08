@@ -28,7 +28,10 @@
       ],
       "env": {
         "GRAFANA_URL": "https://grafana.platform.linktr.ee"
-      }
+      },
+      "env_vars": [
+        "GRAFANA_SERVICE_ACCOUNT_TOKEN"
+      ]
     },
     "linear": {
       "type": "http",
