@@ -1,13 +1,35 @@
 #!/bin/bash
-# Update globally installed upstream skills managed by the `skills` CLI
-# (codex, antigravity, ...). Pass skill names to update a subset.
-#
-# Claude Code's upstream skills come from the mattpocock-skills plugin, which
-# updates automatically via the official marketplace.
-#
-# Local skills follow this repository and are refreshed by re-running
-# ./ai/skills/install.
+# Update the selected globally installed upstream skills. Local skills follow
+# this repository and are refreshed by re-running ./ai/skills/install.
 set -euo pipefail
 
-echo "Updating upstream skills globally: ${*:-all}"
-npx -y skills@latest update "$@" --global --yes
+SKILLS_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# shellcheck source=upstream-skills
+source "$SKILLS_DIR/upstream-skills"
+
+if [ "$#" -eq 0 ]; then
+  TARGET_SKILLS=("${UPSTREAM_SKILLS[@]}")
+else
+  TARGET_SKILLS=("$@")
+
+  for requested_skill in "${TARGET_SKILLS[@]}"; do
+    is_upstream_skill=false
+
+    for upstream_skill in "${UPSTREAM_SKILLS[@]}"; do
+      if [ "$requested_skill" = "$upstream_skill" ]; then
+        is_upstream_skill=true
+        break
+      fi
+    done
+
+    if [ "$is_upstream_skill" = false ]; then
+      echo "Cannot update '$requested_skill': it is not a managed upstream skill." >&2
+      echo "Managed upstream skills: ${UPSTREAM_SKILLS[*]}" >&2
+      exit 1
+    fi
+  done
+fi
+
+echo "Updating upstream skills globally: ${TARGET_SKILLS[*]}"
+npx -y skills@latest update "${TARGET_SKILLS[@]}" --global --yes
