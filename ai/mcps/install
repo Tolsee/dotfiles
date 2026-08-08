@@ -69,7 +69,13 @@ const CLAUDE_PLUGIN_PROVIDED = ['datadog-mcp'];
 function serversFor(agent) {
   const skip = agent === 'claude-code' ? [...RETIRED, ...CLAUDE_PLUGIN_PROVIDED] : RETIRED;
   return Object.fromEntries(
-    Object.entries(mcpServers).filter(([name]) => !skip.includes(name))
+    Object.entries(mcpServers)
+      .filter(([name]) => !skip.includes(name))
+      .map(([name, config]) => {
+        if (agent === 'codex' || config.env_vars === undefined) return [name, config];
+        const { env_vars: _codexOnly, ...portableConfig } = config;
+        return [name, portableConfig];
+      })
   );
 }
 
