@@ -1,58 +1,79 @@
+local parsers = {
+    "bash",
+    "css",
+    "diff",
+    "dockerfile",
+    "git_config",
+    "git_rebase",
+    "gitcommit",
+    "gitignore",
+    "go",
+    "gomod",
+    "gosum",
+    "gotmpl",
+    "gowork",
+    "graphql",
+    "hcl",
+    "html",
+    "javascript",
+    "jsdoc",
+    "json",
+    "lua",
+    "markdown",
+    "markdown_inline",
+    "php",
+    "php_only",
+    "phpdoc",
+    "pkl",
+    "query",
+    "regex",
+    "sql",
+    "terraform",
+    "toml",
+    "tsx",
+    "typescript",
+    "vim",
+    "vimdoc",
+    "yaml",
+}
+
 return {
     "nvim-treesitter/nvim-treesitter",
-    build = ":TSUpdate",
+    branch = "main",
+    lazy = false,
+    build = function()
+        local treesitter = require("nvim-treesitter")
+        treesitter.install(parsers, { force = true }):wait(300000)
+    end,
     config = function()
-        require("nvim-treesitter.configs").setup({
-            ensure_installed = "all",
-            sync_install = false,
-            auto_install = false,
+        local treesitter = require("nvim-treesitter")
+        treesitter.setup()
 
-            indent = {
-                enable = true
-            },
+        local group = vim.api.nvim_create_augroup("tolsee_treesitter", { clear = true })
+        vim.api.nvim_create_autocmd("FileType", {
+            group = group,
+            callback = function(event)
+                local filetype = vim.bo[event.buf].filetype
+                local language = vim.treesitter.language.get_lang(filetype)
+                if not language or language == "html" or language == "markdown" then
+                    return
+                end
 
-            highlight = {
-                -- `false` will disable the whole extension
-                enable = true,
-                disable = function(lang, buf)
-                    if lang == "html" or lang == "markdown" then
-                        return true
-                    end
+                local max_filesize = 100 * 1024 -- 100 KB
+                local ok, stats = pcall(vim.uv.fs_stat, vim.api.nvim_buf_get_name(event.buf))
+                if ok and stats and stats.size > max_filesize then
+                    vim.notify(
+                        "File larger than 100KB treesitter disabled for performance",
+                        vim.log.levels.WARN,
+                        { title = "Treesitter" }
+                    )
+                    return
+                end
 
-                    local max_filesize = 100 * 1024 -- 100 KB
-                    local ok, stats = pcall(vim.loop.fs_stat, vim.api.nvim_buf_get_name(buf))
-                    if ok and stats and stats.size > max_filesize then
-                        vim.notify(
-                            "File larger than 100KB treesitter disabled for performance",
-                            vim.log.levels.WARN,
-                            {title = "Treesitter"}
-                        )
-                        return true
-                    end
-                end,
-
-                -- Setting this to true will run `:h syntax` and tree-sitter at the same time.
-                -- Set this to `true` if you depend on "syntax" being enabled (like for indentation).
-                -- Using this option may slow down your editor, and you may see some duplicate highlights.
-                -- Instead of true it can also be a list of languages
-                additional_vim_regex_highlighting = { "markdown" },
-            },
-
-            -- Enable injections for GraphQL highlighting
-            injections = {
-                enable = true,
-            },
+                if pcall(vim.treesitter.start, event.buf, language) then
+                    vim.bo[event.buf].indentexpr = "v:lua.require'nvim-treesitter'.indentexpr()"
+                end
+            end,
         })
-
-        local parser_config = require("nvim-treesitter.parsers").get_parser_configs()
-        parser_config.gotmpl = {
-            install_info = {
-                url = "https://github.com/ngalaiko/tree-sitter-go-template",
-                files = { "src/parser.c" },
-            },
-            filetype = "gotmpl",
-            used_by = { "gohtmltmpl", "gotexttmpl", "gotmpl", "yaml" },
-        }
-        parser_config.tsx.filetype_to_parsername = { "javascript", "typescript.tsx" }
-    end
+    end,
 }
