@@ -210,7 +210,5 @@ require("luasnip.loaders.from_vscode").lazy_load({
 })
 
 -- PHP
--- vim.lsp.config('phpactor', {})
--- vim.lsp.enable('phpactor')
-vim.lsp.config('intelephense', config())
-vim.lsp.enable('intelephense')
+vim.lsp.config('phpactor', config())
+vim.lsp.enable('phpactor')
