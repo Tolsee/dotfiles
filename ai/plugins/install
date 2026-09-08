@@ -82,7 +82,7 @@ if [ "${#FALLBACK_AGENTS[@]}" -gt 0 ]; then
         codex) target_dir="${CODEX_HOME:-$HOME/.codex}/skills" ;;
       esac
       target="$target_dir/$skill"
-      if [ -L "$target" ] && [ "$(readlink "$target")" = "$source_dir" ]; then
+      if [ -L "$target" ] && [ "$target" -ef "$source_dir" ]; then
         continue
       fi
       if [ -e "$target" ] || [ -L "$target" ]; then
@@ -112,7 +112,7 @@ if [ "${#FALLBACK_AGENTS[@]}" -gt 0 ]; then
     for skill in "${PORTAL_SKILLS[@]}"; do
       source_dir="$HOME/.agents/skills/$skill"
       target="$target_dir/$skill"
-      if [ -L "$target" ] && [ "$(readlink "$target")" = "$source_dir" ]; then
+      if [ -L "$target" ] && [ "$target" -ef "$source_dir" ]; then
         continue
       fi
       if [ -e "$target" ] || [ -L "$target" ]; then
