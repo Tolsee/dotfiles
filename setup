@@ -69,3 +69,10 @@ then
 	echo "Installing agent skills..."
 	./ai/skills/install
 fi
+
+# Install AI plugins and their cross-agent skill fallbacks
+if [ -f "$PWD/ai/plugins/install" ]
+then
+	echo "Installing AI plugins..."
+	./ai/plugins/install
+fi
