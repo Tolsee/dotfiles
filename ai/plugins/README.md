@@ -19,15 +19,16 @@ Requires `jq`, Node.js/npm, and the selected native agent CLIs.
 | Codex | Native `portal@portal` plugin |
 | Devin for Terminal | Native plugin, this machine only |
 | Cursor | Portal skills via the skills CLI; native plugin also available through Cursor's team marketplace |
-| Antigravity and other skills CLI targets | Portal skills via the skills CLI |
+| Antigravity | Portal skills via the skills CLI |
 
 Claude Code and Codex use the skills fallback if their CLI is absent.
 The fallback installs only `setup`, `doctor`, `search`, `service`, `actions`,
 and `feedback`, preserving upstream sources rather than vendoring files.
 The skills CLI stores these skills in `~/.agents/skills`. The installer also
-links them into Antigravity and Cursor's global skill directories, because the
-CLI currently skips those paths. Existing conflicting paths are preserved and
-reported as errors. Re-run the installer to refresh the fallback skills.
+links them into each fallback agent's global skill directory, because the
+CLI currently skips some of those paths. Before installing, it checks the
+skills CLI lockfile for Portal ownership of existing shared skills and refuses
+conflicting destination paths. Re-run the installer to refresh fallback skills.
 
 Portal provides authentication setup, readiness diagnostics, software catalog
 and documentation search, service briefings, action discovery/execution, and

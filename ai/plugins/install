@@ -20,6 +20,13 @@ else
   done
 fi
 
+for agent in "${SELECTED_AGENTS[@]}"; do
+  case "$agent" in
+    claude-code|codex|devin|antigravity|cursor) ;;
+    *) echo "Unsupported Portal target: $agent" >&2; exit 1 ;;
+  esac
+done
+
 FALLBACK_AGENTS=()
 for agent in "${SELECTED_AGENTS[@]}"; do
   echo "Installing Spotify Portal for $agent..."
@@ -56,18 +63,49 @@ for agent in "${SELECTED_AGENTS[@]}"; do
 done
 
 if [ "${#FALLBACK_AGENTS[@]}" -gt 0 ]; then
+  # These upstream names are generic. Refuse to replace another source's skill
+  # before the skills CLI's non-interactive overwrite can run.
+  for skill in "${PORTAL_SKILLS[@]}"; do
+    source_dir="$HOME/.agents/skills/$skill"
+    if [ -e "$source_dir" ] || [ -L "$source_dir" ]; then
+      if ! jq -e --arg skill "$skill" --arg source "$PORTAL_SOURCE" \
+        '.skills[$skill].source == $source' "$HOME/.agents/.skill-lock.json" >/dev/null; then
+        echo "Cannot replace $source_dir: it is not managed from $PORTAL_SOURCE." >&2
+        exit 1
+      fi
+    fi
+    for agent in "${FALLBACK_AGENTS[@]}"; do
+      case "$agent" in
+        antigravity) target_dir="$HOME/.gemini/antigravity/skills" ;;
+        cursor) target_dir="$HOME/.cursor/skills" ;;
+        claude-code) target_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/skills" ;;
+        codex) target_dir="${CODEX_HOME:-$HOME/.codex}/skills" ;;
+      esac
+      target="$target_dir/$skill"
+      if [ -L "$target" ] && [ "$(readlink "$target")" = "$source_dir" ]; then
+        continue
+      fi
+      if [ -e "$target" ] || [ -L "$target" ]; then
+        echo "Cannot replace $target: it is not a managed Portal skill link." >&2
+        exit 1
+      fi
+    done
+  done
+
   npx -y skills@latest add "$PORTAL_SOURCE" \
     --skill "${PORTAL_SKILLS[@]}" \
     --agent "${FALLBACK_AGENTS[@]}" \
     --global \
     --yes
 
-  # The skills CLI treats these agents as universal and currently only writes
+  # The skills CLI treats some agents as universal and currently only writes
   # ~/.agents/skills, even with --copy. Keep their global discovery paths wired.
   for agent in "${FALLBACK_AGENTS[@]}"; do
     case "$agent" in
       antigravity) target_dir="$HOME/.gemini/antigravity/skills" ;;
       cursor) target_dir="$HOME/.cursor/skills" ;;
+      claude-code) target_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/skills" ;;
+      codex) target_dir="${CODEX_HOME:-$HOME/.codex}/skills" ;;
       *) continue ;;
     esac
     mkdir -p "$target_dir"
