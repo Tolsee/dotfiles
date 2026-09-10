@@ -1,6 +1,6 @@
 ---
 name: delegate
-description: Route work off the main session by task type: code edits to tiered implementer subagents (mechanical-editor / feature-implementer), browser automation and bulky fetches (CI logs, Datadog, Buildkite) to haiku/sonnet general-purpose agents, waits to background watchers. Human-invoked only — never auto-invoke.
+description: Route work off the main session by task type. Code edits go to tiered implementer subagents (mechanical-editor / feature-implementer), browser automation and bulky fetches (CI logs, Datadog, Buildkite) to haiku or sonnet general-purpose agents, waits to background watchers. Human-invoked only, never auto-invoke.
 disable-model-invocation: true
 ---
 
