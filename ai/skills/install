@@ -20,8 +20,43 @@ if [ "$#" -gt 0 ]; then
 elif [ -n "${AGENTS:-}" ]; then
   read -r -a SELECTED_AGENTS <<< "$AGENTS"
 else
-  SELECTED_AGENTS=(claude-code codex antigravity)
+  SELECTED_AGENTS=(claude-code codex antigravity devin cursor)
 fi
+
+# Portal uses generic names. Preserve skills already owned by another source.
+node - "${SELECTED_AGENTS[@]}" -- "${PORTAL_SKILLS[@]}" <<'NODE'
+const fs = require('node:fs');
+const path = require('node:path');
+const home = require('node:os').homedir();
+const root = path.join(home, '.agents');
+const agentDirs = {
+  'claude-code': path.join(process.env.CLAUDE_CONFIG_DIR || path.join(home, '.claude'), 'skills'),
+  codex: path.join(process.env.CODEX_HOME || path.join(home, '.codex'), 'skills'),
+  antigravity: path.join(home, '.gemini/antigravity/skills'),
+  devin: path.join(process.env.XDG_CONFIG_HOME || path.join(home, '.config'), 'devin/skills'),
+  cursor: path.join(home, '.cursor/skills'),
+};
+const separator = process.argv.indexOf('--');
+const agents = process.argv.slice(2, separator);
+const lockPath = path.join(root, '.skill-lock.json');
+const lock = fs.existsSync(lockPath) ? JSON.parse(fs.readFileSync(lockPath, 'utf8')) : {};
+for (const skill of process.argv.slice(separator + 1)) {
+  const destination = path.join(root, 'skills', skill);
+  if (fs.lstatSync(destination, { throwIfNoEntry: false }) &&
+      lock.skills?.[skill]?.source !== 'spotify/portal-ai-plugins') {
+    throw new Error(`Refusing to replace ${destination}: it is not a managed Portal skill.`);
+  }
+  for (const agent of agents) {
+    if (!agentDirs[agent]) continue;
+    const target = path.join(agentDirs[agent], skill);
+    const stat = fs.lstatSync(target, { throwIfNoEntry: false });
+    if (!stat) continue;
+    if (stat.isSymbolicLink() && fs.existsSync(target) &&
+        fs.realpathSync(target) === fs.realpathSync(destination)) continue;
+    throw new Error(`Refusing to replace ${target}: it is not a managed Portal skill link.`);
+  }
+}
+NODE
 
 echo "Installing local skills from $PWD -> agents: ${SELECTED_AGENTS[*]}"
 npx -y skills@latest add . \
@@ -32,7 +67,30 @@ npx -y skills@latest add . \
 
 echo "Installing selected skills from mattpocock/skills -> agents: ${SELECTED_AGENTS[*]}"
 npx -y skills@latest add mattpocock/skills \
-  --skill "${UPSTREAM_SKILLS[@]}" \
+  --skill "${MATTPOCOCK_SKILLS[@]}" \
   --agent "${SELECTED_AGENTS[@]}" \
   --global \
   --yes
+
+echo "Installing selected skills from spotify/portal-ai-plugins -> agents: ${SELECTED_AGENTS[*]}"
+npx -y skills@latest add spotify/portal-ai-plugins \
+  --skill "${PORTAL_SKILLS[@]}" \
+  --agent "${SELECTED_AGENTS[@]}" \
+  --global \
+  --yes
+
+# The skills CLI currently skips these agents' global discovery directories.
+for agent in "${SELECTED_AGENTS[@]}"; do
+  case "$agent" in
+    antigravity) target_dir="$HOME/.gemini/antigravity/skills" ;;
+    cursor) target_dir="$HOME/.cursor/skills" ;;
+    *) continue ;;
+  esac
+  mkdir -p "$target_dir"
+  for skill in "${PORTAL_SKILLS[@]}"; do
+    if [ ! -e "$target_dir/$skill" ] && [ ! -L "$target_dir/$skill" ]; then
+      ln -s "$HOME/.agents/skills/$skill" "$target_dir/$skill"
+    fi
+    test -f "$target_dir/$skill/SKILL.md"
+  done
+done

@@ -1,6 +1,6 @@
 # Shared by ./install and ./update.
 # shellcheck shell=bash disable=SC2034
-UPSTREAM_SKILLS=(
+MATTPOCOCK_SKILLS=(
   grill-me
   grilling
   wayfinder
@@ -11,3 +11,6 @@ UPSTREAM_SKILLS=(
   writing-for-agents
   wait-what
 )
+
+PORTAL_SKILLS=(setup doctor search service actions feedback)
+UPSTREAM_SKILLS=("${MATTPOCOCK_SKILLS[@]}" "${PORTAL_SKILLS[@]}")
