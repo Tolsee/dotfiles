@@ -38,3 +38,14 @@ servers pruned from every agent. Add to those lists rather than deleting from
 
 Servers installed by their own tooling stay out of `mcp_config.json` entirely,
 so this repo neither writes nor prunes them.
+
+## Datadog endpoint
+
+The shared Datadog entry uses `https://mcp.datadoghq.com/v1/mcp`, the supported
+endpoint on the existing US1 host. Keep endpoint changes in `mcp_config.json`
+and apply them with `./install codex antigravity`. Claude Code continues to use
+its official Datadog plugin.
+
+Restart the affected clients after updating their configuration. If a client
+requests authentication again, complete its Datadog OAuth login flow. See the
+[Datadog MCP setup instructions](https://docs.datadoghq.com/bits_ai/mcp_server/setup/).
