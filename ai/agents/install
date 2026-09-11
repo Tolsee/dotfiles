@@ -11,31 +11,56 @@ set -euo pipefail
 DOTFILES="$(cd "$(dirname "$0")/../.." && pwd)"
 SHARED="$DOTFILES/ai/agents/AGENTS.md"
 
-# Claude Code
-mkdir -p ~/.claude
-for f in CLAUDE.md RTK.md; do
-  ln -sf "$DOTFILES/ai/claude/$f" ~/.claude/"$f"
+# Match the MCP installer's agent selection; no arguments still installs all.
+agents=()
+if [ "$#" -gt 0 ]; then
+  agents=("$@")
+else
+  read -r -a agents <<< "${AGENTS:-claude-code antigravity codex}"
+fi
+for agent in "${agents[@]}"; do
+  case "$agent" in
+    claude-code|antigravity|codex) ;;
+    *) echo "Unsupported agent target: $agent" >&2; exit 1 ;;
+  esac
 done
-echo "linked ~/.claude/{CLAUDE.md,RTK.md} -> $DOTFILES/ai/claude/"
 
-# Claude Code — global subagent definitions (model-tiered by task complexity)
-ln -sfn "$DOTFILES/ai/claude/agents" ~/.claude/agents
-echo "linked ~/.claude/agents -> $DOTFILES/ai/claude/agents"
+selected() {
+  local agent
+  for agent in "${agents[@]}"; do
+    [ "$agent" != "$1" ] || return 0
+  done
+  return 1
+}
 
-# Claude Code — Claude-only skills (NOT installed for codex/antigravity, so they
-# live here with --agent claude-code rather than in ai/skills/, which targets all
-# agents). Note: the skills CLI copies into ~/.agents/skills, so re-run after edits.
-if [ -d "$DOTFILES/ai/claude/skills" ]; then
-  echo "Installing Claude-only skills..."
-  npx -y skills@latest add "$DOTFILES/ai/claude/skills" \
-    --skill '*' \
-    --agent claude-code \
-    --global \
-    --yes
+# Claude Code
+if selected claude-code; then
+  mkdir -p ~/.claude
+  for f in CLAUDE.md RTK.md; do
+    ln -sf "$DOTFILES/ai/claude/$f" ~/.claude/"$f"
+  done
+  echo "linked ~/.claude/{CLAUDE.md,RTK.md} -> $DOTFILES/ai/claude/"
+
+  # Claude Code — global subagent definitions (model-tiered by task complexity)
+  ln -sfn "$DOTFILES/ai/claude/agents" ~/.claude/agents
+  echo "linked ~/.claude/agents -> $DOTFILES/ai/claude/agents"
+
+  # Claude Code — Claude-only skills (NOT installed for codex/antigravity, so they
+  # live here with --agent claude-code rather than in ai/skills/, which targets all
+  # agents). Note: the skills CLI copies into ~/.agents/skills, so re-run after edits.
+  if [ -d "$DOTFILES/ai/claude/skills" ]; then
+    echo "Installing Claude-only skills..."
+    npx -y skills@latest add "$DOTFILES/ai/claude/skills" \
+      --skill '*' \
+      --agent claude-code \
+      --global \
+      --yes
+  fi
+
 fi
 
-# Codex — append pointer if missing
-if [ -e ~/.codex ]; then
+# Codex — append pointers if missing
+if selected codex && [ -e ~/.codex ]; then
   if grep -q "dotfiles/agents/AGENTS.md" ~/.codex/AGENTS.md 2>/dev/null; then
     perl -0pi -e 's#dotfiles/agents/AGENTS\.md#dotfiles/ai/agents/AGENTS.md#g' ~/.codex/AGENTS.md
     echo "migrated pointer in ~/.codex/AGENTS.md"
@@ -43,10 +68,14 @@ if [ -e ~/.codex ]; then
     printf '\n## Global Rules\n\nAlso read and follow %s (shared rules for all coding agents).\n' "$SHARED" >> ~/.codex/AGENTS.md
     echo "added pointer to ~/.codex/AGENTS.md"
   fi
+  if ! grep -Fq "$DOTFILES/ai/codex/AGENTS.md" ~/.codex/AGENTS.md 2>/dev/null; then
+    printf '\n## Codex Rules\n\nAlso read and follow %s (Codex-specific rules).\n' "$DOTFILES/ai/codex/AGENTS.md" >> ~/.codex/AGENTS.md
+    echo "added Codex-specific pointer to ~/.codex/AGENTS.md"
+  fi
 fi
 
 # Gemini / Antigravity — append import if missing
-if [ -e ~/.gemini ]; then
+if selected antigravity && [ -e ~/.gemini ]; then
   if grep -q "dotfiles/agents/AGENTS.md" ~/.gemini/GEMINI.md 2>/dev/null; then
     perl -0pi -e 's#dotfiles/agents/AGENTS\.md#dotfiles/ai/agents/AGENTS.md#g' ~/.gemini/GEMINI.md
     echo "migrated import in ~/.gemini/GEMINI.md"
