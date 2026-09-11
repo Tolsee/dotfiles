@@ -1,6 +1,6 @@
 ---
 name: delegate
-description: Route work off the main session by task type: code edits to tiered implementer subagents (mechanical-editor / feature-implementer), browser automation and bulky fetches (CI logs, Datadog, Buildkite) to haiku/sonnet general-purpose agents, waits to background watchers. Human-invoked only — never auto-invoke.
+description: Route work off the main session by task type. Code edits go to tiered implementer subagents (mechanical-editor / feature-implementer), browser automation to sonnet general-purpose agents, bulky fetches (CI logs, Datadog, Buildkite) to haiku or sonnet general-purpose agents, waits to background watchers. Human-invoked only, never auto-invoke.
 disable-model-invocation: true
 ---
 
@@ -27,11 +27,11 @@ The main session is the most expensive context in the system. It keeps the decis
 | Diagnosis, exact-change specs, reading the diff, the one full test run, commit, Codex review, push, PR text | main session | top tier |
 | Well-specified edits, renames, already-diagnosed one-liners | `mechanical-editor` | haiku |
 | Feature, bug fix or refactor with the approach decided | `feature-implementer` | sonnet |
-| Browser automation: Buildkite unblock dialogs, Chrome end-to-end checks on live pages, clicking through a dashboard, any screenshot-driven loop | `general-purpose` with the Chrome MCP tools | haiku for a fixed click path, sonnet when the agent must judge what it sees |
+| Browser automation: Buildkite unblock dialogs, Chrome end-to-end checks on live pages, clicking through a dashboard, any screenshot-driven loop | `general-purpose` with the Chrome MCP tools | sonnet, always. Haiku wanders and every extra tool call is a permission prompt for the user (2026-09-10) |
 | Bulky fetches: CI logs, Buildkite failure summaries, Datadog spans, DBM samples, log queries, long `gh` comment dumps | `general-purpose` | haiku |
 | Repo recon, call-site sweeps, verifying a claim against code | `Explore` | sonnet, haiku for a single grep sweep |
 | Waiting on CI, a deploy, a merge, a metric to settle | background Bash watcher that prints one line when the condition flips | no agent |
 
-**The main session never drives Chrome.** A screenshot is a full image in top-tier context and a click path needs no reasoning. Brief the browser agent with: the start URL, the exact sequence, the success signal to look for, what to return (one line plus a saved screenshot path when the user should see it), and the standing limits (read-only, no logins, no form submissions, never type credentials, call `tabs_context_mcp` first, create its own tab, close it when done). If the click path is unknown, the first agent's job is to discover and report it, not to finish the task.
+**The main session never drives Chrome, and browser agents are sonnet.** A screenshot is a full image in top-tier context, but haiku takes many exploratory calls to land a click and each Chrome call is a permission prompt, so sonnet is cheaper for the user. Tell the agent to minimise tool calls: plan the sequence, one ToolSearch, one navigate, one find, one click, one verification. Brief the browser agent with: the start URL, the exact sequence, the success signal to look for, what to return (one line plus a saved screenshot path when the user should see it), and the standing limits (read-only, no logins, no form submissions, never type credentials, call `tabs_context_mcp` first, create its own tab, close it when done). If the click path is unknown, the first agent's job is to discover and report it, not to finish the task.
 
 **Fetchers return tables, not transcripts.** Ask for the compact shape you will act on (top-N table, one bullet per failing test with its message, a yes/no with the evidence line). Cap the report length in the brief. One fetcher per question; do not spawn a second one for the same data while the first runs, and do not repeat the fetch yourself after delegating it.
