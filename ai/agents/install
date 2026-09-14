@@ -20,7 +20,7 @@ else
 fi
 for agent in "${agents[@]}"; do
   case "$agent" in
-    claude-code|antigravity|codex) ;;
+    claude-code|antigravity|codex|pi) ;;
     *) echo "Unsupported agent target: $agent" >&2; exit 1 ;;
   esac
 done
@@ -82,6 +82,21 @@ if selected antigravity && [ -e ~/.gemini ]; then
   elif ! grep -q "dotfiles/ai/agents/AGENTS.md" ~/.gemini/GEMINI.md 2>/dev/null; then
     printf '\n@%s\n' "$SHARED" >> ~/.gemini/GEMINI.md
     echo "added import to ~/.gemini/GEMINI.md"
+  fi
+fi
+
+# Pi is opt-in; its shared skills are discovered from ~/.agents/skills.
+if selected pi; then
+  pi_agent_dir=$(python3 -c 'import os; print(os.path.expanduser(os.environ.get("PI_CODING_AGENT_DIR") or "~/.pi/agent"))')
+  pi_rules="$pi_agent_dir/AGENTS.md"
+  mkdir -p "$pi_agent_dir"
+  if [[ -e "$pi_rules" || -L "$pi_rules" ]]; then
+    if [[ ! -L "$pi_rules" || "$(readlink "$pi_rules")" != "$DOTFILES/ai/pi/AGENTS.md" ]]; then
+      echo "Refusing to replace existing Pi instructions: $pi_rules" >&2
+      exit 1
+    fi
+  else
+    ln -s "$DOTFILES/ai/pi/AGENTS.md" "$pi_rules"
   fi
 fi
 

@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -euo pipefail
+pi_root=$(cd "$(dirname "$0")" && pwd)
+dotfiles_root=$(cd "$pi_root/../.." && pwd)
+pi_version=$(cat "$pi_root/version")
+
+if ! command -v npm >/dev/null 2>&1; then
+    echo "Install Node.js 22.19 or newer (with npm), then rerun this installer." >&2
+    exit 1
+fi
+if ! command -v pi >/dev/null 2>&1 || [[ "$(pi --version)" != "$pi_version" ]]; then
+    npm install -g --ignore-scripts "@earendil-works/pi-coding-agent@$pi_version"
+fi
+
+"$dotfiles_root/ai/agents/install" pi
+python3 "$pi_root/configure.py"
+if command -v herdr >/dev/null 2>&1; then
+    herdr integration install pi
+fi
+printf 'Pi trial installed. Start pi, then /login and select OpenAI Codex.\n'
