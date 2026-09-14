@@ -61,6 +61,10 @@ mcpServers = expandEnvVars(mcpServers);
 // Servers we no longer want anywhere. Removed from target configs if present.
 const RETIRED = ['sequential-thinking', 'figma', 'linear-server'];
 
+// AWS requires account selection and aws-vault setup. Its dedicated configurator
+// installs it; generic setup preserves an existing entry but never creates one.
+const OPTIONAL_SERVERS = ['aws-mcp'];
+
 // Servers Claude Code gets from an official plugin. Installing them here too
 // would double every tool in the tool list, so they are written for
 // codex/antigravity only.
@@ -70,7 +74,7 @@ function serversFor(agent) {
   const skip = agent === 'claude-code' ? [...RETIRED, ...CLAUDE_PLUGIN_PROVIDED] : RETIRED;
   return Object.fromEntries(
     Object.entries(mcpServers)
-      .filter(([name]) => !skip.includes(name))
+      .filter(([name]) => !skip.includes(name) && !OPTIONAL_SERVERS.includes(name))
       .map(([name, config]) => {
         if (agent === 'codex' || config.env_vars === undefined) return [name, config];
         const { env_vars: _codexOnly, ...portableConfig } = config;
@@ -118,7 +122,14 @@ function mergeToml(existingToml, newMcpServers) {
     const sectionMatch = line.match(/^\s*\[([^\]]+)\]/);
     if (sectionMatch) {
       const sectionName = sectionMatch[1].trim();
-      if (sectionName === 'mcp_servers' || sectionName.startsWith('mcp_servers.')) {
+      const normalizedSection = sectionName.replace(/[\"']/g, '');
+      const isOptional = OPTIONAL_SERVERS.some(name =>
+        normalizedSection === `mcp_servers.${name}` ||
+        normalizedSection.startsWith(`mcp_servers.${name}.`)
+      );
+      if (isOptional) {
+        inMcpSection = false;
+      } else if (sectionName === 'mcp_servers' || sectionName.startsWith('mcp_servers.')) {
         inMcpSection = true;
         continue;
       } else {

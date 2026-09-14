@@ -4,6 +4,20 @@
       "type": "http",
       "url": "https://mcp.buildkite.com/mcp/readonly"
     },
+    "aws-mcp": {
+      "command": "python3",
+      "args": [
+        "$HOME/dev/dotfiles/ai/aws/access.py",
+        "mcp"
+      ],
+      "env_vars": [
+        "AWS_CONFIG_FILE",
+        "AWS_VAULT_BACKEND",
+        "AWS_VAULT_KEYCHAIN_NAME",
+        "AWS_AGENT_SETTINGS",
+        "XDG_CONFIG_HOME"
+      ]
+    },
     "notion": {
       "type": "http",
       "url": "https://mcp.notion.com/mcp"

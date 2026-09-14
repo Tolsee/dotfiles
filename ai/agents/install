@@ -20,7 +20,7 @@ else
 fi
 for agent in "${agents[@]}"; do
   case "$agent" in
-    claude-code|antigravity|codex|pi) ;;
+    claude-code|antigravity|codex|pi|devin) ;;
     *) echo "Unsupported agent target: $agent" >&2; exit 1 ;;
   esac
 done
@@ -97,6 +97,15 @@ if selected pi; then
     fi
   else
     ln -s "$DOTFILES/ai/pi/AGENTS.md" "$pi_rules"
+  fi
+fi
+
+# Devin CLI reads its own global AGENTS.md in addition to imported Claude rules.
+if selected devin; then
+  devin_dir="${XDG_CONFIG_HOME:-$HOME/.config}/devin"
+  mkdir -p "$devin_dir"
+  if ! grep -Fq "$SHARED" "$devin_dir/AGENTS.md" 2>/dev/null; then
+    printf '\n## Global Rules\n\nRead and follow %s.\n' "$SHARED" >> "$devin_dir/AGENTS.md"
   fi
 fi
 
