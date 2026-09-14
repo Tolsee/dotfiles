@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# Fuzzy-jump to a project as a Herdr workspace.
+
+set -euo pipefail
+
+for dependency in fzf jq; do
+    if ! command -v "$dependency" >/dev/null 2>&1; then
+        printf 'herdr-sessionizer: %s is required\n' "$dependency" >&2
+        exit 1
+    fi
+done
+
+herdr_bin="${HERDR_BIN_PATH:-$(command -v herdr || true)}"
+if [[ -z "$herdr_bin" ]]; then
+    printf 'herdr-sessionizer: herdr is required\n' >&2
+    exit 1
+fi
+
+if [[ $# -eq 1 ]]; then
+    selected=$1
+else
+    project_roots=()
+    for project_root in "$HOME/dev/linktree" "$HOME/dev/hobby"; do
+        [[ ! -d "$project_root" ]] || project_roots+=("$project_root")
+    done
+    [[ ${#project_roots[@]} -gt 0 ]] || exit 0
+    if ! selected=$(find "${project_roots[@]}" \
+        -mindepth 1 -maxdepth 1 -type d 2>/dev/null | fzf --prompt='Herdr workspace > '); then
+        exit 0
+    fi
+fi
+
+[[ -z "${selected:-}" ]] && exit 0
+
+selected=$(cd "$selected" && pwd -P)
+selected_name=$(basename "$selected")
+
+if ! "$herdr_bin" status server --json | jq -e '.running == true' >/dev/null; then
+    cd "$selected"
+    exec "$herdr_bin"
+fi
+
+workspace_id=$("$herdr_bin" workspace list | jq -r --arg label "$selected_name" \
+    'first(.result.workspaces[] | select(.label == $label) | .workspace_id) // empty')
+
+if [[ -n "$workspace_id" ]]; then
+    "$herdr_bin" workspace focus "$workspace_id" >/dev/null
+else
+    "$herdr_bin" workspace create \
+        --cwd "$selected" \
+        --label "$selected_name" \
+        --focus >/dev/null
+fi
+
+# A custom Herdr popup already has a client. From a normal shell, attach after
+# selecting the workspace so this script remains useful as a standalone command.
+if [[ -z "${HERDR_SOCKET_PATH:-}" ]]; then
+    exec "$herdr_bin"
+fi

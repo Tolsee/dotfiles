@@ -35,6 +35,13 @@ ln -nsf $PWD/.zshrc $zshrc_config_file
 ln -nsf $PWD/.tmux.conf $tmux_config_file
 ln -nsf $PWD/zsh/functions $HOME/.config/zsh-functions
 
+# Install Herdr and its agent integrations
+if [ -f "$PWD/herdr/install" ]
+then
+	echo "Installing Herdr..."
+	./herdr/install
+fi
+
 # Install Antigravity CLI (agy) if not already installed
 if ! command -v agy &> /dev/null
 then
