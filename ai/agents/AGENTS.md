@@ -30,3 +30,8 @@ Shared by all coding agents (Claude Code, Codex, Antigravity/Gemini). Source of 
 ## Git
 
 - Create worktrees with the harness's native worktree tool (e.g. Claude Code's EnterWorktree / Agent `isolation: "worktree"`). Never run `git worktree add` manually, and never create sibling directories (`../<repo>-something`). If no native tool exists, use `<repo>/.claude/worktrees/<branch>` (gitignored).
+
+## AWS
+
+When working with AWS, also read and follow
+`~/dev/dotfiles/ai/agents/aws-agent-rules.md`.

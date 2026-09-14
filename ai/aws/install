@@ -1,0 +1,91 @@
+#!/bin/bash
+# Keep a small, shared Agent Toolkit skill set across detected coding agents.
+set -euo pipefail
+
+AWS_CONFIG_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=skills
+source "$AWS_CONFIG_DIR/skills"
+
+TOOLKIT_REGION=us-east-1
+
+if ! command -v uv >/dev/null 2>&1 || ! command -v uvx >/dev/null 2>&1; then
+  echo "uv and uvx are required. Follow ai/aws/README.md before retrying." >&2
+  exit 1
+fi
+
+if ! command -v aws >/dev/null 2>&1; then
+  echo "AWS CLI is required. Follow ai/aws/README.md before retrying."
+  exit 1
+fi
+
+if ! command -v aws-vault >/dev/null 2>&1; then
+  echo "aws-vault is required. Follow ai/aws/README.md before retrying." >&2
+  exit 1
+fi
+
+python3 "$AWS_CONFIG_DIR/profiles.py"
+# All remote toolkit calls use the selected account's reduced-permission role.
+ACCOUNT="${1:-$(python3 "$AWS_CONFIG_DIR/access.py" profile)}"
+aws() {
+  python3 "$AWS_CONFIG_DIR/access.py" exec "$ACCOUNT" -- aws "$@"
+}
+aws sts get-caller-identity >/dev/null
+uv run --script "$AWS_CONFIG_DIR/configure.py"
+
+# Ensure AWS CLI detects the canonical shared destination on fresh machines.
+mkdir -p "$HOME/.agents/skills"
+# Clear redundant Pi copies before remove-skill encounters old managed symlinks.
+uv run --script "$AWS_CONFIG_DIR/link-skills.py"
+
+INSTALLED_SKILLS="$(
+  aws agent-toolkit list-installed-skills \
+    --region "$TOOLKIT_REGION" \
+    --query 'skills[].name' \
+    --output text
+)"
+INSTALLED_SKILLS="${INSTALLED_SKILLS//$'\t'/ }"
+INSTALLED_SKILLS="${INSTALLED_SKILLS//$'\n'/ }"
+
+is_selected() {
+  local candidate="$1"
+  local skill
+  for skill in "${AWS_AGENT_TOOLKIT_SKILLS[@]}"; do
+    if [ "$skill" = "$candidate" ]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+is_installed() {
+  local candidate="$1"
+  [[ " $INSTALLED_SKILLS " == *" $candidate "* ]]
+}
+
+for skill in "${AWS_AGENT_TOOLKIT_DEFAULT_SKILLS[@]}"; do
+  if ! is_selected "$skill" && is_installed "$skill"; then
+    echo "Removing AWS skill: $skill"
+    aws agent-toolkit remove-skill \
+      --skill-name "$skill" \
+      --region "$TOOLKIT_REGION"
+  fi
+done
+
+# Refresh existing copies, then install any missing detected-agent copies.
+# update-skill skips absent copies; add-skill skips intact existing copies.
+for skill in "${AWS_AGENT_TOOLKIT_SKILLS[@]}"; do
+  if is_installed "$skill"; then
+    echo "Updating AWS skill: $skill"
+    aws agent-toolkit update-skill \
+      --skill-name "$skill" \
+      --region "$TOOLKIT_REGION"
+  fi
+  echo "Ensuring AWS skill is installed across detected agents: $skill"
+  aws agent-toolkit add-skill \
+    --skill-name "$skill" \
+    --region "$TOOLKIT_REGION"
+done
+
+uv run --script "$AWS_CONFIG_DIR/link-skills.py"
+
+echo "Installed minimal AWS Agent Toolkit skill set."

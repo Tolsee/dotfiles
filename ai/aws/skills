@@ -1,0 +1,28 @@
+AWS_AGENT_TOOLKIT_SKILLS=(
+  amazon-aurora-mysql
+  aws-auth
+  aws-billing-and-cost-management
+  aws-observability
+)
+
+# The non-selected defaults are removed so repeated setup stays lean.
+AWS_AGENT_TOOLKIT_DEFAULT_SKILLS=(
+  amazon-bedrock
+  aws-auth
+  aws-billing-and-cost-management
+  aws-blocks
+  aws-cdk
+  aws-cloudformation
+  aws-compute
+  aws-containers
+  aws-deployment
+  aws-messaging-and-streaming
+  aws-observability
+  aws-sdk-js-v3-usage
+  aws-sdk-python-usage
+  aws-sdk-swift-usage
+  aws-security
+  aws-serverless
+  launch-with-aws
+  signing-in-to-aws
+)
