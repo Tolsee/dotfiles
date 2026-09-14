@@ -21,3 +21,6 @@ after an explicit authentication failure; you complete the browser flow.
 Servers using API keys or client-managed authentication receive the appropriate
 credential-manager or client UI instructions. Start a new Codex session after
 installing the rule.
+
+Pi is an opt-in coding trial: run `./ai/pi/install`. It reuses the shared skills
+and adds `/codex-review` for native Codex reviews. See [pi/README.md](pi/README.md).
