@@ -3,6 +3,9 @@ description: Delegate a bounded task to the installed Claude Code CLI
 argument-hint: "<task>"
 ---
 
+For an authorized task that needs native Claude capabilities, initiate the
+handoff directly; the user need not type this slash command.
+
 Delegate this task to native Claude Code in the current repository:
 $ARGUMENTS
 
