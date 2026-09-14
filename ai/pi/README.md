@@ -6,8 +6,13 @@ Herdr Pi integration when Herdr is present. Node.js 22.19+ and Python 3 are requ
 Existing Pi settings win over initial model defaults; authentication is separate.
 
 Start `pi`, run `/login`, and select OpenAI Codex for your ChatGPT subscription.
-Use `/model` to inspect available models. The initial default matches the current
-Codex setup: `gpt-6-astra`, high thinking. `/thinking` changes effort.
+Use `/model` to inspect available models. New sessions default to
+`gpt-5.6-terra` with medium thinking for everyday coding. Use Luna for mechanical
+edits and summaries, and switch to Astra with high thinking for difficult
+debugging, architectural decisions, or repeated failures. `/thinking` changes
+effort. Model escalation is manual; these defaults do not install a model router.
+Existing installations retain their selected model: use `/model` and `/thinking`
+to select the new default, or update those two fields in Pi settings.
 
 The existing shared `~/.agents/skills` and project `.agents/skills` are discovered
 by Pi. Trust the intended project when prompted so its skills load. Keep using
@@ -20,6 +25,7 @@ inspect those before deciding which copy to keep.
 | Start a named coding task | `pi --name "scoped task"` |
 | Invoke a shared workflow | `/skill:pr-proof` (in the monolith) |
 | Delegate a bounded task to native Claude Code | `/claude-task <task>` |
+| Start a persistent Claude monitoring session | `/claude-monitor <target and stop condition>` |
 | Review local changes with native Codex | `/codex-review --uncommitted` |
 | Review a branch with native Codex | `/codex-review --base origin/main` |
 | Switch models | `/model` |
@@ -33,8 +39,16 @@ background controller. Codex must be installed and signed in independently.
 `/claude-task` forwards a bounded task to native Claude Code through `claude -p`.
 It uses Claude's existing authentication and configuration, with a separate
 conversation. Interactive permission requests may require a separate Claude pane;
-the prompt does not bypass them. This is explicit CLI delegation, not direct
-Claude-provider access inside Pi.
+the prompt does not bypass them. Pi can initiate this handoff when an authorized task needs Claude capabilities;
+the slash command is also available for explicit requests. This uses the native
+CLI rather than direct Claude-provider access inside Pi.
+
+`/claude-monitor` uses the installed Claude CLI background-session commands. It
+requires a concrete target and stop condition, reports the session ID, and checks
+its status and logs. A running session is not proof that its monitoring tools or
+authentication work; confirm the first successful observation. Permission prompts
+require attaching to that session. Results stay in Claude; Pi does not receive
+background completion events automatically.
 
 This initial trial adds no MCP, subagent, notification, or monitoring packages.
 Keep Claude/Codex for established integrations and PR watching. Pi's tool execution
