@@ -1,0 +1,67 @@
+onboarding = false
+
+[theme]
+name = "tokyo-night"
+
+[theme.custom]
+panel_bg = "#222436"
+accent = "#82aaff"
+blue = "#82aaff"
+yellow = "#ffc777"
+
+[terminal]
+shell_mode = "auto"
+new_cwd = "follow"
+
+[keys]
+prefix = "ctrl+b"
+settings = "prefix+s"
+detach = "prefix+q"
+reload_config = "prefix+r"
+workspace_picker = "prefix+w"
+goto = "prefix+g"
+close_workspace = "prefix+shift+q"
+new_tab = "prefix+c"
+switch_tab = "prefix+1..9"
+focus_pane_left = "prefix+h"
+focus_pane_down = "prefix+j"
+focus_pane_up = "prefix+k"
+focus_pane_right = "prefix+l"
+split_vertical = ["prefix+v", "prefix+%"]
+split_horizontal = ["prefix+minus", 'prefix+"']
+close_pane = "prefix+x"
+zoom = "prefix+z"
+resize_mode = "prefix+shift+r"
+
+[[keys.command]]
+key = "prefix+f"
+type = "popup"
+command = "~/bin/herdr-sessionizer"
+description = "open or create a project workspace"
+width = "80%"
+height = "80%"
+
+[ui]
+mouse_capture = true
+copy_on_select = true
+confirm_close = true
+pane_borders = true
+pane_scrollbars = false
+pane_gaps = false
+hide_tab_bar_when_single_tab = false
+tab_bar_position = "top"
+accent = "#82aaff"
+
+[ui.toast]
+delivery = "system"
+delay_seconds = 2
+
+[ui.sound]
+enabled = false
+
+[session]
+resume_agents_on_restore = true
+
+[experimental]
+allow_nested = false
+pane_history = false

@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+herdr_root=$(cd "$(dirname "$0")" && pwd)
+dotfiles_root=$(cd "$herdr_root/.." && pwd)
+config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/herdr"
+config_file="$config_dir/config.toml"
+config_source="$herdr_root/.config/herdr/config.toml"
+
+if ! command -v herdr >/dev/null 2>&1; then
+    if ! command -v brew >/dev/null 2>&1; then
+        printf 'Homebrew is required to install Herdr.\n' >&2
+        exit 1
+    fi
+
+    echo "Installing Herdr..."
+    brew install herdr
+fi
+
+if [[ "$(uname -s)" == Darwin ]] && ! command -v terminal-notifier >/dev/null 2>&1; then
+    brew install terminal-notifier
+fi
+
+mkdir -p "$config_dir" "$HOME/bin"
+
+if [[ -L "$config_file" ]]; then
+    rm "$config_file"
+elif [[ -e "$config_file" ]]; then
+    backup_file="$config_file.backup"
+    if [[ -e "$backup_file" ]]; then
+        printf 'Refusing to overwrite existing backup: %s\n' "$backup_file" >&2
+        exit 1
+    fi
+    mv "$config_file" "$backup_file"
+fi
+
+ln -s "$config_source" "$config_file"
+ln -nsf "$dotfiles_root/bin/herdr-sessionizer" "$HOME/bin/herdr-sessionizer"
+
+herdr config check
+
+for integration in claude codex devin pi; do
+    if command -v "$integration" >/dev/null 2>&1; then
+        herdr integration install "$integration"
+    fi
+done
+
+echo "Herdr configuration installed."
