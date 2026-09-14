@@ -21,8 +21,9 @@ Shared by all coding agents (Claude Code, Codex, Antigravity/Gemini). Source of 
 
 ## Pull Requests
 
+- Before opening a PR and before every push that updates one, run a local Codex review (`/codex:review` in Claude Code, or the equivalent companion command) on the branch diff and address its findings first, so review bots and humans see the cleaned-up version.
 - After finishing an implementation task, push, open the PR, and babysit it to merge-ready (watch CI, address bot and human review, keep rebased) without asking. Never merge or self-approve.
-- After pushing a fix for a bot reviewer's comment, re-trigger that bot (`@codex review`, `@cursor review`, `@coderabbitai review`, `@devin-ai-integration review`) as an in-thread reply to one of its existing threads, never a top-level PR comment, and wait for its re-review of current HEAD before resolving the thread or declaring merge-ready.
+- After pushing a fix for a bot reviewer's comment, re-trigger that bot (`@codex review`, `@cursor review`, `@coderabbitai review`; Devin re-reviews on push and has no working mention trigger) as an in-thread reply to one of its existing threads, never a top-level PR comment, and wait for its re-review of current HEAD before resolving the thread or declaring merge-ready.
 - When design or behavior changes mid-PR, update the PR description in the same push; a stale description makes reviewers flag the new code as contradicting the stated model.
 - Write PR bodies with a quoted heredoc (`<<'EOF'`); never backslash-escape backticks (they render literally on GitHub).
 
