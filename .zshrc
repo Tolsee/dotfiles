@@ -21,8 +21,6 @@ export RUBY_CONFIGURE_OPTS="--with-openssl-dir=$(brew --prefix openssl@3)"
 export PATH="$HOME/.rbenv/shims:$PATH"
 export PATH="$HOME/.mix/escripts:$PATH"
 eval "$(rbenv init -)"
-export PATH="$HOME/.tmuxifier/bin:$PATH"
-eval "$(tmuxifier init -)"
 
 # Python 
 export PATH="$HOME/Library/Python/3.9/bin:$PATH"
@@ -125,21 +123,6 @@ export PATH="/opt/homebrew/opt/libpq/bin:$PATH"
 # Zoxide
 # --------
 eval "$(zoxide init --cmd cd zsh)"
-
-# --------
-# Projects
-# --------
-alias bbinfra='tmuxifier load-session blockbase-infrastructure'
-alias minfra='tmuxifier load-session mintly-infrastructure'
-alias binfra='tmuxifier load-session base-infrastructure'
-alias sbuild='tmuxifier load-session shared-build-tools'
-alias bbbuild='tmuxifier load-session blockbase-build-tools'
-alias mbuild='tmuxifier load-session mintly-build-tools'
-alias blockbase='tmuxifier load-session blockbase'
-alias mintly='tmuxifier load-session mintly'
-alias plat='tmuxifier load-session platform'
-alias sensand='tmuxifier load-session sensand'
-alias data-pipeline='tmuxifier load-session data-pipeline'
 
 complete -o nospace -C /opt/homebrew/bin/vault vault
 
