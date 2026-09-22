@@ -35,11 +35,12 @@ selected() {
 
 # Claude Code
 if selected claude-code; then
-  mkdir -p ~/.claude
-  for f in CLAUDE.md RTK.md; do
+  mkdir -p ~/.claude ~/.claude/skills
+  for f in CLAUDE.md RTK.md settings.json; do
+    [ -f "$DOTFILES/ai/claude/$f" ] || continue
     ln -sf "$DOTFILES/ai/claude/$f" ~/.claude/"$f"
   done
-  echo "linked ~/.claude/{CLAUDE.md,RTK.md} -> $DOTFILES/ai/claude/"
+  echo "linked ~/.claude/{CLAUDE.md,RTK.md,settings.json} -> $DOTFILES/ai/claude/"
 
   # Claude Code — global subagent definitions (model-tiered by task complexity)
   ln -sfn "$DOTFILES/ai/claude/agents" ~/.claude/agents
@@ -47,7 +48,11 @@ if selected claude-code; then
 
   # Claude Code — Claude-only skills (NOT installed for codex/antigravity, so they
   # live here with --agent claude-code rather than in ai/skills/, which targets all
-  # agents). Note: the skills CLI copies into ~/.agents/skills, so re-run after edits.
+  # agents). The skills CLI only recognizes SKILL.md-based skills (copies into
+  # ~/.agents/skills, so re-run after edits); function-hooks plugins (a
+  # .claude-plugin/plugin.json + hooks/ dir, no SKILL.md) are invisible to it and
+  # are symlinked directly below instead, matching how Claude Code auto-loads a
+  # plugin dropped under ~/.claude/skills/<name>.
   if [ -d "$DOTFILES/ai/claude/skills" ]; then
     echo "Installing Claude-only skills..."
     npx -y skills@latest add "$DOTFILES/ai/claude/skills" \
@@ -55,6 +60,14 @@ if selected claude-code; then
       --agent claude-code \
       --global \
       --yes
+
+    for mod in "$DOTFILES"/ai/claude/skills/*/; do
+      mod="${mod%/}"
+      [ -f "$mod/.claude-plugin/plugin.json" ] || continue
+      name="$(basename "$mod")"
+      ln -sfn "$mod" ~/.claude/skills/"$name"
+      echo "linked ~/.claude/skills/$name -> $mod"
+    done
   fi
 
 fi
