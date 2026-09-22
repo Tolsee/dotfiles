@@ -1,0 +1,4 @@
+{
+  "description": "Corrects the model of each subagent spawn with TypeSafe's Jev, replacing /delegate's static routing table with a live per-task judgment.",
+  "modules": ["./jev-model-router.ts"]
+}
