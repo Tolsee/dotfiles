@@ -1,0 +1,43 @@
+{
+  "name": "jev-model-router",
+  "version": "0.1.0",
+  "description": "Corrects the model tier of every subagent spawn (agent.spawn) with a live Jev judgment (haiku / sonnet / opus), instead of relying on /delegate's static routing table. A risky task (touches production, money, or irreversible data) is always forced to opus regardless of confidence.",
+  "author": {
+    "name": "tulsi"
+  },
+  "license": "MIT",
+  "keywords": ["mod", "function-hooks", "routing", "delegate"],
+  "userConfig": {
+    "typesafeApiKey": {
+      "type": "string",
+      "title": "TypeSafe API key",
+      "description": "Key for TypeSafe's own API. Falls back to the TYPESAFE_API_KEY environment variable when unset.",
+      "default": "",
+      "sensitive": true
+    },
+    "minUpgradeConfidence": {
+      "type": "number",
+      "title": "Confidence to move up a tier (haiku -> sonnet -> opus)",
+      "description": "Being wrong here just costs a bit more; the bar is low.",
+      "default": 0.3
+    },
+    "minDowngradeConfidence": {
+      "type": "number",
+      "title": "Confidence to move down a tier (opus -> sonnet -> haiku)",
+      "description": "Being wrong here means an under-powered subagent; the bar is high.",
+      "default": 0.7
+    },
+    "timeoutMs": {
+      "type": "number",
+      "title": "Latency budget (ms)",
+      "description": "How long to wait for Jev before leaving the spawn unchanged.",
+      "default": 800
+    },
+    "logDecisions": {
+      "type": "boolean",
+      "title": "Log decisions",
+      "description": "Write each routing decision to the session log.",
+      "default": true
+    }
+  }
+}
