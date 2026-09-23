@@ -36,11 +36,20 @@ selected() {
 # Claude Code
 if selected claude-code; then
   mkdir -p ~/.claude ~/.claude/skills
-  for f in CLAUDE.md RTK.md settings.json; do
-    [ -f "$DOTFILES/ai/claude/$f" ] || continue
+  for f in CLAUDE.md RTK.md; do
     ln -sf "$DOTFILES/ai/claude/$f" ~/.claude/"$f"
   done
-  echo "linked ~/.claude/{CLAUDE.md,RTK.md,settings.json} -> $DOTFILES/ai/claude/"
+  echo "linked ~/.claude/{CLAUDE.md,RTK.md} -> $DOTFILES/ai/claude/"
+
+  # settings.json is NOT symlinked: it holds private/machine-specific entries
+  # (marketplaces, plugins, paths). Deep-merge tracked defaults into the local
+  # file; local values win, and arrays are not unioned (a local array wins whole).
+  settings=~/.claude/settings.json
+  [ -s "$settings" ] || echo '{}' > "$settings"
+  tmp="$(mktemp)"
+  jq -s '.[0] * .[1]' "$DOTFILES/ai/claude/settings.defaults.json" "$settings" > "$tmp"
+  mv "$tmp" "$settings"  # also replaces a legacy symlink with a real file
+  echo "merged $DOTFILES/ai/claude/settings.defaults.json into $settings"
 
   # Claude Code — global subagent definitions (model-tiered by task complexity)
   ln -sfn "$DOTFILES/ai/claude/agents" ~/.claude/agents
