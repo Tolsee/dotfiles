@@ -56,7 +56,7 @@ accent = "#82aaff"
 [ui.sidebar.agents.rows_by_agent]
 claude = [
   ["state_icon", "agent", "state_text"],
-  ["terminal_title_stripped"],
+  [{ token = "terminal_title_stripped", fg = "#c099ff", bold = false }],
   ["workspace", "tab"],
 ]
 
