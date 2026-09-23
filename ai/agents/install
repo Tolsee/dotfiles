@@ -36,10 +36,10 @@ selected() {
 # Claude Code
 if selected claude-code; then
   mkdir -p ~/.claude ~/.claude/skills
-  for f in CLAUDE.md RTK.md; do
+  for f in CLAUDE.md RTK.md statusline-command.sh; do
     ln -sf "$DOTFILES/ai/claude/$f" ~/.claude/"$f"
   done
-  echo "linked ~/.claude/{CLAUDE.md,RTK.md} -> $DOTFILES/ai/claude/"
+  echo "linked ~/.claude/{CLAUDE.md,RTK.md,statusline-command.sh} -> $DOTFILES/ai/claude/"
 
   # settings.json is NOT symlinked: it holds private/machine-specific entries
   # (marketplaces, plugins, paths). Deep-merge tracked defaults into the local
