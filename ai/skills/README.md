@@ -5,9 +5,10 @@ Agent skills installed into multiple agents:
 - **Local skills** are maintained in this repository and installed via the
   [vercel-labs `skills`](https://github.com/vercel-labs/skills) CLI.
 - **Upstream skills** are selected from
-  [`mattpocock/skills`](https://github.com/mattpocock/skills) and
-  [`spotify/portal-ai-plugins`](https://github.com/spotify/portal-ai-plugins)
-  through the shared allowlist and installed via the same CLI.
+  [`mattpocock/skills`](https://github.com/mattpocock/skills),
+  [`herdrdev/herdr`](https://github.com/herdrdev/herdr) and
+  [`typesafe-ai/skills`](https://github.com/typesafe-ai/skills) through the
+  shared allowlist and installed via the same CLI.
 
 ## Install
 
@@ -30,7 +31,6 @@ layout).
 ```bash
 ./ai/skills/update            # update every selected upstream skill
 ./ai/skills/update wayfinder  # update one selected upstream skill
-./ai/skills/update doctor     # update one Portal skill
 ```
 
 The update wrapper only accepts skills listed in `ai/skills/upstream-skills`.
@@ -75,28 +75,14 @@ To add another skill from `mattpocock/skills`, add its name to
 makes it available to `./ai/skills/update`. Skills from another upstream
 repository need their own `npx skills add <owner>/<repo>` block.
 
-Spotify Portal uses the same installer, agent selection, and update command.
-Its `PORTAL_SKILLS` allowlist contains `setup`, `doctor`, `search`, `service`,
-`actions`, and `feedback`. These provide authentication setup, diagnostics,
-catalog/docs search, service briefings, actions, and feedback. The installer
-checks shared and default-agent skill ownership before replacing Portal's
-generic skill names. It retains Portal discovery links for Antigravity and
-Cursor, whose global paths the skills CLI currently skips.
+Also installed from other upstream repositories:
 
-After installing, start a new session and ask to set up Spotify Portal.
-Authentication requires access to a Portal instance. Shunt is not included;
-its hooks require Claude Code and authenticated Portal access with AiKA.
+- `herdr` from `herdrdev/herdr`, for every agent.
+- `typesafe-ai` from `typesafe-ai/skills`, for every agent except Claude Code,
+  which gets it from the `typesafe@typesafe-ai` plugin.
 
-If you used the previous `ai/plugins/install`, remove its native Portal copies
-once to avoid loading the same workflows twice:
-
-```bash
-claude plugin uninstall portal@portal --scope user --keep-data
-codex plugin remove portal@portal
-devin plugins remove portal --local
-```
-
-Then run `./ai/skills/install`. Native marketplace registrations can remain.
+Both are linked into the Antigravity and Cursor skill directories, which the
+skills CLI currently skips.
 
 Do not also install the `mattpocock-skills` Claude Code plugin. It installs the
 whole plugin bundle and bypasses this allowlist.

@@ -12,8 +12,7 @@ MATTPOCOCK_SKILLS=(
   wait-what
 )
 
-PORTAL_SKILLS=(setup doctor search service actions feedback)
 HERDR_SKILLS=(herdr)
 # Claude Code gets this from the typesafe@typesafe-ai plugin instead.
 TYPESAFE_SKILLS=(typesafe-ai)
-UPSTREAM_SKILLS=("${MATTPOCOCK_SKILLS[@]}" "${PORTAL_SKILLS[@]}" "${HERDR_SKILLS[@]}" "${TYPESAFE_SKILLS[@]}")
+UPSTREAM_SKILLS=("${MATTPOCOCK_SKILLS[@]}" "${HERDR_SKILLS[@]}" "${TYPESAFE_SKILLS[@]}")
