@@ -90,8 +90,9 @@
   "theme": "auto",
   "editorMode": "vim",
   "switchModelsOnFlag": true,
-  "teammateMode": "tmux",
+  "teammateMode": "in-process",
   "inputNeededNotifEnabled": true,
   "agentPushNotifEnabled": true,
-  "skipAutoPermissionPrompt": true
+  "skipAutoPermissionPrompt": true,
+  "preferredNotifChannel": "notifications_disabled"
 }

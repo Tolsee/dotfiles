@@ -43,11 +43,21 @@ if selected claude-code; then
 
   # settings.json is NOT symlinked: it holds private/machine-specific entries
   # (marketplaces, plugins, paths). Deep-merge tracked defaults into the local
-  # file; local values win, and arrays are not unioned (a local array wins whole).
+  # file: local scalars win, arrays gain the default items they lack (so a
+  # default hook or permission is added next to herdr's and local ones).
   settings=~/.claude/settings.json
   [ -s "$settings" ] || echo '{}' > "$settings"
   tmp="$(mktemp)"
-  jq -s '.[0] * .[1]' "$DOTFILES/ai/claude/settings.defaults.json" "$settings" > "$tmp"
+  jq -s '
+    def merge($d; $l):
+      if ($d | type) == "object" and ($l | type) == "object" then
+        reduce ($d | keys_unsorted[]) as $k ($l;
+          .[$k] = if $l | has($k) then merge($d[$k]; $l[$k]) else $d[$k] end)
+      elif ($d | type) == "array" and ($l | type) == "array" then
+        $l + [$d[] | select(. as $x | $l | index([$x]) | not)]
+      else $l end;
+    merge(.[0]; .[1])
+  ' "$DOTFILES/ai/claude/settings.defaults.json" "$settings" > "$tmp"
   mv "$tmp" "$settings"  # also replaces a legacy symlink with a real file
   echo "merged $DOTFILES/ai/claude/settings.defaults.json into $settings"
 

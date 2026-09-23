@@ -79,6 +79,13 @@ npx -y skills@latest add spotify/portal-ai-plugins \
   --global \
   --yes
 
+echo "Installing selected skills from herdrdev/herdr -> agents: ${SELECTED_AGENTS[*]}"
+npx -y skills@latest add herdrdev/herdr \
+  --skill "${HERDR_SKILLS[@]}" \
+  --agent "${SELECTED_AGENTS[@]}" \
+  --global \
+  --yes
+
 # The skills CLI currently skips these agents' global discovery directories.
 for agent in "${SELECTED_AGENTS[@]}"; do
   case "$agent" in
