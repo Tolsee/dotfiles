@@ -11,7 +11,12 @@ input=$(cat)
 cwd=$(echo "$input" | jq -r '.workspace.current_dir // .cwd // empty')
 model=$(echo "$input" | jq -r '.model.display_name // empty')
 used_pct=$(echo "$input" | jq -r '.context_window.used_percentage // empty')
-tokens=$(echo "$input" | jq -r '.context_window.total_input_tokens // empty')
+# total_input_tokens is cumulative across the session, so derive the current
+# context size from the window size and the used percentage instead.
+tokens=$(echo "$input" | jq -r '
+  (.context_window.context_window_size // empty) as $size
+  | (.context_window.used_percentage // empty) as $pct
+  | ($size * $pct / 100 | floor)' 2>/dev/null)
 
 dir_name=$(basename "${cwd:-$PWD}")
 
@@ -60,7 +65,8 @@ if [ -n "$branch" ]; then
       fi
 
       if [ "$use_cache" != true ]; then
-        gh_timeout=""
+        # macOS has no timeout(1); perl's alarm gives the same 3s deadline.
+        gh_timeout="perl -e alarm(3);exec(@ARGV)"
         command -v timeout >/dev/null 2>&1 && gh_timeout="timeout 3"
         # cd into the repo root (not -R, which needs OWNER/REPO not a path)
         # so gh resolves the correct remote even when cwd is a worktree.
