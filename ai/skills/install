@@ -86,6 +86,20 @@ npx -y skills@latest add herdrdev/herdr \
   --global \
   --yes
 
+# Claude Code already has this skill via the typesafe@typesafe-ai plugin.
+NON_CLAUDE_AGENTS=()
+for agent in "${SELECTED_AGENTS[@]}"; do
+  [ "$agent" = claude-code ] || NON_CLAUDE_AGENTS+=("$agent")
+done
+if [ "${#NON_CLAUDE_AGENTS[@]}" -gt 0 ]; then
+  echo "Installing selected skills from typesafe-ai/skills -> agents: ${NON_CLAUDE_AGENTS[*]}"
+  npx -y skills@latest add typesafe-ai/skills \
+    --skill "${TYPESAFE_SKILLS[@]}" \
+    --agent "${NON_CLAUDE_AGENTS[@]}" \
+    --global \
+    --yes
+fi
+
 # The skills CLI currently skips these agents' global discovery directories.
 for agent in "${SELECTED_AGENTS[@]}"; do
   case "$agent" in
@@ -94,7 +108,7 @@ for agent in "${SELECTED_AGENTS[@]}"; do
     *) continue ;;
   esac
   mkdir -p "$target_dir"
-  for skill in "${PORTAL_SKILLS[@]}"; do
+  for skill in "${PORTAL_SKILLS[@]}" "${HERDR_SKILLS[@]}" "${TYPESAFE_SKILLS[@]}"; do
     if [ ! -e "$target_dir/$skill" ] && [ ! -L "$target_dir/$skill" ]; then
       ln -s "$HOME/.agents/skills/$skill" "$target_dir/$skill"
     fi
