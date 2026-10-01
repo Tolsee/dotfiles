@@ -47,7 +47,16 @@ SPACESHIP_DIR_TRUNC_REPO=false
 SPACESHIP_AWS_SHOW=true
 SPACESHIP_DOCKER_SHOW=false
 SPACESHIP_DOCKER_COMPOSE_SHOW=false
-SPACESHIP_KUBECTL_SHOW=false
+SPACESHIP_KUBECTL_SHOW=true
+# Context only: the version check calls the cluster on every prompt.
+SPACESHIP_KUBECTL_VERSION_SHOW=false
+SPACESHIP_KUBECTL_CONTEXT_SHOW_NAMESPACE=true
+# Production red, QA yellow, the local lab green.
+SPACESHIP_KUBECTL_CONTEXT_COLOR_GROUPS=(
+  red 'production'
+  yellow 'qa'
+  green 'kind-'
+)
 SPACESHIP_CHAR_SYMBOL="❯ "
 SPACESHIP_PACKAGE_SHOW=true
 SPACESHIP_NODE_SHOW=true
