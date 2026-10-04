@@ -4,11 +4,12 @@ Run `./ai/pi/install` from dotfiles. This opt-in installer pins Pi's version,
 adds shared-rule discovery and a native Codex review prompt, and installs the
 Herdr Pi integration when Herdr is present. Node.js 22.19+ and Python 3 are required.
 Existing Pi settings win over initial model defaults; authentication is separate.
+GPT-6.1 Sol requires Pi 0.99.1 or newer; the pinned version includes its model catalog.
 
 Start `pi`, run `/login`, and select OpenAI Codex for your ChatGPT subscription.
 Use `/model` to inspect available models. New sessions default to
-`gpt-5.6-terra` with medium thinking for everyday coding. Use Luna for mechanical
-edits and summaries, and switch to Astra with high thinking for difficult
+`gpt-6.1-sol` with medium thinking for everyday coding. Use `gpt-6-luna` for mechanical
+edits and summaries, and switch to `gpt-6-astra` with high thinking for difficult
 debugging, architectural decisions, or repeated failures. `/thinking` changes
 effort. Model escalation is manual; these defaults do not install a model router.
 Existing installations retain their selected model: use `/model` and `/thinking`
@@ -50,7 +51,8 @@ authentication work; confirm the first successful observation. Permission prompt
 require attaching to that session. Results stay in Claude; Pi does not receive
 background completion events automatically.
 
-This initial trial adds no MCP, subagent, notification, or monitoring packages.
+This trial configures no MCP servers, subagent, notification, or monitoring packages.
+Pi 0.99.2 supports MCP, but this installer does not configure it.
 Keep Claude/Codex for established integrations and PR watching. Pi's tool execution
 is not protected by their sandbox/approval settings; local instruction files do
 not provide equivalent enforcement. Herdr supplies state and silent notifications.
@@ -64,5 +66,5 @@ settings edits and sessions; remove the managed AGENTS link and prompt-directory
 entry to disconnect this trial. Claude/Codex configuration is not rewritten.
 
 Inspired by [Nate's configuration](https://github.com/nateberkopec/dotfiles/blob/18e515a0549132a44bc93fba9ffcd0b4e162e4ce/files/home/.pi/agent/settings.json).
-References: [Pi skills](https://github.com/earendil-works/pi/blob/v0.85.1/packages/coding-agent/docs/skills.md),
-[prompt templates](https://github.com/earendil-works/pi/blob/v0.85.1/packages/coding-agent/docs/prompt-templates.md).
+References: [Pi skills](https://github.com/earendil-works/pi/blob/v0.99.2/packages/coding-agent/docs/skills.md),
+[prompt templates](https://github.com/earendil-works/pi/blob/v0.99.2/packages/coding-agent/docs/prompt-templates.md).
