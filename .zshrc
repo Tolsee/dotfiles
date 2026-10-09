@@ -20,7 +20,8 @@ alias claudet="CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 claude --enable-auto-mode"
 export RUBY_CONFIGURE_OPTS="--with-openssl-dir=$(brew --prefix openssl@3)"
 export PATH="$HOME/.rbenv/shims:$PATH"
 export PATH="$HOME/.mix/escripts:$PATH"
-eval "$(rbenv init -)"
+# rbenv shims are already on PATH; defer the 0.2s init until rbenv itself is used.
+rbenv() { unset -f rbenv; eval "$(command rbenv init -)"; rbenv "$@"; }
 
 # Python 
 export PATH="$HOME/Library/Python/3.9/bin:$PATH"
@@ -63,6 +64,9 @@ zplug "Aloxaf/fzf-tab"
 zplug "spaceship-prompt/spaceship-prompt", use:spaceship.zsh, from:github
 
 SPACESHIP_PROMPT_ASYNC=false
+# Only these sections render. The default order probes every language on each prompt,
+# which costs seconds in large repos (zig, node via lazy nvm, deno, php, ruby).
+SPACESHIP_PROMPT_ORDER=(dir git aws kubectl exec_time line_sep jobs exit_code char)
 
 zplug load
 
@@ -111,11 +115,20 @@ source ~/.secrets.zshrc
 # --------
 # Autocompletion
 # --------
-source <(kubectl completion zsh)
+# Generating completions costs ~0.5s per shell; cache them until the binary changes.
+_cached_completion() {
+  local file="$HOME/.cache/zsh/completions/$1.zsh"
+  shift
+  if [[ ! -s "$file" || "$file" -ot "$(command -v "$1")" ]]; then
+    mkdir -p "${file:h}" && "$@" > "$file" 2>/dev/null
+  fi
+  source "$file"
+}
+_cached_completion kubectl kubectl completion zsh
 autoload -U +X bashcompinit && bashcompinit
 complete -o nospace -C /opt/homebrew/bin/terraform terraform
 complete -o nospace -C /opt/homebrew/bin/helmfile helmfile
-source <(helmfile completion zsh)
+_cached_completion helmfile helmfile completion zsh
 export PATH="/opt/homebrew/opt/libpq/bin:$PATH"
 
 
