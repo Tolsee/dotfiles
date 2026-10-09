@@ -76,6 +76,18 @@
           }
         ]
       }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "^(startup|resume|clear|compact|fork)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash '/Users/tolsee/.claude/hooks/herdr-task-pane.sh'",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   },
   "statusLine": {

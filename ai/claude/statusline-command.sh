@@ -107,6 +107,24 @@ if [ -n "$branch" ] && command -v gh >/dev/null 2>&1; then
   fi
 fi
 
+# Mirror the PR numbers onto the Herdr pane (once per change) so the sidebar's
+# agent row shows them next to the ticket.
+if [ -n "$HERDR_PANE_ID" ] && command -v herdr >/dev/null 2>&1; then
+  pr_label=""
+  for entry in "${pr_links[@]}"; do
+    pr_label="${pr_label:+$pr_label }#${entry%% *}"
+  done
+  pr_state_file="$cache_dir/${cache_prefix}pane-pr-$HERDR_PANE_ID"
+  if [ "$(cat "$pr_state_file" 2>/dev/null)" != "$pr_label" ]; then
+    printf '%s' "$pr_label" 2>/dev/null > "$pr_state_file"
+    if [ -n "$pr_label" ]; then
+      with_deadline 2 herdr pane report-metadata "$HERDR_PANE_ID" --source statusline --token "pr=$pr_label" >/dev/null 2>&1
+    else
+      with_deadline 2 herdr pane report-metadata "$HERDR_PANE_ID" --source statusline --clear-token pr >/dev/null 2>&1
+    fi
+  fi
+fi
+
 # Linear ticket of the Herdr task workspace, reported by ~/bin/herdr-task.
 linear_id=""
 linear_url=""

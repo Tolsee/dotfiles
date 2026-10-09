@@ -24,7 +24,16 @@
 
 set -euo pipefail
 
-linear_glyph=$'' # nf-oct-issue_opened; Nerd Fonts ships no Linear logo
+linear_glyph=$'\uf41b' # nf-oct-issue_opened; Nerd Fonts ships no Linear logo
+
+# Sidebar label per agent kind: Nerd Font glyph (nf-cod-claude, nf-cod-openai, nf-cod-robot).
+agent_label() {
+    case "$1" in
+        claude) printf '\uec82 claude' ;;
+        codex) printf '\uec81 codex' ;;
+        *) printf '\uec20 %s' "$1" ;;
+    esac
+}
 metadata_source="herdr-task"
 project_roots="${HERDR_TASK_PROJECT_ROOTS:-}"
 default_agent="${HERDR_TASK_AGENT:-claude}"
@@ -104,6 +113,8 @@ start_agent() {
         sleep 0.5
     done
     if [[ "$started" == true ]]; then
+        "$herdr_bin" pane report-metadata "$root_pane" --source "$metadata_source" \
+            --display-agent "$(agent_label "$agent")" >/dev/null 2>&1 || true
         if "$herdr_bin" agent prompt "$agent_name" "$prompt" >/dev/null; then
             note "started $agent as '$agent_name' with the ticket prompt"
         else
