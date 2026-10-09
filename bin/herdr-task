@@ -375,13 +375,23 @@ cmd_prune() {
 
 # Links reported onto the focused pane: the ticket (herdr-task, SessionStart hook) and the PRs
 # (Claude status line). Sidebar rows are not clickable, so this is the keyboard route.
+# In a popup the window closes with the script, so hold the message until a key is pressed.
+fail_open() {
+    note "$*"
+    if [[ -t 0 ]]; then
+        printf 'press any key' >&2
+        read -r -n1 -s
+    fi
+    exit 1
+}
+
 cmd_open() {
     local ws pane=${1:-} tokens links choice url
     if [[ -z "$pane" ]]; then
         ws=$("$herdr_bin" workspace list | jq -r '.result.workspaces[] | select(.focused) | .workspace_id' | head -n1)
-        [[ -n "$ws" ]] || die "no focused workspace"
+        [[ -n "$ws" ]] || fail_open "no focused workspace"
         pane=$("$herdr_bin" pane list --workspace "$ws" | jq -r '[.result.panes[] | select(.focused)][0].pane_id // empty')
-        [[ -n "$pane" ]] || die "no focused pane"
+        [[ -n "$pane" ]] || fail_open "no focused pane"
     fi
     # Pane tokens first (ticket via herdr-task or the Claude hook, PRs via the status line);
     # the ticket falls back to the workspace, which every agent kind has.
@@ -392,11 +402,11 @@ cmd_open() {
     links=$(jq -r '
         (if .linear_url and .linear_url != "" then "\(.linear_id // "ticket")\t\(.linear_url)" else empty end),
         (if .pr_url and .pr_url != "" then (.pr_url | split(" ")[] | "#\(split("/") | last)\t\(.)") else empty end)' <<<"$tokens")
-    [[ -n "$links" ]] || die "no ticket or PR reported on pane $pane"
+    [[ -n "$links" ]] || fail_open "no ticket or PR reported on pane $pane (start the task with prefix+t, or open a PR from it)"
     if [[ $(wc -l <<<"$links") -eq 1 ]]; then
         choice=$links
     else
-        command -v fzf >/dev/null 2>&1 || die "fzf is required to pick between several links"
+        command -v fzf >/dev/null 2>&1 || fail_open "fzf is required to pick between several links"
         choice=$(fzf --delimiter=$'\t' --with-nth=1 --prompt='Open > ' <<<"$links") || exit 0
     fi
     url=${choice#*$'\t'}
