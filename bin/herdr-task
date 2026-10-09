@@ -67,11 +67,15 @@ current_repo() {
 # pick_project [preferred...]: fzf over the repositories under the project roots, with the
 # preferred repositories listed first (the top entry is fzf's default).
 pick_project() {
-    [[ -n "$project_roots" ]] || { current_repo; return; }
-    command -v fzf >/dev/null 2>&1 || die "fzf is required for the project picker"
     local roots selected preferred
-    IFS=: read -r -a roots <<<"$project_roots"
     preferred=$(printf '%s\n' "$@" | grep -v '^$' | awk '!seen[$0]++')
+    if [[ -z "$project_roots" ]]; then
+        # No picker without roots: take the best guess, else the current repository.
+        if [[ -n "$preferred" ]]; then head -n1 <<<"$preferred"; else current_repo; fi
+        return
+    fi
+    command -v fzf >/dev/null 2>&1 || die "fzf is required for the project picker"
+    IFS=: read -r -a roots <<<"$project_roots"
     selected=$( { printf '%s\n' "$preferred"; find "${roots[@]}" -mindepth 2 -maxdepth 2 -name .git 2>/dev/null | sed 's#/\.git$##' | sort; } \
         | grep -v '^$' | awk '!seen[$0]++' | fzf --prompt='Project > ') || return 1
     printf '%s\n' "$selected"
@@ -83,10 +87,17 @@ team_repo() {
     [[ -f "$team_repo_file" ]] || return 0
     awk -F'\t' -v team="$1" '$1 == team { print $2 }' "$team_repo_file" | tail -n1
 }
+# Best effort: a lost race between two starts must never abort a task.
 remember_team_repo() {
-    mkdir -p "$(dirname "$team_repo_file")"
-    { [[ -f "$team_repo_file" ]] && awk -F'\t' -v team="$1" '$1 != team' "$team_repo_file"; printf '%s\t%s\n' "$1" "$2"; } > "$team_repo_file.tmp" \
-        && mv "$team_repo_file.tmp" "$team_repo_file"
+    local tmp
+    mkdir -p "$(dirname "$team_repo_file")" || return 0
+    tmp=$(mktemp "$team_repo_file.XXXXXX") || return 0
+    if { [[ -f "$team_repo_file" ]] && awk -F'\t' -v team="$1" '$1 != team' "$team_repo_file"; printf '%s\t%s\n' "$1" "$2"; } > "$tmp" 2>/dev/null; then
+        mv -f "$tmp" "$team_repo_file" 2>/dev/null || rm -f "$tmp"
+    else
+        rm -f "$tmp"
+    fi
+    return 0
 }
 
 # Sets ticket_id, ticket_url, ticket_slug, branch from a link, an id, or a branch name.
@@ -412,6 +423,12 @@ cmd_open() {
     url=${choice#*$'\t'}
     "${HERDR_TASK_OPEN:-open}" "$url"
 }
+
+# Sourced for tests: define the functions and stop.
+if [[ -n "${HERDR_TASK_SOURCE_ONLY:-}" ]]; then
+    # shellcheck disable=SC2317
+    return 0 2>/dev/null || exit 0
+fi
 
 case "${1:-}" in
     "") cmd_interactive ;;
