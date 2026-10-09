@@ -57,6 +57,15 @@ description = "start a task from a Linear link, issue id or branch name in its o
 width = "80%"
 height = "80%"
 
+# A popup rather than a detached shell so the picker can show when there are several links.
+[[keys.command]]
+key = "prefix+o"
+type = "popup"
+command = "~/bin/herdr-task open"
+description = "open the focused agent's ticket or PR in the browser"
+width = "50%"
+height = "30%"
+
 [[keys.command]]
 key = "prefix+shift+t"
 type = "popup"

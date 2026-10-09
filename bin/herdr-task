@@ -14,6 +14,8 @@
 #                             or claude); "none" leaves a shell
 #       --prompt TEXT         first prompt for the agent (default: work on the ticket)
 #   herdr-task prune [DIR]                remove worktree workspaces whose branch has merged
+#   herdr-task open [PANE]                open the focused (or given) pane's ticket or PR in the
+#                                         browser, with a picker when there are several
 #   herdr-task branch <ticket>            print the branch name a ticket would get
 #   herdr-task                            interactive: project of the focused workspace, ticket
 #                                         from the clipboard or typed, agent started in the
@@ -351,12 +353,38 @@ cmd_prune() {
     note "done"
 }
 
+# Links reported onto the focused pane: the ticket (herdr-task, SessionStart hook) and the PRs
+# (Claude status line). Sidebar rows are not clickable, so this is the keyboard route.
+cmd_open() {
+    local ws pane=${1:-} tokens links choice url
+    if [[ -z "$pane" ]]; then
+        ws=$("$herdr_bin" workspace list | jq -r '.result.workspaces[] | select(.focused) | .workspace_id' | head -n1)
+        [[ -n "$ws" ]] || die "no focused workspace"
+        pane=$("$herdr_bin" pane list --workspace "$ws" | jq -r '[.result.panes[] | select(.focused)][0].pane_id // empty')
+        [[ -n "$pane" ]] || die "no focused pane"
+    fi
+    tokens=$("$herdr_bin" pane get "$pane" | jq -c '.result.pane.tokens // {}')
+    links=$(jq -r '
+        (if .linear_url and .linear_url != "" then "\(.linear_id // "ticket")\t\(.linear_url)" else empty end),
+        (if .pr_url and .pr_url != "" then (.pr_url | split(" ")[] | "#\(split("/") | last)\t\(.)") else empty end)' <<<"$tokens")
+    [[ -n "$links" ]] || die "no ticket or PR reported on pane $pane"
+    if [[ $(wc -l <<<"$links") -eq 1 ]]; then
+        choice=$links
+    else
+        command -v fzf >/dev/null 2>&1 || die "fzf is required to pick between several links"
+        choice=$(fzf --delimiter=$'\t' --with-nth=1 --prompt='Open > ' <<<"$links") || exit 0
+    fi
+    url=${choice#*$'\t'}
+    "${HERDR_TASK_OPEN:-open}" "$url"
+}
+
 case "${1:-}" in
     "") cmd_interactive ;;
     start) shift; cmd_start "$@" ;;
     branch) parse_ticket "${2:?ticket}"; printf '%s\n' "$branch" ;;
+    open) cmd_open "${2:-}" ;;
     agent-start) start_agent "$2" "$3" "$4" "$5" ;;
     prune) cmd_prune "${2:-}" ;;
-    -h|--help) sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//' ;;
+    -h|--help) sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//' ;;
     *) die "unknown command: $1 (use start or prune)" ;;
 esac

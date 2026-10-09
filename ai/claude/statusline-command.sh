@@ -110,16 +110,20 @@ fi
 # agent row shows them next to the ticket.
 if [ -n "$HERDR_PANE_ID" ] && command -v herdr >/dev/null 2>&1; then
   pr_label=""
+  pr_urls=""
   for entry in "${pr_links[@]}"; do
     pr_label="${pr_label:+$pr_label }#${entry%% *}"
+    pr_urls="${pr_urls:+$pr_urls }${entry#* }"
   done
   pr_state_file="$cache_dir/${cache_prefix}pane-pr-$HERDR_PANE_ID"
   if [ "$(cat "$pr_state_file" 2>/dev/null)" != "$pr_label" ]; then
     printf '%s' "$pr_label" 2>/dev/null > "$pr_state_file"
     if [ -n "$pr_label" ]; then
-      with_deadline 2 herdr pane report-metadata "$HERDR_PANE_ID" --source statusline --token "pr=$pr_label" >/dev/null 2>&1
+      with_deadline 2 herdr pane report-metadata "$HERDR_PANE_ID" --source statusline \
+        --token "pr=$pr_label" --token "pr_url=$pr_urls" >/dev/null 2>&1
     else
-      with_deadline 2 herdr pane report-metadata "$HERDR_PANE_ID" --source statusline --clear-token pr >/dev/null 2>&1
+      with_deadline 2 herdr pane report-metadata "$HERDR_PANE_ID" --source statusline \
+        --clear-token pr --clear-token pr_url >/dev/null 2>&1
     fi
   fi
 fi
