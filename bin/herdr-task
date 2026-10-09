@@ -84,6 +84,8 @@ parse_ticket() {
         branch=$(slugify "$ticket_id")
         [[ -n "$ticket_slug" ]] && branch="$branch-$(slugify "$ticket_slug")"
         branch=${branch:0:60}
+    elif git check-ref-format --branch "$ref" >/dev/null 2>&1; then
+        branch=$ref
     else
         branch=$(slugify "$ref")
     fi
@@ -158,11 +160,11 @@ cmd_start() {
 
     local worktrees existing_path response workspace_id checkout_path root_pane start
     worktrees=$("$herdr_bin" worktree list --cwd "$project")
-    # A bare id reopens the ticket's existing worktree even if that branch carries the slug.
-    local branch_prefix
-    branch_prefix=$(slugify "${ticket_id:-$branch}")
-    existing_path=$(jq -r --arg b "$branch" --arg p "$branch_prefix-" \
-        '.result.worktrees[] | select(.branch != null) | select(.branch == $b or (.branch | startswith($p))) | .path' <<<"$worktrees" | head -n1)
+    existing_path=$(jq -r --arg b "$branch" '.result.worktrees[] | select(.branch == $b) | .path' <<<"$worktrees" | head -n1)
+    if [[ -z "$existing_path" && -n "$ticket_id" && -z "$ticket_slug" ]]; then
+        # A bare id reopens the ticket's existing worktree even if that branch carries the slug.
+        existing_path=$(jq -r --arg p "$branch-" '.result.worktrees[] | select(.branch != null) | select(.branch | startswith($p)) | .path' <<<"$worktrees" | head -n1)
+    fi
     start=$SECONDS
     if [[ -n "$existing_path" ]]; then
         note "branch $branch already has a worktree at $existing_path, opening it"
@@ -246,9 +248,14 @@ cmd_interactive() {
     cmd_start "$ref" --project "$project" --async-agent
 }
 
+# tsv_field <tsv> <key> <n>: field n of the first line whose first field equals key, literally.
+tsv_field() {
+    awk -F'\t' -v key="$2" -v n="$3" '$1 == key { print $n; exit }' <<<"$1"
+}
+
 cmd_prune() {
     local project worktrees repo_root default_branch merged_heads open_heads
-    local -a remove_paths remove_workspaces
+    local -a remove_paths remove_workspaces remove_branches
     project=${1:-$(pick_project)} || exit 0
     project=$(cd "$project" && pwd -P)
     server_running || die "herdr server is not running; start herdr first"
@@ -278,14 +285,14 @@ cmd_prune() {
             verdict="keep: detached HEAD"
         elif [[ -n "$(git -C "$wt_path" status --porcelain 2>/dev/null)" ]]; then
             verdict="keep: uncommitted changes"
-        elif grep -q "^$branch"$'\t' <<<"$open_heads"; then
-            verdict="keep: open PR $(grep "^$branch"$'\t' <<<"$open_heads" | cut -f2)"
+        elif [[ -n "$(tsv_field "$open_heads" "$branch" 2)" ]]; then
+            verdict="keep: open PR $(tsv_field "$open_heads" "$branch" 2)"
         elif git -C "$repo_root" merge-base --is-ancestor "$branch" "origin/$default_branch" 2>/dev/null; then
             verdict="remove: merged into $default_branch"
         else
             # A merged PR only proves the commit it merged; the branch may have moved on.
             head_sha=$(git -C "$repo_root" rev-parse "$branch" 2>/dev/null || true)
-            merged_sha=$(grep "^$branch"$'\t' <<<"$merged_heads" | head -n1 | cut -f2)
+            merged_sha=$(tsv_field "$merged_heads" "$branch" 2)
             if [[ -z "$merged_sha" ]]; then
                 # Older than the bulk lists reach: ask about this branch alone.
                 pr_state=$(cd "$repo_root" && gh pr list --head "$branch" --state all --limit 1 --json state,number,headRefOid --jq '.[0] | "\(.state) #\(.number) \(.headRefOid)"' 2>/dev/null || true)
@@ -308,6 +315,7 @@ cmd_prune() {
         if [[ "$verdict" == remove:* ]]; then
             remove_paths+=("$wt_path")
             remove_workspaces+=("$workspace_id")
+            remove_branches+=("$branch")
         fi
     done < <(jq -r '.result.worktrees[] | select(.is_linked_worktree) | [.path, (.branch // "-"), (.open_workspace_id // "-"), (.is_prunable | tostring)] | @tsv' <<<"$worktrees")
 
@@ -319,8 +327,16 @@ cmd_prune() {
     read -r answer
     [[ "$answer" == [yY] ]] || { note "aborted"; return; }
 
-    local i
+    local i open_count
     for i in "${!remove_paths[@]}"; do
+        # The bulk lists are capped and gh may have failed: re-check each branch before deleting.
+        if [[ -n "${remove_branches[$i]}" ]] && command -v gh >/dev/null 2>&1; then
+            open_count=$(cd "$repo_root" && gh pr list --head "${remove_branches[$i]}" --state open --limit 1 --json number --jq 'length' 2>/dev/null) || open_count=""
+            if [[ "$open_count" != 0 ]]; then
+                note "kept ${remove_paths[$i]}: open PR or GitHub lookup failed"
+                continue
+            fi
+        fi
         if [[ -n "${remove_workspaces[$i]}" ]]; then
             if "$herdr_bin" worktree remove --workspace "${remove_workspaces[$i]}" >/dev/null; then
                 note "removed ${remove_paths[$i]} (workspace ${remove_workspaces[$i]})"

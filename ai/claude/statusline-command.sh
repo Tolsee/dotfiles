@@ -42,10 +42,11 @@ with_deadline() {
   fi
 }
 
-# cached <key> <command...>: print cached stdout if fresh, else run and cache.
+# cached <key> <dir> <command...>: print cached stdout if fresh, else run the
+# command from <dir> under the deadline and cache its output.
 cached() {
-  local key=$1 file ts
-  shift
+  local key=$1 dir=$2 file ts
+  shift 2
   file="$cache_dir/$cache_prefix$key"
   if [ -f "$file" ]; then
     ts=$(sed -n '1p' "$file" 2>/dev/null)
@@ -58,13 +59,11 @@ cached() {
     fi
   fi
   local out
-  out=$(with_deadline 2 "$@" 2>/dev/null)
+  out=$(cd "$dir" 2>/dev/null && with_deadline 2 "$@" 2>/dev/null)
   { printf '%s\n' "$now"; printf '%s' "$out"; } 2>/dev/null > "$file"
   printf '%s' "$out"
 }
 
-# in_dir <dir> <command...>: run the command from that directory.
-in_dir() { cd "$1" 2>/dev/null && shift && "$@"; }
 
 branch=""
 pr_links=()
@@ -82,7 +81,7 @@ if [ -n "$branch" ] && command -v gh >/dev/null 2>&1; then
 
   # cd into the repo root (not -R, which needs OWNER/REPO not a path) so gh
   # resolves the correct remote even when cwd is a worktree.
-  current_pr=$(cached "pr-$branch_key" in_dir "$repo_root" gh pr view "$branch" --json url,number)
+  current_pr=$(cached "pr-$branch_key" "$repo_root" gh pr view "$branch" --json url,number)
   current_number=$(printf '%s' "$current_pr" | jq -r '.number // empty' 2>/dev/null)
   current_url=$(printf '%s' "$current_pr" | jq -r '.url // empty' 2>/dev/null)
   if [ -n "$current_url" ]; then
@@ -98,7 +97,7 @@ if [ -n "$branch" ] && command -v gh >/dev/null 2>&1; then
         ts >= since && /checkout: moving from / { print $(NF - 2); print $NF }' \
     | sort -u)
   if [ -n "$recent_branches" ]; then
-    open_prs=$(cached "open-prs-$repo_key" in_dir "$repo_root" gh pr list --author @me --state open --limit 50 --json number,url,headRefName)
+    open_prs=$(cached "open-prs-$repo_key" "$repo_root" gh pr list --author @me --state open --limit 50 --json number,url,headRefName)
     while IFS=' ' read -r number url; do
       [ -n "$url" ] && [ "$number" != "$current_number" ] && pr_links+=("$number $url")
     done < <(printf '%s' "$open_prs" | jq -r --arg branches "$recent_branches" '
@@ -129,7 +128,7 @@ fi
 linear_id=""
 linear_url=""
 if [ -n "$HERDR_WORKSPACE_ID" ] && command -v herdr >/dev/null 2>&1; then
-  ws=$(cached "herdr-ws-$HERDR_WORKSPACE_ID" herdr workspace get "$HERDR_WORKSPACE_ID")
+  ws=$(cached "herdr-ws-$HERDR_WORKSPACE_ID" . herdr workspace get "$HERDR_WORKSPACE_ID")
   linear_id=$(printf '%s' "$ws" | jq -r '.result.workspace.tokens.linear_id // empty' 2>/dev/null)
   linear_url=$(printf '%s' "$ws" | jq -r '.result.workspace.tokens.linear_url // empty' 2>/dev/null)
 fi
