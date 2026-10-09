@@ -1,10 +1,10 @@
 #!/bin/bash
 # Spaceship-like Claude Code status line.
-# Reads session JSON from stdin: dir (cyan), git branch (magenta),
-# PR hyperlink (own color), model display name + context-window usage (dim).
-# Degrades silently outside a git repo, on a branch with no PR (or a detached
-# HEAD), or when `gh` is missing/unauthenticated — never prints to stderr,
-# never stalls the prompt.
+# Reads session JSON from stdin: dir (cyan), git branch (magenta), PR hyperlinks
+# (current branch's PR plus other open PRs this worktree pushed), the Linear
+# ticket of the Herdr task workspace (Linear purple), model + context usage (dim).
+# Degrades silently outside a git repo, with no PR, or without gh/herdr — never
+# prints to stderr, never stalls the prompt.
 
 input=$(cat)
 
@@ -20,9 +20,54 @@ tokens=$(echo "$input" | jq -r '
 
 dir_name=$(basename "${cwd:-$PWD}")
 
+# gh is refreshed at most once a minute per key: fast enough that a PR opened
+# by the session shows up promptly, rare enough not to hammer the API. The
+# "v2-" prefix keeps old single-line caches from being read as timestamps.
+cache_dir="$HOME/.claude/cache"
+cache_prefix="v2-"
+cache_ttl=60
+now=$(date +%s)
+mkdir -p "$cache_dir" 2>/dev/null
+
+# with_deadline <seconds> <command...>: macOS has no timeout(1); perl's alarm
+# gives the same deadline. Each render makes at most three calls, so 2s each
+# bounds a fully stalled render at 6s.
+with_deadline() {
+  local secs=$1
+  shift
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "$secs" "$@"
+  else
+    perl -e 'alarm shift; exec @ARGV' "$secs" "$@"
+  fi
+}
+
+# cached <key> <command...>: print cached stdout if fresh, else run and cache.
+cached() {
+  local key=$1 file ts
+  shift
+  file="$cache_dir/$cache_prefix$key"
+  if [ -f "$file" ]; then
+    ts=$(sed -n '1p' "$file" 2>/dev/null)
+    case "$ts" in
+      ''|*[!0-9]*) ts="" ;;
+    esac
+    if [ -n "$ts" ] && [ $((now - ts)) -lt "$cache_ttl" ]; then
+      sed '1d' "$file"
+      return
+    fi
+  fi
+  local out
+  out=$(with_deadline 2 "$@" 2>/dev/null)
+  { printf '%s\n' "$now"; printf '%s' "$out"; } 2>/dev/null > "$file"
+  printf '%s' "$out"
+}
+
+# in_dir <dir> <command...>: run the command from that directory.
+in_dir() { cd "$1" 2>/dev/null && shift && "$@"; }
+
 branch=""
-pr_url=""
-pr_number=""
+pr_links=()
 
 if [ -n "$cwd" ]; then
   # --show-current (not rev-parse --abbrev-ref HEAD) so a detached HEAD
@@ -30,64 +75,45 @@ if [ -n "$cwd" ]; then
   branch=$(git -C "$cwd" --no-optional-locks branch --show-current 2>/dev/null)
 fi
 
-if [ -n "$branch" ]; then
-  # Prefer the PR info Claude Code already resolved for the footer badge —
-  # this avoids shelling out to `gh` on every render entirely.
-  pr_url=$(echo "$input" | jq -r '.pr.url // empty')
-  pr_number=$(echo "$input" | jq -r '.pr.number // empty')
+if [ -n "$branch" ] && command -v gh >/dev/null 2>&1; then
+  repo_root=$(git -C "$cwd" --no-optional-locks rev-parse --show-toplevel 2>/dev/null)
+  repo_key=$(printf '%s' "$repo_root" | shasum 2>/dev/null | cut -c1-16)
+  branch_key=$(printf '%s|%s' "$repo_root" "$branch" | shasum 2>/dev/null | cut -c1-16)
 
-  # Fallback for when .pr isn't populated yet (e.g. brand-new branch, PR not
-  # found yet): a file cache keyed on repo+branch, refreshed at most every
-  # 5 minutes, so a branch with no PR (the common case on a fresh branch)
-  # doesn't trigger a network call on every render.
-  if [ -z "$pr_url" ] && command -v gh >/dev/null 2>&1; then
-    repo_root=$(git -C "$cwd" --no-optional-locks rev-parse --show-toplevel 2>/dev/null)
-    cache_dir="$HOME/.claude/cache"
-    mkdir -p "$cache_dir" 2>/dev/null
-    key=$(printf '%s' "${repo_root}|${branch}" | shasum 2>/dev/null | cut -c1-16)
-
-    if [ -n "$key" ]; then
-      cache_file="$cache_dir/pr-$key"
-      now=$(date +%s)
-      use_cache=false
-
-      if [ -f "$cache_file" ]; then
-        cached_url=$(sed -n '1p' "$cache_file" 2>/dev/null)
-        cached_number=$(sed -n '2p' "$cache_file" 2>/dev/null)
-        cached_ts=$(sed -n '3p' "$cache_file" 2>/dev/null)
-        cached_branch=$(sed -n '4p' "$cache_file" 2>/dev/null)
-        if [ "$cached_branch" = "$branch" ] && [ -n "$cached_ts" ] \
-          && [ $((now - cached_ts)) -lt 300 ] 2>/dev/null; then
-          use_cache=true
-          pr_url="$cached_url"
-          pr_number="$cached_number"
-        fi
-      fi
-
-      if [ "$use_cache" != true ]; then
-        # macOS has no timeout(1); perl's alarm gives the same 3s deadline.
-        gh_timeout="perl -e alarm(3);exec(@ARGV)"
-        command -v timeout >/dev/null 2>&1 && gh_timeout="timeout 3"
-        # cd into the repo root (not -R, which needs OWNER/REPO not a path)
-        # so gh resolves the correct remote even when cwd is a worktree.
-        gh_json=$(cd "$repo_root" 2>/dev/null && $gh_timeout gh pr view "$branch" --json url,number 2>/dev/null)
-        pr_url=$(printf '%s' "$gh_json" | jq -r '.url // empty' 2>/dev/null)
-        pr_number=$(printf '%s' "$gh_json" | jq -r '.number // empty' 2>/dev/null)
-        {
-          printf '%s\n' "$pr_url"
-          printf '%s\n' "$pr_number"
-          printf '%s\n' "$now"
-          printf '%s\n' "$branch"
-        } > "$cache_file" 2>/dev/null
-      fi
-    fi
+  # cd into the repo root (not -R, which needs OWNER/REPO not a path) so gh
+  # resolves the correct remote even when cwd is a worktree.
+  current_pr=$(cached "pr-$branch_key" in_dir "$repo_root" gh pr view "$branch" --json url,number)
+  current_number=$(printf '%s' "$current_pr" | jq -r '.number // empty' 2>/dev/null)
+  current_url=$(printf '%s' "$current_pr" | jq -r '.url // empty' 2>/dev/null)
+  if [ -n "$current_url" ]; then
+    pr_links+=("$current_number $current_url")
   fi
 
-  # number should always accompany url, but fall back to the URL's trailing
-  # path segment (the PR number) if a source ever omits it.
-  if [ -n "$pr_url" ] && [ -z "$pr_number" ]; then
-    pr_number="${pr_url##*/}"
+  # One session can push several branches from the same worktree. The reflog
+  # remembers every branch checked out here in the last 12 hours; show the
+  # open PRs of those branches too.
+  recent_branches=$(git -C "$cwd" --no-optional-locks reflog show --date=unix --format='%gd %gs' HEAD -n 60 2>/dev/null \
+    | awk -v since=$((now - 43200)) '
+        match($1, /@\{[0-9]+\}/) { ts = substr($1, RSTART + 2, RLENGTH - 3) }
+        ts >= since && /checkout: moving from / { print $(NF - 2); print $NF }' \
+    | sort -u)
+  if [ -n "$recent_branches" ]; then
+    open_prs=$(cached "open-prs-$repo_key" in_dir "$repo_root" gh pr list --author @me --state open --limit 50 --json number,url,headRefName)
+    while IFS=' ' read -r number url; do
+      [ -n "$url" ] && [ "$number" != "$current_number" ] && pr_links+=("$number $url")
+    done < <(printf '%s' "$open_prs" | jq -r --arg branches "$recent_branches" '
+      ($branches | split("\n")) as $b
+      | .[] | select(.headRefName as $h | $b | index($h)) | "\(.number) \(.url)"' 2>/dev/null | head -n 3)
   fi
+fi
+
+# Linear ticket of the Herdr task workspace, reported by ~/bin/herdr-task.
+linear_id=""
+linear_url=""
+if [ -n "$HERDR_WORKSPACE_ID" ] && command -v herdr >/dev/null 2>&1; then
+  ws=$(cached "herdr-ws-$HERDR_WORKSPACE_ID" herdr workspace get "$HERDR_WORKSPACE_ID")
+  linear_id=$(printf '%s' "$ws" | jq -r '.result.workspace.tokens.linear_id // empty' 2>/dev/null)
+  linear_url=$(printf '%s' "$ws" | jq -r '.result.workspace.tokens.linear_url // empty' 2>/dev/null)
 fi
 
 ctx=""
@@ -106,8 +132,14 @@ fi
 CYAN='\033[36m'
 MAGENTA='\033[35m'
 LINK='\033[34m'
+LINEAR='\033[38;2;94;106;210m'
 DIM='\033[2m'
 RESET='\033[0m'
+
+# OSC 8 hyperlink: ESC ]8;;URL ESC \ TEXT ESC ]8;; ESC \
+# Built as one contiguous sequence (no color codes inside it); the color wraps
+# it from the outside only, so the hyperlink escapes are never split.
+hyperlink() { printf '\033]8;;%s\033\\%s\033]8;;\033\\' "$1" "$2"; }
 
 out=$(printf "${CYAN}%s${RESET}" "$dir_name")
 
@@ -115,12 +147,14 @@ if [ -n "$branch" ]; then
   out="${out} $(printf "${MAGENTA}%s${RESET}" "$branch")"
 fi
 
-if [ -n "$pr_url" ] && [ -n "$pr_number" ]; then
-  # OSC 8 hyperlink: ESC ]8;;URL ESC \ TEXT ESC ]8;; ESC \
-  # Built as one contiguous sequence (no color codes inside it); LINK/RESET
-  # wrap it from the outside only, so the hyperlink escapes are never split.
-  pr_link=$(printf '\033]8;;%s\033\\#%s\033]8;;\033\\' "$pr_url" "$pr_number")
-  out="${out} $(printf "${LINK}%s${RESET}" "$pr_link")"
+for entry in "${pr_links[@]}"; do
+  number=${entry%% *}
+  url=${entry#* }
+  out="${out} $(printf "${LINK}%s${RESET}" "$(hyperlink "$url" "#$number")")"
+done
+
+if [ -n "$linear_id" ] && [ -n "$linear_url" ]; then
+  out="${out} $(printf "${LINEAR}%s${RESET}" "$(hyperlink "$linear_url" "$linear_id")")"
 fi
 
 meta=""

@@ -13,6 +13,10 @@ yellow = "#ffc777"
 shell_mode = "auto"
 new_cwd = "follow"
 
+# Task worktrees created by ~/bin/herdr-task live outside the repos.
+[worktrees]
+directory = "~/.herdr/worktrees"
+
 [keys]
 prefix = "ctrl+b"
 settings = "prefix+s"
@@ -32,12 +36,32 @@ split_horizontal = ["prefix+minus", 'prefix+"']
 close_pane = "prefix+x"
 zoom = "prefix+z"
 resize_mode = "prefix+shift+r"
+new_worktree = "prefix+shift+g"
+remove_worktree = "prefix+shift+x"
 
+# Popups load the private shell config (HERDR_TASK_PROJECT_ROOTS and friends) without the
+# full interactive zsh startup, so they open instantly.
 [[keys.command]]
 key = "prefix+f"
 type = "popup"
-command = "~/bin/herdr-sessionizer"
+command = "zsh -c 'source ~/.secrets.zshrc 2>/dev/null; exec ~/bin/herdr-sessionizer'"
 description = "open or create a project workspace"
+width = "80%"
+height = "80%"
+
+[[keys.command]]
+key = "prefix+t"
+type = "popup"
+command = "zsh -c 'source ~/.secrets.zshrc 2>/dev/null; exec ~/bin/herdr-task'"
+description = "start a task from a Linear link, issue id or branch name in its own worktree workspace"
+width = "80%"
+height = "80%"
+
+[[keys.command]]
+key = "prefix+shift+t"
+type = "popup"
+command = "zsh -c 'source ~/.secrets.zshrc 2>/dev/null; exec ~/bin/herdr-task prune'"
+description = "remove task worktrees whose branch has merged"
 width = "80%"
 height = "80%"
 
@@ -51,6 +75,14 @@ pane_gaps = false
 hide_tab_bar_when_single_tab = false
 tab_bar_position = "top"
 accent = "#82aaff"
+agent_panel_sort = "spaces"
+
+# Space rows: the task label, then the Linear ticket (reported by herdr-task) in Linear's brand color.
+[ui.sidebar.spaces]
+rows = [
+  ["state_icon", "workspace"],
+  [{ token = "$linear", fg = "#5e6ad2", bold = true }, "branch", "git_status"],
+]
 
 # Show each agent session's current task (its terminal title) in the sidebar.
 [ui.sidebar.agents.rows_by_agent]
