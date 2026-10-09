@@ -29,7 +29,18 @@ Shared by all coding agents (Claude Code, Codex, Antigravity/Gemini). Source of 
 
 ## Git
 
-- Create worktrees with the harness's native worktree tool (e.g. Claude Code's EnterWorktree / Agent `isolation: "worktree"`). Never run `git worktree add` manually, and never create sibling directories (`../<repo>-something`). If no native tool exists, use `<repo>/.claude/worktrees/<branch>` (gitignored).
+- Inside Herdr (`HERDR_WORKSPACE_ID` is set) the pane's cwd is usually a task worktree that `herdr-task` created under `~/.herdr/worktrees`. Work there and never create another worktree for the same task.
+- Otherwise create worktrees with the harness's native worktree tool (e.g. Claude Code's EnterWorktree / Agent `isolation: "worktree"`). Never run `git worktree add` manually, and never create sibling directories (`../<repo>-something`). If no native tool exists, use `<repo>/.claude/worktrees/<branch>` (gitignored).
+- Asked to start or pick up a ticket while inside Herdr: run `herdr-task start <ticket link> --project <repo> --title "<title>"` (look the title up with the Linear MCP first). It creates the worktree workspace and starts a fresh agent there with the ticket as its first prompt; do not start editing in the current pane.
+- A task branch carries the ticket id (for example `abc-123-short-title`) so Linear links it. Put the id in the PR title or body too.
+
+## Advisor
+
+When an advisor model is configured (`advisorModel` in Claude settings), consult it at exactly these points and stay silent otherwise:
+
+- Before locking a plan that touches more than one file: does it miss an invariant, a schema or an API contract?
+- When the same test or compiler error fails twice: root cause, or a rabbit hole?
+- Before declaring a task done or staging a commit: does the full diff hide a regression?
 
 ## AWS
 

@@ -37,6 +37,7 @@ fi
 
 ln -s "$config_source" "$config_file"
 ln -nsf "$dotfiles_root/bin/herdr-sessionizer" "$HOME/bin/herdr-sessionizer"
+ln -nsf "$dotfiles_root/bin/herdr-task" "$HOME/bin/herdr-task"
 
 herdr config check
 

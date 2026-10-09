@@ -1,0 +1,362 @@
+#!/usr/bin/env bash
+# Start a ticket in its own Herdr worktree workspace, or prune finished ones.
+#
+#   herdr-task start <ticket> [options]   <ticket> is a Linear issue link, an issue id such
+#                                         as ABC-123, or a plain branch name. Creates (or
+#                                         reopens) a worktree workspace for it, tags the
+#                                         workspace with the ticket for the sidebar, and
+#                                         starts an agent there with the ticket as its
+#                                         first prompt.
+#       -p, --project DIR     repository to branch from (default: the current repository)
+#       -t, --title TEXT      ticket title, used for the workspace label
+#       -u, --url URL         ticket link, when <ticket> is a bare id
+#       -a, --agent KIND      agent to start in the new workspace (default: $HERDR_TASK_AGENT
+#                             or claude); "none" leaves a shell
+#       --prompt TEXT         first prompt for the agent (default: work on the ticket)
+#   herdr-task prune [DIR]                remove worktree workspaces whose branch has merged
+#   herdr-task branch <ticket>            print the branch name a ticket would get
+#   herdr-task                            interactive: project of the focused workspace, ticket
+#                                         from the clipboard or typed, agent started in the
+#                                         background so the popup closes at once
+#
+# HERDR_TASK_PROJECT_ROOTS (colon separated, private shell config) lists directories to scan
+# for repositories in the interactive project picker.
+
+set -euo pipefail
+
+linear_glyph=$'\uf41b' # nf-oct-issue_opened; Nerd Fonts ships no Linear logo
+
+# Sidebar label per agent kind: Nerd Font glyph (nf-cod-claude, nf-cod-openai, nf-cod-robot).
+agent_label() {
+    case "$1" in
+        claude) printf '\uec82 claude' ;;
+        codex) printf '\uec81 codex' ;;
+        *) printf '\uec20 %s' "$1" ;;
+    esac
+}
+metadata_source="herdr-task"
+project_roots="${HERDR_TASK_PROJECT_ROOTS:-}"
+default_agent="${HERDR_TASK_AGENT:-claude}"
+
+die() { printf 'herdr-task: %s\n' "$*" >&2; exit 1; }
+note() { printf 'herdr-task: %s\n' "$*" >&2; }
+
+for dependency in jq git; do
+    command -v "$dependency" >/dev/null 2>&1 || die "$dependency is required"
+done
+herdr_bin="${HERDR_BIN_PATH:-$(command -v herdr || true)}"
+[[ -n "$herdr_bin" ]] || die "herdr is required"
+
+server_running() {
+    "$herdr_bin" status server --json | jq -e '.running == true' >/dev/null
+}
+
+slugify() {
+    printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//' | cut -c1-60
+}
+
+current_repo() {
+    git rev-parse --show-toplevel 2>/dev/null || die "not inside a repository; pass --project"
+}
+
+pick_project() {
+    [[ -n "$project_roots" ]] || { current_repo; return; }
+    command -v fzf >/dev/null 2>&1 || die "fzf is required for the project picker"
+    local roots selected
+    IFS=: read -r -a roots <<<"$project_roots"
+    selected=$(find "${roots[@]}" -mindepth 2 -maxdepth 2 -name .git 2>/dev/null \
+        | sed 's#/\.git$##' | sort | fzf --prompt='Project > ') || return 1
+    printf '%s\n' "$selected"
+}
+
+# Sets ticket_id, ticket_url, ticket_slug, branch from a link, an id, or a branch name.
+parse_ticket() {
+    local ref=$1
+    ticket_id="" ticket_url="" ticket_slug=""
+    if [[ "$ref" =~ ^https?://[^/]*linear\.app/[^/]+/issue/([A-Za-z][A-Za-z0-9]*-[0-9]+)(/([^/?#]*))? ]]; then
+        ticket_id=${BASH_REMATCH[1]^^}
+        ticket_slug=${BASH_REMATCH[3]:-}
+        ticket_url=${ref%%[?#]*}
+    elif [[ "$ref" =~ ^([A-Za-z][A-Za-z0-9]*-[0-9]+)$ ]]; then
+        ticket_id=${BASH_REMATCH[1]^^}
+    fi
+    if [[ -n "$ticket_id" ]]; then
+        branch=$(slugify "$ticket_id")
+        [[ -n "$ticket_slug" ]] && branch="$branch-$(slugify "$ticket_slug")"
+        branch=${branch:0:60}
+    elif git check-ref-format --branch "$ref" >/dev/null 2>&1; then
+        branch=$ref
+    else
+        branch=$(slugify "$ref")
+    fi
+    [[ -n "$branch" ]] || die "could not derive a branch name from '$ref'"
+}
+
+# Gitignored env files the worktree needs that git does not carry over.
+copy_env_files() {
+    local source_root=$1 target_root=$2 file
+    git -C "$source_root" ls-files --others --ignored --exclude-standard -- '.env' '.env.*' 'app/.env' 'app/.env.*' 2>/dev/null \
+        | while read -r file; do
+            [[ -f "$source_root/$file" && ! -e "$target_root/$file" ]] || continue
+            mkdir -p "$target_root/$(dirname "$file")"
+            cp "$source_root/$file" "$target_root/$file"
+            note "copied $file"
+        done
+}
+
+start_agent() {
+    local agent_name=$1 agent=$2 root_pane=$3 prompt=$4 started=false
+    # The new pane's shell takes a moment to become an available agent target.
+    for _ in $(seq 1 20); do
+        if "$herdr_bin" agent start "$agent_name" --kind "$agent" --pane "$root_pane" >/dev/null 2>&1; then
+            started=true
+            break
+        fi
+        sleep 0.5
+    done
+    if [[ "$started" == true ]]; then
+        "$herdr_bin" pane report-metadata "$root_pane" --source "$metadata_source" \
+            --display-agent "$(agent_label "$agent")" >/dev/null 2>&1 || true
+        if "$herdr_bin" agent prompt "$agent_name" "$prompt" >/dev/null; then
+            note "started $agent as '$agent_name' with the ticket prompt"
+        else
+            note "started $agent as '$agent_name'; paste the ticket yourself"
+        fi
+    else
+        note "could not start $agent in pane $root_pane; the workspace is ready anyway"
+    fi
+}
+
+cmd_start() {
+    local ref="" project="" title="" url_opt="" agent="$default_agent" prompt="" agent_async=false
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -p|--project) project=$2; shift 2 ;;
+            -t|--title) title=$2; shift 2 ;;
+            -u|--url) url_opt=$2; shift 2 ;;
+            -a|--agent) agent=$2; shift 2 ;;
+            --prompt) prompt=$2; shift 2 ;;
+            --no-agent) agent=none; shift ;;
+            --async-agent) agent_async=true; shift ;;
+            -*) die "unknown option: $1" ;;
+            *) [[ -z "$ref" ]] || die "unexpected argument: $1"; ref=$1; shift ;;
+        esac
+    done
+    [[ -n "$ref" ]] || die "usage: herdr-task start <ticket link | id | branch> [options]"
+    project=${project:-$(current_repo)}
+    project=$(cd "$project" && pwd -P)
+    git -C "$project" rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "$project is not a git repository"
+    server_running || die "herdr server is not running; start herdr first"
+
+    local ticket_id ticket_url ticket_slug branch label
+    parse_ticket "$ref"
+    [[ -n "$url_opt" ]] && ticket_url=$url_opt
+    if [[ -n "$ticket_id" ]]; then
+        label="$ticket_id ${title:-${ticket_slug//-/ }}"
+    else
+        label="${title:-$branch}"
+    fi
+    label=${label:0:36}
+
+    local worktrees existing_path response workspace_id checkout_path root_pane start
+    worktrees=$("$herdr_bin" worktree list --cwd "$project")
+    existing_path=$(jq -r --arg b "$branch" '.result.worktrees[] | select(.branch == $b) | .path' <<<"$worktrees" | head -n1)
+    if [[ -z "$existing_path" && -n "$ticket_id" && -z "$ticket_slug" ]]; then
+        # A bare id reopens the ticket's existing worktree even if that branch carries the slug.
+        existing_path=$(jq -r --arg p "$branch-" '.result.worktrees[] | select(.branch != null) | select(.branch | startswith($p)) | .path' <<<"$worktrees" | head -n1)
+    fi
+    start=$SECONDS
+    if [[ -n "$existing_path" ]]; then
+        note "branch $branch already has a worktree at $existing_path, opening it"
+        response=$("$herdr_bin" worktree open --cwd "$project" --path "$existing_path" --label "$label" --focus)
+    else
+        response=$("$herdr_bin" worktree create --cwd "$project" --branch "$branch" --label "$label" --focus)
+    fi
+    workspace_id=$(jq -r '.result.workspace.workspace_id' <<<"$response")
+    checkout_path=$(jq -r '.result.worktree.path' <<<"$response")
+    root_pane=$(jq -r '.result.root_pane.pane_id' <<<"$response")
+    note "workspace $workspace_id at $checkout_path ($((SECONDS - start))s)"
+
+    if [[ -n "$ticket_id" ]]; then
+        "$herdr_bin" workspace report-metadata "$workspace_id" --source "$metadata_source" \
+            --token "linear=${linear_glyph} ${ticket_id}" \
+            --token "linear_id=$ticket_id" \
+            --token "linear_url=$ticket_url" \
+            --token "linear_title=$title" >/dev/null
+    fi
+    [[ -z "$existing_path" ]] && copy_env_files "$project" "$checkout_path"
+
+    if [[ "$agent" != none ]]; then
+        local agent_name
+        agent_name=$(slugify "${ticket_id:-$branch}")
+        agent_name=${agent_name:0:32}
+        if [[ -z "$prompt" ]]; then
+            prompt="Work on ${ticket_url:-${ticket_id:-$branch}}."
+            [[ -n "$ticket_id" ]] && prompt="$prompt Read the ticket first (Linear MCP), restate the goal in one line, then plan before editing."
+        fi
+        if [[ "$agent_async" == true ]]; then
+            # Let the popup close now; the agent keeps starting in the pane.
+            nohup "$0" agent-start "$agent_name" "$agent" "$root_pane" "$prompt" >/dev/null 2>&1 &
+            note "starting $agent as '$agent_name' in the background"
+        else
+            start_agent "$agent_name" "$agent" "$root_pane" "$prompt"
+        fi
+    fi
+
+    # From a plain shell, attach after creating the workspace.
+    if [[ -z "${HERDR_SOCKET_PATH:-}" ]]; then
+        exec "$herdr_bin"
+    fi
+}
+
+# Repository behind the focused Herdr workspace: its checkout, else its first pane's cwd.
+focused_repo() {
+    local ws cwd
+    ws=$("$herdr_bin" workspace list 2>/dev/null | jq -r '.result.workspaces[] | select(.focused) | .worktree.repo_root // .workspace_id' | head -n1)
+    [[ -n "$ws" ]] || return 0
+    if [[ "$ws" == /* ]]; then
+        printf '%s\n' "$ws"
+        return
+    fi
+    cwd=$("$herdr_bin" pane list --workspace "$ws" 2>/dev/null | jq -r '.result.panes[0].cwd // empty')
+    [[ -n "$cwd" ]] && git -C "$cwd" rev-parse --show-toplevel 2>/dev/null || true
+}
+
+# A Linear link or issue id sitting in the clipboard, so copy-link then prefix+t then Enter works.
+clipboard_ticket() {
+    command -v pbpaste >/dev/null 2>&1 || return 0
+    local clip
+    clip=$(pbpaste 2>/dev/null | head -n1 | tr -d '[:space:]')
+    if [[ "$clip" =~ ^https?://[^/]*linear\.app/[^/]+/issue/ || "$clip" =~ ^[A-Za-z][A-Za-z0-9]*-[0-9]+$ ]]; then
+        printf '%s' "$clip"
+    fi
+}
+
+cmd_interactive() {
+    local project ref suggestion
+    project=$(focused_repo)
+    [[ -n "$project" ]] || project=$(pick_project) || exit 0
+    suggestion=$(clipboard_ticket)
+    if [[ -n "$suggestion" ]]; then
+        printf 'Ticket link, id, or branch name [%s]: ' "$suggestion"
+    else
+        printf 'Ticket link, id, or branch name: '
+    fi
+    read -r ref
+    ref=${ref:-$suggestion}
+    [[ -n "$ref" ]] || exit 0
+    cmd_start "$ref" --project "$project" --async-agent
+}
+
+# tsv_field <tsv> <key> <n>: field n of the first line whose first field equals key, literally.
+tsv_field() {
+    awk -F'\t' -v key="$2" -v n="$3" '$1 == key { print $n; exit }' <<<"$1"
+}
+
+cmd_prune() {
+    local project worktrees repo_root default_branch merged_heads open_heads
+    local -a remove_paths remove_workspaces remove_branches
+    project=${1:-$(pick_project)} || exit 0
+    project=$(cd "$project" && pwd -P)
+    server_running || die "herdr server is not running; start herdr first"
+
+    worktrees=$("$herdr_bin" worktree list --cwd "$project")
+    repo_root=$(jq -r '.result.source.repo_root' <<<"$worktrees")
+    git -C "$repo_root" fetch --prune --quiet origin || note "fetch failed, using local refs"
+    default_branch=$(git -C "$repo_root" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##' || true)
+    default_branch=${default_branch:-main}
+    merged_heads="" open_heads=""
+    if command -v gh >/dev/null 2>&1; then
+        merged_heads=$(cd "$repo_root" && gh pr list --state merged --limit 300 --json headRefName,headRefOid --jq '.[] | "\(.headRefName)\t\(.headRefOid)"' 2>/dev/null || true)
+        open_heads=$(cd "$repo_root" && gh pr list --state open --limit 300 --json headRefName,number --jq '.[] | "\(.headRefName)\t#\(.number)"' 2>/dev/null || true)
+    fi
+
+    printf '%-56s %s\n' "WORKTREE" "VERDICT"
+    # "-" stands in for empty fields: read collapses consecutive tabs otherwise.
+    while IFS=$'\t' read -r wt_path branch workspace_id prunable; do
+        local short verdict pr_state head_sha merged_sha
+        [[ "$branch" == "-" ]] && branch=""
+        [[ "$workspace_id" == "-" ]] && workspace_id=""
+        short=${wt_path/#$HOME/\~}
+        verdict=""
+        if [[ "$prunable" == true ]]; then
+            verdict="remove: directory gone"
+        elif [[ -z "$branch" ]]; then
+            verdict="keep: detached HEAD"
+        elif [[ -n "$(git -C "$wt_path" status --porcelain 2>/dev/null)" ]]; then
+            verdict="keep: uncommitted changes"
+        elif [[ -n "$(tsv_field "$open_heads" "$branch" 2)" ]]; then
+            verdict="keep: open PR $(tsv_field "$open_heads" "$branch" 2)"
+        elif git -C "$repo_root" merge-base --is-ancestor "$branch" "origin/$default_branch" 2>/dev/null; then
+            verdict="remove: merged into $default_branch"
+        else
+            # A merged PR only proves the commit it merged; the branch may have moved on.
+            head_sha=$(git -C "$repo_root" rev-parse "$branch" 2>/dev/null || true)
+            merged_sha=$(tsv_field "$merged_heads" "$branch" 2)
+            if [[ -z "$merged_sha" ]]; then
+                # Older than the bulk lists reach: ask about this branch alone.
+                pr_state=$(cd "$repo_root" && gh pr list --head "$branch" --state all --limit 1 --json state,number,headRefOid --jq '.[0] | "\(.state) #\(.number) \(.headRefOid)"' 2>/dev/null || true)
+                case "$pr_state" in
+                    MERGED*) merged_sha=${pr_state##* } ;;
+                    OPEN*) verdict="keep: open PR $(cut -d' ' -f2 <<<"$pr_state")" ;;
+                    CLOSED*) verdict="keep: PR $(cut -d' ' -f2 <<<"$pr_state") closed unmerged" ;;
+                    *) verdict="keep: unmerged, no PR" ;;
+                esac
+            fi
+            if [[ -n "$merged_sha" ]]; then
+                if [[ "$merged_sha" == "$head_sha" ]]; then
+                    verdict="remove: PR merged"
+                else
+                    verdict="keep: commits after the merged PR"
+                fi
+            fi
+        fi
+        printf '%-56s %s\n' "$short" "$verdict"
+        if [[ "$verdict" == remove:* ]]; then
+            remove_paths+=("$wt_path")
+            remove_workspaces+=("$workspace_id")
+            remove_branches+=("$branch")
+        fi
+    done < <(jq -r '.result.worktrees[] | select(.is_linked_worktree) | [.path, (.branch // "-"), (.open_workspace_id // "-"), (.is_prunable | tostring)] | @tsv' <<<"$worktrees")
+
+    if [[ ${#remove_paths[@]} -eq 0 ]]; then
+        note "nothing to remove"
+        return
+    fi
+    printf '\nRemove %d worktree(s)? Branches are kept. [y/N] ' "${#remove_paths[@]}"
+    read -r answer
+    [[ "$answer" == [yY] ]] || { note "aborted"; return; }
+
+    local i open_count
+    for i in "${!remove_paths[@]}"; do
+        # The bulk lists are capped and gh may have failed: re-check each branch before deleting.
+        if [[ -n "${remove_branches[$i]}" ]] && command -v gh >/dev/null 2>&1; then
+            open_count=$(cd "$repo_root" && gh pr list --head "${remove_branches[$i]}" --state open --limit 1 --json number --jq 'length' 2>/dev/null) || open_count=""
+            if [[ "$open_count" != 0 ]]; then
+                note "kept ${remove_paths[$i]}: open PR or GitHub lookup failed"
+                continue
+            fi
+        fi
+        if [[ -n "${remove_workspaces[$i]}" ]]; then
+            if "$herdr_bin" worktree remove --workspace "${remove_workspaces[$i]}" >/dev/null; then
+                note "removed ${remove_paths[$i]} (workspace ${remove_workspaces[$i]})"
+            else
+                note "herdr could not remove ${remove_paths[$i]}; close its workspace and retry"
+            fi
+        elif [[ -d "${remove_paths[$i]}" ]]; then
+            git -C "$repo_root" worktree remove "${remove_paths[$i]}" && note "removed ${remove_paths[$i]}"
+        fi
+    done
+    git -C "$repo_root" worktree prune
+    note "done"
+}
+
+case "${1:-}" in
+    "") cmd_interactive ;;
+    start) shift; cmd_start "$@" ;;
+    branch) parse_ticket "${2:?ticket}"; printf '%s\n' "$branch" ;;
+    agent-start) start_agent "$2" "$3" "$4" "$5" ;;
+    prune) cmd_prune "${2:-}" ;;
+    -h|--help) sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//' ;;
+    *) die "unknown command: $1 (use start or prune)" ;;
+esac
