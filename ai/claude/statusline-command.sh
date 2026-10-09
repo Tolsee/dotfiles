@@ -116,8 +116,8 @@ if [ -n "$HERDR_PANE_ID" ] && command -v herdr >/dev/null 2>&1; then
     pr_urls="${pr_urls:+$pr_urls }${entry#* }"
   done
   pr_state_file="$cache_dir/${cache_prefix}pane-pr-$HERDR_PANE_ID"
-  if [ "$(cat "$pr_state_file" 2>/dev/null)" != "$pr_label" ]; then
-    printf '%s' "$pr_label" 2>/dev/null > "$pr_state_file"
+  if [ "$(cat "$pr_state_file" 2>/dev/null)" != "$pr_label $pr_urls" ]; then
+    printf '%s' "$pr_label $pr_urls" 2>/dev/null > "$pr_state_file"
     if [ -n "$pr_label" ]; then
       with_deadline 2 herdr pane report-metadata "$HERDR_PANE_ID" --source statusline \
         --token "pr=$pr_label" --token "pr_url=$pr_urls" >/dev/null 2>&1
