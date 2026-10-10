@@ -16,7 +16,8 @@ Shared by all coding agents (Claude Code, Codex, Antigravity/Gemini). Source of 
 
 ## Delegation
 
-- Context gathering (docs, READMEs, plugin repos, repo sweeps, bulky fetches) always goes to haiku or sonnet subagents per the `/delegate` routing table, even when `/delegate` was not invoked. The main session keeps judgment and edits.
+- Context gathering (docs, READMEs, plugin repos, repo sweeps, bulky fetches) goes to haiku or sonnet subagents per the `/delegate` routing table, even when `/delegate` was not invoked. The main session keeps judgment and edits. A lookup of one known file or one command is done directly.
+- Subagent briefs are bounded: the exact question, the shape and length cap of the answer, and a stop condition ("report what you found after N files" or "give up after two failed fetches"). One dispatch per question; a subagent that fails, stalls or comes back empty is not re-dispatched, the main session does that lookup itself. Haiku for mechanical sweeps only; anything needing judgment goes to sonnet.
 
 ## Code Changes
 
