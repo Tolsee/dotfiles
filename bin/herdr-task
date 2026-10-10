@@ -14,6 +14,8 @@
 #                             or claude); "none" leaves a shell
 #       --prompt TEXT         first prompt for the agent (default: work on the ticket)
 #   herdr-task prune [DIR]                remove worktree workspaces whose branch has merged
+#   herdr-task open [PANE]                open the focused (or given) pane's ticket or PR in the
+#                                         browser, with a picker when there are several
 #   herdr-task branch <ticket>            print the branch name a ticket would get
 #   herdr-task                            interactive: project of the focused workspace, ticket
 #                                         from the clipboard or typed, agent started in the
@@ -24,14 +26,17 @@
 
 set -euo pipefail
 
-linear_glyph=$'\uf41b' # nf-oct-issue_opened; Nerd Fonts ships no Linear logo
+# Nerd Font glyphs as raw UTF-8 bytes: \u escapes come out as literal text in a C locale,
+# which is what herdr popups run in. U+F41B nf-oct-issue_opened (Nerd Fonts ships no Linear
+# logo), U+EC82 nf-cod-claude, U+EC81 nf-cod-openai, U+EC20 nf-cod-robot.
+linear_glyph=$(printf '\357\220\233')
 
-# Sidebar label per agent kind: Nerd Font glyph (nf-cod-claude, nf-cod-openai, nf-cod-robot).
+# Sidebar label per agent kind.
 agent_label() {
     case "$1" in
-        claude) printf '\uec82 claude' ;;
-        codex) printf '\uec81 codex' ;;
-        *) printf '\uec20 %s' "$1" ;;
+        claude) printf '\356\262\202 claude' ;;
+        codex) printf '\356\262\201 codex' ;;
+        *) printf '\356\260\240 %s' "$1" ;;
     esac
 }
 metadata_source="herdr-task"
@@ -59,14 +64,40 @@ current_repo() {
     git rev-parse --show-toplevel 2>/dev/null || die "not inside a repository; pass --project"
 }
 
+# pick_project [preferred...]: fzf over the repositories under the project roots, with the
+# preferred repositories listed first (the top entry is fzf's default).
 pick_project() {
-    [[ -n "$project_roots" ]] || { current_repo; return; }
+    local roots selected preferred
+    preferred=$(printf '%s\n' "$@" | grep -v '^$' | awk '!seen[$0]++')
+    if [[ -z "$project_roots" ]]; then
+        # No picker without roots: take the best guess, else the current repository.
+        if [[ -n "$preferred" ]]; then head -n1 <<<"$preferred"; else current_repo; fi
+        return
+    fi
     command -v fzf >/dev/null 2>&1 || die "fzf is required for the project picker"
-    local roots selected
     IFS=: read -r -a roots <<<"$project_roots"
-    selected=$(find "${roots[@]}" -mindepth 2 -maxdepth 2 -name .git 2>/dev/null \
-        | sed 's#/\.git$##' | sort | fzf --prompt='Project > ') || return 1
+    selected=$( { printf '%s\n' "$preferred"; find "${roots[@]}" -mindepth 2 -maxdepth 2 -name .git 2>/dev/null | sed 's#/\.git$##' | sort; } \
+        | grep -v '^$' | awk '!seen[$0]++' | fzf --prompt='Project > ') || return 1
     printf '%s\n' "$selected"
+}
+
+# Which repository a ticket's team (the ABC in ABC-123) was last started in.
+team_repo_file="${XDG_CACHE_HOME:-$HOME/.cache}/herdr-task/team-repos"
+team_repo() {
+    [[ -f "$team_repo_file" ]] || return 0
+    awk -F'\t' -v team="$1" '$1 == team { print $2 }' "$team_repo_file" | tail -n1
+}
+# Best effort: a lost race between two starts must never abort a task.
+remember_team_repo() {
+    local tmp
+    mkdir -p "$(dirname "$team_repo_file")" || return 0
+    tmp=$(mktemp "$team_repo_file.XXXXXX") || return 0
+    if { [[ -f "$team_repo_file" ]] && awk -F'\t' -v team="$1" '$1 != team' "$team_repo_file"; printf '%s\t%s\n' "$1" "$2"; } > "$tmp" 2>/dev/null; then
+        mv -f "$tmp" "$team_repo_file" 2>/dev/null || rm -f "$tmp"
+    else
+        rm -f "$tmp"
+    fi
+    return 0
 }
 
 # Sets ticket_id, ticket_url, ticket_slug, branch from a link, an id, or a branch name.
@@ -176,6 +207,7 @@ cmd_start() {
     checkout_path=$(jq -r '.result.worktree.path' <<<"$response")
     root_pane=$(jq -r '.result.root_pane.pane_id' <<<"$response")
     note "workspace $workspace_id at $checkout_path ($((SECONDS - start))s)"
+    [[ -n "$ticket_id" ]] && remember_team_repo "${ticket_id%%-*}" "$project"
 
     if [[ -n "$ticket_id" ]]; then
         "$herdr_bin" workspace report-metadata "$workspace_id" --source "$metadata_source" \
@@ -233,9 +265,7 @@ clipboard_ticket() {
 }
 
 cmd_interactive() {
-    local project ref suggestion
-    project=$(focused_repo)
-    [[ -n "$project" ]] || project=$(pick_project) || exit 0
+    local project ref suggestion ticket_id ticket_url ticket_slug branch
     suggestion=$(clipboard_ticket)
     if [[ -n "$suggestion" ]]; then
         printf 'Ticket link, id, or branch name [%s]: ' "$suggestion"
@@ -245,6 +275,9 @@ cmd_interactive() {
     read -r ref
     ref=${ref:-$suggestion}
     [[ -n "$ref" ]] || exit 0
+    parse_ticket "$ref"
+    # Best guess first: the repo this ticket's team was last started in, then the focused one.
+    project=$(pick_project "$(team_repo "${ticket_id%%-*}")" "$(focused_repo)") || exit 0
     cmd_start "$ref" --project "$project" --async-agent
 }
 
@@ -351,12 +384,59 @@ cmd_prune() {
     note "done"
 }
 
+# Links reported onto the focused pane: the ticket (herdr-task, SessionStart hook) and the PRs
+# (Claude status line). Sidebar rows are not clickable, so this is the keyboard route.
+# In a popup the window closes with the script, so hold the message until a key is pressed.
+fail_open() {
+    note "$*"
+    if [[ -t 0 ]]; then
+        printf 'press any key' >&2
+        read -r -n1 -s
+    fi
+    exit 1
+}
+
+cmd_open() {
+    local ws pane=${1:-} tokens links choice url
+    if [[ -z "$pane" ]]; then
+        ws=$("$herdr_bin" workspace list | jq -r '.result.workspaces[] | select(.focused) | .workspace_id' | head -n1)
+        [[ -n "$ws" ]] || fail_open "no focused workspace"
+        pane=$("$herdr_bin" pane list --workspace "$ws" | jq -r '[.result.panes[] | select(.focused)][0].pane_id // empty')
+        [[ -n "$pane" ]] || fail_open "no focused pane"
+    fi
+    # Pane tokens first (ticket via herdr-task or the Claude hook, PRs via the status line);
+    # the ticket falls back to the workspace, which every agent kind has.
+    ws=${ws:-${pane%%:*}}
+    tokens=$(jq -cs '.[1] + .[0]' \
+        <("$herdr_bin" pane get "$pane" | jq -c '.result.pane.tokens // {}') \
+        <("$herdr_bin" workspace get "$ws" | jq -c '.result.workspace.tokens // {}'))
+    links=$(jq -r '
+        (if .linear_url and .linear_url != "" then "\(.linear_id // "ticket")\t\(.linear_url)" else empty end),
+        (if .pr_url and .pr_url != "" then (.pr_url | split(" ")[] | "#\(split("/") | last)\t\(.)") else empty end)' <<<"$tokens")
+    [[ -n "$links" ]] || fail_open "no ticket or PR reported on pane $pane (start the task with prefix+t, or open a PR from it)"
+    if [[ $(wc -l <<<"$links") -eq 1 ]]; then
+        choice=$links
+    else
+        command -v fzf >/dev/null 2>&1 || fail_open "fzf is required to pick between several links"
+        choice=$(fzf --delimiter=$'\t' --with-nth=1 --prompt='Open > ' <<<"$links") || exit 0
+    fi
+    url=${choice#*$'\t'}
+    "${HERDR_TASK_OPEN:-open}" "$url"
+}
+
+# Sourced for tests: define the functions and stop.
+if [[ -n "${HERDR_TASK_SOURCE_ONLY:-}" ]]; then
+    # shellcheck disable=SC2317
+    return 0 2>/dev/null || exit 0
+fi
+
 case "${1:-}" in
     "") cmd_interactive ;;
     start) shift; cmd_start "$@" ;;
     branch) parse_ticket "${2:?ticket}"; printf '%s\n' "$branch" ;;
+    open) cmd_open "${2:-}" ;;
     agent-start) start_agent "$2" "$3" "$4" "$5" ;;
     prune) cmd_prune "${2:-}" ;;
-    -h|--help) sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//' ;;
+    -h|--help) sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//' ;;
     *) die "unknown command: $1 (use start or prune)" ;;
 esac
