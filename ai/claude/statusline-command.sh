@@ -105,13 +105,29 @@ if [ -n "$branch" ] && command -v gh >/dev/null 2>&1; then
         match($1, /@\{[0-9]+\}/) { ts = substr($1, RSTART + 2, RLENGTH - 3) }
         ts >= since && /checkout: moving from / { print $(NF - 2); print $NF }' \
     | sort -u)
-  if [ -n "$recent_branches" ]; then
+  # PRs this session created or worked on, from the transcript. A second PR from
+  # one session often comes from another worktree or a branch pushed without a
+  # checkout, which this worktree's reflog never sees. Only this repository's
+  # PRs count, and only open ones authored by me (same list as above).
+  mentioned_prs=""
+  transcript=$(echo "$input" | jq -r '.transcript_path // empty')
+  remote_slug=$(git -C "$cwd" --no-optional-locks remote get-url origin 2>/dev/null \
+    | sed -E 's#^.*github\.com[:/]##; s#\.git$##')
+  if [ -n "$transcript" ] && [ -f "$transcript" ] && [ -n "$remote_slug" ]; then
+    transcript_key=$(printf '%s' "$transcript" | shasum 2>/dev/null | cut -c1-16)
+    mentioned_prs=$(cached "transcript-prs-$transcript_key" . \
+      grep -oE "https://github.com/$remote_slug/pull/[0-9]+" "$transcript" | sort -u)
+  fi
+
+  if [ -n "$recent_branches" ] || [ -n "$mentioned_prs" ]; then
     open_prs=$(cached "open-prs-$repo_key" "$repo_root" gh pr list --author @me --state open --limit 50 --json number,url,headRefName)
     while IFS=' ' read -r number url; do
       [ -n "$url" ] && [ "$number" != "$current_number" ] && pr_links+=("$number $url")
-    done < <(printf '%s' "$open_prs" | jq -r --arg branches "$recent_branches" '
+    done < <(printf '%s' "$open_prs" | jq -r --arg branches "$recent_branches" --arg urls "$mentioned_prs" '
       ($branches | split("\n")) as $b
-      | .[] | select(.headRefName as $h | $b | index($h)) | "\(.number) \(.url)"' 2>/dev/null | head -n 5)
+      | ($urls | split("\n")) as $u
+      | .[] | select((.headRefName as $h | $b | index($h)) or (.url as $x | $u | index($x)))
+      | "\(.number) \(.url)"' 2>/dev/null | head -n 5)
   fi
 fi
 
