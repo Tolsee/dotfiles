@@ -43,6 +43,20 @@ metadata_source="herdr-task"
 project_roots="${HERDR_TASK_PROJECT_ROOTS:-}"
 default_agent="${HERDR_TASK_AGENT:-claude}"
 
+# detach <cmd...>: run a command in its own session so it survives the popup pane
+# closing. A closing pane kills its process group, which nohup alone does not escape;
+# macOS has no setsid binary, so use Python's.
+detach() {
+    if command -v python3 >/dev/null 2>&1; then
+        python3 -c 'import os, sys
+os.setsid()
+os.execvp(sys.argv[1], sys.argv[1:])' "$@" </dev/null >/dev/null 2>&1 &
+    else
+        nohup "$@" </dev/null >/dev/null 2>&1 &
+    fi
+    disown 2>/dev/null || true
+}
+
 die() { printf 'herdr-task: %s\n' "$*" >&2; exit 1; }
 note() { printf 'herdr-task: %s\n' "$*" >&2; }
 
@@ -187,6 +201,7 @@ cmd_start() {
     # The sidebar's $linear token carries the ticket id, so the label is the title alone.
     if [[ -n "$ticket_id" ]]; then
         label="${title:-${ticket_slug//-/ }}"
+        [[ -n "$label" ]] || label=$ticket_id   # bare id, no title: better the id than nothing
     else
         label="${title:-$branch}"
     fi
@@ -233,7 +248,7 @@ cmd_start() {
         fi
         if [[ "$agent_async" == true ]]; then
             # Let the popup close now; the agent keeps starting in the pane.
-            nohup "$0" agent-start "$agent_name" "$agent" "$root_pane" "$prompt" >/dev/null 2>&1 &
+            detach "$0" agent-start "$agent_name" "$agent" "$root_pane" "$prompt"
             note "starting $agent as '$agent_name' in the background"
         else
             start_agent "$agent_name" "$agent" "$root_pane" "$prompt"
