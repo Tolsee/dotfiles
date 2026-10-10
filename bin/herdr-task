@@ -17,9 +17,13 @@
 #   herdr-task open [PANE]                open the focused (or given) pane's ticket or PR in the
 #                                         browser, with a picker when there are several
 #   herdr-task branch <ticket>            print the branch name a ticket would get
-#   herdr-task                            interactive: project of the focused workspace, ticket
-#                                         from the clipboard or typed, agent started in the
-#                                         background so the popup closes at once
+#   herdr-task                            interactive (prefix+t): a ticket link or id, a branch
+#                                         name, or free text describing the task ("fix flaky
+#                                         login test" becomes the title, the first prompt and a
+#                                         slug branch); suggested from the clipboard, project
+#                                         guessed from the ticket's team or the focused
+#                                         workspace; agent started in the background so the
+#                                         popup closes at once
 #
 # HERDR_TASK_PROJECT_ROOTS (colon separated, private shell config) lists directories to scan
 # for repositories in the interactive project picker.
@@ -160,10 +164,8 @@ start_agent() {
         sleep 0.5
     done
     if [[ "$started" == true ]]; then
-        # hs_title is the sidebar plugin's user-owned label; the ticket title beats a guessed one.
         "$herdr_bin" pane report-metadata "$root_pane" --source "$metadata_source" \
-            --display-agent "$(agent_label "$agent")" \
-            --token "hs_title=${label:-}" >/dev/null 2>&1 || true
+            --display-agent "$(agent_label "$agent")" >/dev/null 2>&1 || true
         if "$herdr_bin" agent prompt "$agent_name" "$prompt" >/dev/null; then
             note "started $agent as '$agent_name' with the ticket prompt"
         else
@@ -243,8 +245,13 @@ cmd_start() {
         agent_name=$(slugify "${ticket_id:-$branch}")
         agent_name=${agent_name:0:32}
         if [[ -z "$prompt" ]]; then
-            prompt="Work on ${ticket_url:-${ticket_id:-$branch}}."
-            [[ -n "$ticket_id" ]] && prompt="$prompt Read the ticket first (Linear MCP), restate the goal in one line, then plan before editing."
+            if [[ -n "$ticket_id" ]]; then
+                prompt="Work on ${ticket_url:-$ticket_id}. Read the ticket first (Linear MCP) and restate the goal in one line."
+                [[ -z "$title" ]] && prompt="$prompt Then name this Herdr workspace after it: herdr workspace rename \"\$HERDR_WORKSPACE_ID\" \"<ticket title>\"."
+                prompt="$prompt Plan before editing."
+            else
+                prompt="Task: ${title:-$branch}. Restate the goal in one line and plan before editing."
+            fi
         fi
         if [[ "$agent_async" == true ]]; then
             # Let the popup close now; the agent keeps starting in the pane.
@@ -288,9 +295,9 @@ cmd_interactive() {
     local project ref suggestion ticket_id ticket_url ticket_slug branch
     suggestion=$(clipboard_ticket)
     if [[ -n "$suggestion" ]]; then
-        printf 'Ticket link, id, or branch name [%s]: ' "$suggestion"
+        printf 'Ticket link, id, branch, or task [%s]: ' "$suggestion"
     else
-        printf 'Ticket link, id, or branch name: '
+        printf 'Ticket link, id, branch, or task: '
     fi
     read -r ref
     ref=${ref:-$suggestion}
@@ -298,7 +305,13 @@ cmd_interactive() {
     parse_ticket "$ref"
     # Best guess first: the repo this ticket's team was last started in, then the focused one.
     project=$(pick_project "$(team_repo "${ticket_id%%-*}")" "$(focused_repo)") || exit 0
-    cmd_start "$ref" --project "$project" --async-agent
+    # Free text ("fix flaky login test") is a task, not a ref: keep it as the title and first
+    # prompt, with the slug as the branch. A ticket or a valid branch name passes through.
+    if [[ -z "$ticket_id" ]] && ! git check-ref-format --branch "$ref" >/dev/null 2>&1; then
+        cmd_start "$ref" --project "$project" --title "$ref" --async-agent
+    else
+        cmd_start "$ref" --project "$project" --async-agent
+    fi
 }
 
 # tsv_field <tsv> <key> <n>: field n of the first line whose first field equals key, literally.
