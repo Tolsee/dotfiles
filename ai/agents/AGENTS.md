@@ -14,6 +14,10 @@ Shared by all coding agents (Claude Code, Codex, Antigravity/Gemini). Source of 
 - Asked for a plan → deliver only the plan. Do not start implementing.
 - Asked to run tests → run them directly. Do not spend time exploring the codebase for the test command.
 
+## Delegation
+
+- Context gathering (docs, READMEs, plugin repos, repo sweeps, bulky fetches) always goes to haiku or sonnet subagents per the `/delegate` routing table, even when `/delegate` was not invoked. The main session keeps judgment and edits.
+
 ## Code Changes
 
 - Debug the root cause before fixing. Never change a test to make it pass without understanding why it fails.
@@ -26,6 +30,10 @@ Shared by all coding agents (Claude Code, Codex, Antigravity/Gemini). Source of 
 - After pushing a fix for a bot reviewer's comment, re-trigger that bot (`@codex review`, `@cursor review`, `@coderabbitai review`; Devin re-reviews on push and has no working mention trigger) as an in-thread reply to one of its existing threads, never a top-level PR comment, and wait for its re-review of current HEAD before resolving the thread or declaring merge-ready.
 - When design or behavior changes mid-PR, update the PR description in the same push; a stale description makes reviewers flag the new code as contradicting the stated model.
 - Write PR bodies with a quoted heredoc (`<<'EOF'`); never backslash-escape backticks (they render literally on GitHub).
+
+## Terminal
+
+- The multiplexer is Herdr, not tmux. Never run tmux commands, never check `$TMUX`, and never suggest tmux keybindings.
 
 ## Git
 

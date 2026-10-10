@@ -3,7 +3,6 @@
 nvim_config_dir=$HOME/.config/nvim
 ghostty_config_dir=$HOME/.config/ghostty
 zshrc_config_file=$HOME/.zshrc
-tmux_config_file=$HOME/.tmux.conf
 nvim_old_config_dir=$HOME/.config/nvim-old
 ghostty_old_config_dir=$HOME/.config/ghostty-old
 
@@ -32,7 +31,6 @@ fi
 ln -s $PWD/nvim/.config/nvim $nvim_config_dir
 ln -s $PWD/ghostty/.config/ghostty $ghostty_config_dir
 ln -nsf $PWD/.zshrc $zshrc_config_file
-ln -nsf $PWD/.tmux.conf $tmux_config_file
 ln -nsf $PWD/zsh/functions $HOME/.config/zsh-functions
 
 # Install Herdr and its agent integrations
