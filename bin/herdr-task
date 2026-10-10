@@ -146,8 +146,10 @@ start_agent() {
         sleep 0.5
     done
     if [[ "$started" == true ]]; then
+        # hs_title is the sidebar plugin's user-owned label; the ticket title beats a guessed one.
         "$herdr_bin" pane report-metadata "$root_pane" --source "$metadata_source" \
-            --display-agent "$(agent_label "$agent")" >/dev/null 2>&1 || true
+            --display-agent "$(agent_label "$agent")" \
+            --token "hs_title=${label:-}" >/dev/null 2>&1 || true
         if "$herdr_bin" agent prompt "$agent_name" "$prompt" >/dev/null; then
             note "started $agent as '$agent_name' with the ticket prompt"
         else
