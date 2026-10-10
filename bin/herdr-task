@@ -246,11 +246,10 @@ cmd_start() {
         agent_name=${agent_name:0:32}
         if [[ -z "$prompt" ]]; then
             if [[ -n "$ticket_id" ]]; then
-                prompt="Work on ${ticket_url:-$ticket_id}. Read the ticket first (Linear MCP) and restate the goal in one line."
-                [[ -z "$title" ]] && prompt="$prompt Then name this Herdr workspace after it: herdr workspace rename \"\$HERDR_WORKSPACE_ID\" \"<ticket title>\"."
-                prompt="$prompt Plan before editing."
+                prompt="Work on ${ticket_url:-$ticket_id}. Groom it first (groom skill)."
+                [[ -z "$title" ]] && prompt="$prompt After reading it, name this Herdr workspace after it: herdr workspace rename \"\$HERDR_WORKSPACE_ID\" \"<ticket title>\"."
             else
-                prompt="Task: ${title:-$branch}. Restate the goal in one line and plan before editing."
+                prompt="Task: ${title:-$branch}. Groom it first (groom skill)."
             fi
         fi
         if [[ "$agent_async" == true ]]; then
