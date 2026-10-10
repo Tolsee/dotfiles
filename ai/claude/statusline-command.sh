@@ -19,6 +19,15 @@ tokens=$(echo "$input" | jq -r '
   | ($size * $pct / 100 | floor)' 2>/dev/null)
 
 dir_name=$(basename "${cwd:-$PWD}")
+# In a linked worktree (herdr-task or Claude's EnterWorktree) the folder is named after a
+# branch, which reads like a second branch next to the real one. Show the repository instead.
+if [ -n "$cwd" ]; then
+  common_dir=$(git -C "$cwd" --no-optional-locks rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
+  git_dir=$(git -C "$cwd" --no-optional-locks rev-parse --path-format=absolute --git-dir 2>/dev/null)
+  if [ -n "$common_dir" ] && [ "$common_dir" != "$git_dir" ]; then
+    dir_name=$(basename "$(dirname "$common_dir")")
+  fi
+fi
 
 # gh is refreshed at most once a minute per key: fast enough that a PR opened
 # by the session shows up promptly, rare enough not to hammer the API. The
@@ -89,10 +98,10 @@ if [ -n "$branch" ] && command -v gh >/dev/null 2>&1; then
   fi
 
   # One session can push several branches from the same worktree. The reflog
-  # remembers every branch checked out here in the last 12 hours; show the
-  # open PRs of those branches too.
+  # remembers every branch checked out here in the last 7 days (60 entries at
+  # most); show the open PRs of those branches too, up to five.
   recent_branches=$(git -C "$cwd" --no-optional-locks reflog show --date=unix --format='%gd %gs' HEAD -n 60 2>/dev/null \
-    | awk -v since=$((now - 43200)) '
+    | awk -v since=$((now - 604800)) '
         match($1, /@\{[0-9]+\}/) { ts = substr($1, RSTART + 2, RLENGTH - 3) }
         ts >= since && /checkout: moving from / { print $(NF - 2); print $NF }' \
     | sort -u)
@@ -102,7 +111,7 @@ if [ -n "$branch" ] && command -v gh >/dev/null 2>&1; then
       [ -n "$url" ] && [ "$number" != "$current_number" ] && pr_links+=("$number $url")
     done < <(printf '%s' "$open_prs" | jq -r --arg branches "$recent_branches" '
       ($branches | split("\n")) as $b
-      | .[] | select(.headRefName as $h | $b | index($h)) | "\(.number) \(.url)"' 2>/dev/null | head -n 3)
+      | .[] | select(.headRefName as $h | $b | index($h)) | "\(.number) \(.url)"' 2>/dev/null | head -n 5)
   fi
 fi
 
