@@ -182,8 +182,9 @@ cmd_start() {
     local ticket_id ticket_url ticket_slug branch label
     parse_ticket "$ref"
     [[ -n "$url_opt" ]] && ticket_url=$url_opt
+    # The sidebar's $linear token carries the ticket id, so the label is the title alone.
     if [[ -n "$ticket_id" ]]; then
-        label="$ticket_id ${title:-${ticket_slug//-/ }}"
+        label="${title:-${ticket_slug//-/ }}"
     else
         label="${title:-$branch}"
     fi
@@ -209,6 +210,8 @@ cmd_start() {
     note "workspace $workspace_id at $checkout_path ($((SECONDS - start))s)"
     [[ -n "$ticket_id" ]] && remember_team_repo "${ticket_id%%-*}" "$project"
 
+    "$herdr_bin" workspace report-metadata "$workspace_id" --source "$metadata_source" \
+        --token "repo=$(basename "$project")" >/dev/null
     if [[ -n "$ticket_id" ]]; then
         "$herdr_bin" workspace report-metadata "$workspace_id" --source "$metadata_source" \
             --token "linear=${linear_glyph} ${ticket_id}" \
