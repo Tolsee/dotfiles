@@ -26,9 +26,7 @@ cursor-style       = block
 cursor-style-blink = false
 
 # ---------- Mouse / clipboard ----------
-# Alacritty: selection.save_to_clipboard = true
 copy-on-select          = clipboard
-# Alacritty: mouse.hide_when_typing = false
 mouse-hide-while-typing = false
 
 # ---------- Shell integration ----------
