@@ -205,7 +205,7 @@ for entry in "${pr_links[@]}"; do
 done
 
 if [ -n "$linear_id" ] && [ -n "$linear_url" ]; then
-  out="${out} $(printf "${LINEAR}%s${RESET}" "$(hyperlink "$linear_url" "$linear_id")")"
+  out="${out} $(printf "${LINEAR}%s${RESET}" "$(hyperlink "$linear_url" "$(printf '\356\206\260') $linear_id")")"
 fi
 
 meta=""

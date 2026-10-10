@@ -68,7 +68,8 @@ if [[ -n "$sidebar_plugin_config" ]]; then
         || printf 'conversation_titles = true\n' >> "$sidebar_plugin_config/config.toml"
 fi
 if [[ "$(uname -s)" == Darwin ]]; then
-    for font in "$HOME"/.config/herdr/plugins/github/testy-cool.herdr-sidebar-*/dist/HerdrSidebarLogos-Regular.ttf; do
+    for font in "$HOME"/.config/herdr/plugins/github/testy-cool.herdr-sidebar-*/dist/HerdrSidebarLogos-Regular.ttf \
+                "$dotfiles_root/herdr/fonts/HerdrTaskIcons-Regular.ttf"; do
         [[ -f "$font" ]] && cp -f "$font" "$HOME/Library/Fonts/"
     done
 fi

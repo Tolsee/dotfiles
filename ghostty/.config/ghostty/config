@@ -10,6 +10,8 @@ font-size          = 14
 adjust-cell-height = 8%
 # Herdr sidebar plugin logos (testy-cool/herdr-sidebar-config); font installed by herdr/install
 font-codepoint-map = U+E1A0-U+E1AB=Herdr Sidebar Logos
+# Linear logo for herdr-task and the status line (herdr/fonts, built from Simple Icons)
+font-codepoint-map = U+E1B0=Herdr Task Icons
 
 # ---------- Theme (matches nvim's TokyoNight Moon — bg #222436) ----------
 theme = TokyoNight Moon

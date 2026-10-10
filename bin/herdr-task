@@ -33,7 +33,7 @@ set -euo pipefail
 # Nerd Font glyphs as raw UTF-8 bytes: \u escapes come out as literal text in a C locale,
 # which is what herdr popups run in. U+F41B nf-oct-issue_opened (Nerd Fonts ships no Linear
 # logo), U+EC82 nf-cod-claude, U+EC81 nf-cod-openai, U+EC20 nf-cod-robot.
-linear_glyph=$(printf '\357\220\233')
+linear_glyph=$(printf '\356\206\260')  # U+E1B0, Linear logo from herdr/fonts/HerdrTaskIcons
 
 # Sidebar label per agent kind.
 agent_label() {
