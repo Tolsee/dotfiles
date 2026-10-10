@@ -107,5 +107,7 @@
   "agentPushNotifEnabled": true,
   "skipAutoPermissionPrompt": true,
   "preferredNotifChannel": "notifications_disabled",
-  "advisorModel": "opus"
+  "advisorModel": "opus",
+  "subagentPromptCacheTtl": "1h",
+  "autoContinueAtUsageLimit": true
 }

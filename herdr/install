@@ -47,4 +47,31 @@ for integration in claude codex devin pi; do
     fi
 done
 
+# Sidebar plugin: agent logos, state spinners and the workspace > tab > agent tree.
+# Its own setup step is never run; the rows are hand-merged in config.toml.
+for plugin in testy-cool/herdr-sidebar-config; do
+    if ! herdr plugin list 2>/dev/null | grep -qi "${plugin##*/}"; then
+        herdr plugin install --yes "$plugin"
+    fi
+done
+
+# The sidebar plugin draws logos from its own font (U+E1A0-U+E1AB, mapped in the Ghostty
+# config). Copy it to the user font folder and pin the plugin to font mode; Ghostty needs a
+# fresh launch to pick up a new font.
+sidebar_plugin_config=$(herdr plugin config-dir testy-cool.herdr-sidebar 2>/dev/null || true)
+if [[ -n "$sidebar_plugin_config" ]]; then
+    mkdir -p "$sidebar_plugin_config"
+    grep -q '^icons' "$sidebar_plugin_config/config.toml" 2>/dev/null \
+        || printf 'icons = "font"\n' >> "$sidebar_plugin_config/config.toml"
+    # Tabs take the conversation's title instead of the program or directory name.
+    grep -q '^conversation_titles' "$sidebar_plugin_config/config.toml" 2>/dev/null \
+        || printf 'conversation_titles = true\n' >> "$sidebar_plugin_config/config.toml"
+fi
+if [[ "$(uname -s)" == Darwin ]]; then
+    for font in "$HOME"/.config/herdr/plugins/github/testy-cool.herdr-sidebar-*/dist/HerdrSidebarLogos-Regular.ttf \
+                "$dotfiles_root/herdr/fonts/HerdrTaskIcons-Regular.ttf"; do
+        [[ -f "$font" ]] && cp -f "$font" "$HOME/Library/Fonts/"
+    done
+fi
+
 echo "Herdr configuration installed."

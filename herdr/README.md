@@ -2,7 +2,7 @@
 
 Run `./herdr/install` to install the shared config, project picker, and integrations
 for installed agents. Root `./setup` includes it. Existing regular config files
-are backed up once; rerunning keeps links current. tmux remains available.
+are backed up once; rerunning keeps links current.
 
 Background agents use silent macOS banners with a two-second delay. macOS must
 allow notifications for terminal-notifier. Click a banner to return to the detected

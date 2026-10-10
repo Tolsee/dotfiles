@@ -14,6 +14,10 @@ Shared by all coding agents (Claude Code, Codex, Antigravity/Gemini). Source of 
 - Asked for a plan → deliver only the plan. Do not start implementing.
 - Asked to run tests → run them directly. Do not spend time exploring the codebase for the test command.
 
+## Delegation
+
+- Context gathering (docs, READMEs, plugin repos, repo sweeps, bulky fetches) always goes to haiku or sonnet subagents per the `/delegate` routing table, even when `/delegate` was not invoked. The main session keeps judgment and edits.
+
 ## Code Changes
 
 - Debug the root cause before fixing. Never change a test to make it pass without understanding why it fails.
@@ -27,12 +31,17 @@ Shared by all coding agents (Claude Code, Codex, Antigravity/Gemini). Source of 
 - When design or behavior changes mid-PR, update the PR description in the same push; a stale description makes reviewers flag the new code as contradicting the stated model.
 - Write PR bodies with a quoted heredoc (`<<'EOF'`); never backslash-escape backticks (they render literally on GitHub).
 
+## Terminal
+
+- The multiplexer is Herdr, not tmux. Never run tmux commands, never check `$TMUX`, and never suggest tmux keybindings.
+
 ## Git
 
 - Inside Herdr (`HERDR_WORKSPACE_ID` is set) the pane's cwd is usually a task worktree that `herdr-task` created under `~/.herdr/worktrees`. Work there and never create another worktree for the same task.
 - Otherwise create worktrees with the harness's native worktree tool (e.g. Claude Code's EnterWorktree / Agent `isolation: "worktree"`). Never run `git worktree add` manually, and never create sibling directories (`../<repo>-something`). If no native tool exists, use `<repo>/.claude/worktrees/<branch>` (gitignored).
 - Asked to start or pick up a ticket while inside Herdr: run `herdr-task start <ticket link> --project <repo> --title "<title>"` (look the title up with the Linear MCP first). It creates the worktree workspace and starts a fresh agent there with the ticket as its first prompt; do not start editing in the current pane.
 - A task branch carries the ticket id (for example `abc-123-short-title`) so Linear links it. Put the id in the PR title or body too.
+- One pane, one branch, one PR. When the ticket also needs a change in another repository, do not edit that repository from this pane: run `herdr-task start <ticket link> --project <repo> --title "<title>" --prompt "<one-paragraph brief of the change needed there>"` to open a sibling workspace with its own agent, then carry on here. Unrelated work in the same repository gets its own ticket and its own `herdr-task start`.
 
 ## Advisor
 
