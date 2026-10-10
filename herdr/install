@@ -47,4 +47,12 @@ for integration in claude codex devin pi; do
     fi
 done
 
+# Sidebar plugin: agent logos, state spinners and the workspace > tab > agent tree.
+# Its own setup step is never run; the rows are hand-merged in config.toml.
+for plugin in testy-cool/herdr-sidebar-config; do
+    if ! herdr plugin list 2>/dev/null | grep -qi "${plugin##*/}"; then
+        herdr plugin install --yes "$plugin"
+    fi
+done
+
 echo "Herdr configuration installed."
