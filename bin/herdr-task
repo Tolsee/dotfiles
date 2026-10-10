@@ -58,13 +58,28 @@ detach() {
     mkdir -p "${log%/*}"
     printf '%s detach: %s\n' "$(date '+%F %T')" "$*" >> "$log"
     if command -v python3 >/dev/null 2>&1; then
-        python3 -c 'import os, sys
+        # Daemonize: double fork so the starter is never a child of the popup, a new session
+        # so it has no controlling terminal, and every inherited descriptor closed so it does
+        # not keep the popup's pty open (Herdr reaps what still holds a closed pane's pty).
+        python3 - "$log" "$@" <<'PY'
+import os, sys
+log, argv = sys.argv[1], sys.argv[2:]
+if os.fork():
+    sys.exit(0)
 os.setsid()
-os.execvp(sys.argv[1], sys.argv[1:])' "$@" </dev/null >>"$log" 2>&1 &
+if os.fork():
+    os._exit(0)
+os.chdir(os.environ.get("HOME", "/"))
+fd_in = os.open(os.devnull, os.O_RDONLY)
+fd_out = os.open(log, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
+os.dup2(fd_in, 0); os.dup2(fd_out, 1); os.dup2(fd_out, 2)
+os.closerange(3, 4096)
+os.execvp(argv[0], argv)
+PY
     else
         nohup "$@" </dev/null >>"$log" 2>&1 &
+        disown 2>/dev/null || true
     fi
-    disown 2>/dev/null || true
 }
 
 die() { printf 'herdr-task: %s\n' "$*" >&2; exit 1; }
@@ -129,11 +144,11 @@ parse_ticket() {
     local ref=$1
     ticket_id="" ticket_url="" ticket_slug=""
     if [[ "$ref" =~ ^https?://[^/]*linear\.app/[^/]+/issue/([A-Za-z][A-Za-z0-9]*-[0-9]+)(/([^/?#]*))? ]]; then
-        ticket_id=${BASH_REMATCH[1]^^}
+        ticket_id=$(printf '%s' "${BASH_REMATCH[1]}" | tr '[:lower:]' '[:upper:]')
         ticket_slug=${BASH_REMATCH[3]:-}
         ticket_url=${ref%%[?#]*}
     elif [[ "$ref" =~ ^([A-Za-z][A-Za-z0-9]*-[0-9]+)$ ]]; then
-        ticket_id=${BASH_REMATCH[1]^^}
+        ticket_id=$(printf '%s' "${BASH_REMATCH[1]}" | tr '[:lower:]' '[:upper:]')
     fi
     if [[ -n "$ticket_id" ]]; then
         branch=$(slugify "$ticket_id")
@@ -333,13 +348,9 @@ cmd_tag() {
 cmd_interactive() {
     local project ref suggestion ticket_id ticket_url ticket_slug branch
     suggestion=$(clipboard_ticket)
-    if [[ -n "$suggestion" ]]; then
-        printf 'Ticket link, id, branch, or task [%s]: ' "$suggestion"
-    else
-        printf 'Ticket link, id, branch, or task: '
-    fi
-    read -r ref
-    ref=${ref:-$suggestion}
+    # readline (-e) does its own line editing, so backspace works in the popup pty whatever
+    # its erase setting; the clipboard suggestion is pre-filled and editable.
+    read -e -r -p 'Ticket link, id, branch, or task: ' -i "$suggestion" ref
     [[ -n "$ref" ]] || exit 0
     parse_ticket "$ref"
     # Best guess first: the repo this ticket's team was last started in, then the focused one.
