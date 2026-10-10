@@ -90,7 +90,12 @@ if [ -n "$branch" ] && command -v gh >/dev/null 2>&1; then
 
   # cd into the repo root (not -R, which needs OWNER/REPO not a path) so gh
   # resolves the correct remote even when cwd is a worktree.
-  current_pr=$(cached "pr-$branch_key" "$repo_root" gh pr view "$branch" --json url,number)
+  # Claude Code passes the current branch's PR in the status line JSON; fall back to gh
+  # only when it does not (older versions, or before the first refresh).
+  current_pr=$(echo "$input" | jq -c 'select(.pr.url and .pr.number) | {url: .pr.url, number: .pr.number}' 2>/dev/null)
+  if [ -z "$current_pr" ]; then
+    current_pr=$(cached "pr-$branch_key" "$repo_root" gh pr view "$branch" --json url,number)
+  fi
   current_number=$(printf '%s' "$current_pr" | jq -r '.number // empty' 2>/dev/null)
   current_url=$(printf '%s' "$current_pr" | jq -r '.url // empty' 2>/dev/null)
   if [ -n "$current_url" ]; then

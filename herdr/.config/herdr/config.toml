@@ -25,6 +25,8 @@ prefix = "ctrl+b"
 settings = "prefix+s"
 detach = "prefix+q"
 reload_config = "prefix+r"
+# prefix+o is the herdr-task open popup below; move Herdr's notification-target opener off it.
+open_notification_target = "prefix+shift+o"
 workspace_picker = "prefix+w"
 goto = "prefix+g"
 close_workspace = "prefix+shift+q"
