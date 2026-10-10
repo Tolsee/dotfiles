@@ -349,8 +349,13 @@ cmd_interactive() {
     local project ref suggestion ticket_id ticket_url ticket_slug branch
     suggestion=$(clipboard_ticket)
     # readline (-e) does its own line editing, so backspace works in the popup pty whatever
-    # its erase setting; the clipboard suggestion is pre-filled and editable.
-    read -e -r -p 'Ticket link, id, branch, or task: ' -i "$suggestion" ref
+    # its erase setting. No -i: macOS bash 3.2 lacks it, so the suggestion is the default.
+    if [[ -n "$suggestion" ]]; then
+        read -e -r -p "Ticket link, id, branch, or task [$suggestion]: " ref || exit 0
+    else
+        read -e -r -p 'Ticket link, id, branch, or task: ' ref || exit 0
+    fi
+    ref=${ref:-$suggestion}
     [[ -n "$ref" ]] || exit 0
     parse_ticket "$ref"
     # Best guess first: the repo this ticket's team was last started in, then the focused one.
