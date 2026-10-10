@@ -54,12 +54,15 @@ default_agent="${HERDR_TASK_AGENT:-claude}"
 # closing. A closing pane kills its process group, which nohup alone does not escape;
 # macOS has no setsid binary, so use Python's.
 detach() {
+    local log="${XDG_CACHE_HOME:-$HOME/.cache}/herdr-task/detach.log"
+    mkdir -p "${log%/*}"
+    printf '%s detach: %s\n' "$(date '+%F %T')" "$*" >> "$log"
     if command -v python3 >/dev/null 2>&1; then
         python3 -c 'import os, sys
 os.setsid()
-os.execvp(sys.argv[1], sys.argv[1:])' "$@" </dev/null >/dev/null 2>&1 &
+os.execvp(sys.argv[1], sys.argv[1:])' "$@" </dev/null >>"$log" 2>&1 &
     else
-        nohup "$@" </dev/null >/dev/null 2>&1 &
+        nohup "$@" </dev/null >>"$log" 2>&1 &
     fi
     disown 2>/dev/null || true
 }
@@ -159,13 +162,15 @@ copy_env_files() {
 start_agent() {
     local agent_name=$1 agent=$2 root_pane=$3 prompt=$4 started=false
     # The new pane's shell takes a moment to become an available agent target.
+    local err=""
     for _ in $(seq 1 20); do
-        if "$herdr_bin" agent start "$agent_name" --kind "$agent" --pane "$root_pane" >/dev/null 2>&1; then
+        if err=$("$herdr_bin" agent start "$agent_name" --kind "$agent" --pane "$root_pane" 2>&1 >/dev/null); then
             started=true
             break
         fi
         sleep 0.5
     done
+    [[ "$started" == true ]] || note "agent start failed for pane $root_pane: ${err:-no output}"
     if [[ "$started" == true ]]; then
         "$herdr_bin" pane report-metadata "$root_pane" --source "$metadata_source" \
             --display-agent "$(agent_label "$agent")" >/dev/null 2>&1 || true
@@ -236,7 +241,7 @@ cmd_start() {
         --token "repo=$(basename "$project")" >/dev/null
     if [[ -n "$ticket_id" ]]; then
         "$herdr_bin" workspace report-metadata "$workspace_id" --source "$metadata_source" \
-            --token "linear=${linear_glyph} ${ticket_id}" \
+            --token "linear=${linear_glyph}  ${ticket_id}" \
             --token "linear_id=$ticket_id" \
             --token "linear_url=$ticket_url" \
             --token "linear_title=$title" >/dev/null
@@ -245,8 +250,10 @@ cmd_start() {
 
     if [[ "$agent" != none ]]; then
         local agent_name
-        agent_name=$(slugify "${ticket_id:-$branch}")
-        agent_name=${agent_name:0:32}
+        # Unique per workspace: a ticket retried after a closed workspace must not collide
+        # with an agent name Herdr still holds.
+        agent_name="$(slugify "${ticket_id:-$branch}")"
+        agent_name="${agent_name:0:26}-${workspace_id#w}"
         if [[ -z "$prompt" ]]; then
             if [[ -n "$ticket_id" ]]; then
                 prompt="Work on ${ticket_url:-$ticket_id}. Groom it first (groom skill)."
@@ -308,7 +315,7 @@ cmd_tag() {
     [[ -n "$ws" ]] || die "not inside a Herdr workspace (HERDR_WORKSPACE_ID unset)"
     parse_ticket "$ref"
     [[ -n "$ticket_id" ]] || die "'$ref' is not a Linear ticket link or id"
-    local -a tokens=(--token "linear=${linear_glyph} ${ticket_id}" --token "linear_id=$ticket_id"
+    local -a tokens=(--token "linear=${linear_glyph}  ${ticket_id}" --token "linear_id=$ticket_id"
                      --token "linear_url=$ticket_url" --token "linear_title=$title")
     "$herdr_bin" workspace report-metadata "$ws" --source "$metadata_source" "${tokens[@]}" >/dev/null
     [[ -n "${HERDR_PANE_ID:-}" ]] && "$herdr_bin" pane report-metadata "$HERDR_PANE_ID" --source "$metadata_source" "${tokens[@]}" >/dev/null
