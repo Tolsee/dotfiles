@@ -17,6 +17,9 @@
 #   herdr-task open [PANE]                open the focused (or given) pane's ticket or PR in the
 #                                         browser, with a picker when there are several
 #   herdr-task branch <ticket>            print the branch name a ticket would get
+#   herdr-task tag <ticket> [-t TITLE]    tag the current workspace with a ticket created
+#                                         after the work started: sidebar, label, and the
+#                                         branch renamed to carry the id if not pushed yet
 #   herdr-task                            interactive (prefix+t): a ticket link or id, a branch
 #                                         name, or free text describing the task ("fix flaky
 #                                         login test" becomes the title, the first prompt and a
@@ -290,6 +293,36 @@ clipboard_ticket() {
     fi
 }
 
+# Tag the current workspace with a ticket created after the work started (groom skill):
+# sidebar tokens on the workspace and this pane, the label, and the branch renamed to carry
+# the ticket id while nothing has been pushed yet.
+cmd_tag() {
+    local ref=${1:?ticket link or id} title="" ws=${HERDR_WORKSPACE_ID:-} ticket_id ticket_url ticket_slug branch
+    shift
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -t|--title) title=$2; shift 2 ;;
+            *) die "unknown option: $1" ;;
+        esac
+    done
+    [[ -n "$ws" ]] || die "not inside a Herdr workspace (HERDR_WORKSPACE_ID unset)"
+    parse_ticket "$ref"
+    [[ -n "$ticket_id" ]] || die "'$ref' is not a Linear ticket link or id"
+    local -a tokens=(--token "linear=${linear_glyph} ${ticket_id}" --token "linear_id=$ticket_id"
+                     --token "linear_url=$ticket_url" --token "linear_title=$title")
+    "$herdr_bin" workspace report-metadata "$ws" --source "$metadata_source" "${tokens[@]}" >/dev/null
+    [[ -n "${HERDR_PANE_ID:-}" ]] && "$herdr_bin" pane report-metadata "$HERDR_PANE_ID" --source "$metadata_source" "${tokens[@]}" >/dev/null
+    local label="${title:-${ticket_slug//-/ }}"
+    [[ -n "$label" ]] || label=$ticket_id
+    "$herdr_bin" workspace rename "$ws" "${label:0:36}" >/dev/null
+    local current
+    current=$(git branch --show-current 2>/dev/null || true)
+    if [[ -n "$current" && "$current" != "$branch" ]] && ! git rev-parse --verify -q "$current@{upstream}" >/dev/null 2>&1; then
+        git branch -m "$current" "$branch" && note "branch renamed $current -> $branch"
+    fi
+    note "workspace tagged with $ticket_id"
+}
+
 cmd_interactive() {
     local project ref suggestion ticket_id ticket_url ticket_slug branch
     suggestion=$(clipboard_ticket)
@@ -466,9 +499,10 @@ case "${1:-}" in
     "") cmd_interactive ;;
     start) shift; cmd_start "$@" ;;
     branch) parse_ticket "${2:?ticket}"; printf '%s\n' "$branch" ;;
+    tag) cmd_tag "${2:?ticket}" "${@:3}" ;;
     open) cmd_open "${2:-}" ;;
     agent-start) start_agent "$2" "$3" "$4" "$5" ;;
     prune) cmd_prune "${2:-}" ;;
-    -h|--help) sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//' ;;
-    *) die "unknown command: $1 (use start or prune)" ;;
+    -h|--help) awk 'NR > 1 && !/^#/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "$0" ;;
+    *) die "unknown command: $1 (start, tag, open, prune, branch)" ;;
 esac

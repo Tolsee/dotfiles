@@ -41,6 +41,8 @@ Done when the four items are settled or the user said enough.
 
 Rewrite the ticket description (Linear MCP `save_issue`), no longer than it was: Problem, Decisions, Out of scope, Acceptance checks. Sharpen the title when it misnames the work. Deep questions you deferred go under "Open", one line each. No local spec file.
 
+No ticket yet (free-text task): ask through the picker whether to create one, recommending the team this repository's recent tickets belong to (Linear MCP `list_issues` by branch or project name; ask when none). On yes, `save_issue` with the title and the same four sections, then run `herdr-task tag <ticket url> --title "<title>"` so the workspace, the sidebar and the branch carry the ticket. On no, carry on untagged.
+
 ## 5. Plan and gate
 
 Give one recommendation in at most five lines: approach, files touched, risks, verification, and what the 80/20 leaves out. Stop and wait for go. On go, implement in this pane: same worktree, same branch, with the ticket id in the PR title or body.
