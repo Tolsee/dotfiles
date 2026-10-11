@@ -19,6 +19,15 @@ tokens=$(echo "$input" | jq -r '
   | ($size * $pct / 100 | floor)' 2>/dev/null)
 
 dir_name=$(basename "${cwd:-$PWD}")
+# In a linked worktree (herdr-task or Claude's EnterWorktree) the folder is named after a
+# branch, which reads like a second branch next to the real one. Show the repository instead.
+if [ -n "$cwd" ]; then
+  common_dir=$(git -C "$cwd" --no-optional-locks rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
+  git_dir=$(git -C "$cwd" --no-optional-locks rev-parse --path-format=absolute --git-dir 2>/dev/null)
+  if [ -n "$common_dir" ] && [ "$common_dir" != "$git_dir" ]; then
+    dir_name=$(basename "$(dirname "$common_dir")")
+  fi
+fi
 
 # gh is refreshed at most once a minute per key: fast enough that a PR opened
 # by the session shows up promptly, rare enough not to hammer the API. The
@@ -81,7 +90,12 @@ if [ -n "$branch" ] && command -v gh >/dev/null 2>&1; then
 
   # cd into the repo root (not -R, which needs OWNER/REPO not a path) so gh
   # resolves the correct remote even when cwd is a worktree.
-  current_pr=$(cached "pr-$branch_key" "$repo_root" gh pr view "$branch" --json url,number)
+  # Claude Code passes the current branch's PR in the status line JSON; fall back to gh
+  # only when it does not (older versions, or before the first refresh).
+  current_pr=$(echo "$input" | jq -c 'select(.pr.url and .pr.number) | {url: .pr.url, number: .pr.number}' 2>/dev/null)
+  if [ -z "$current_pr" ]; then
+    current_pr=$(cached "pr-$branch_key" "$repo_root" gh pr view "$branch" --json url,number)
+  fi
   current_number=$(printf '%s' "$current_pr" | jq -r '.number // empty' 2>/dev/null)
   current_url=$(printf '%s' "$current_pr" | jq -r '.url // empty' 2>/dev/null)
   if [ -n "$current_url" ]; then
@@ -89,20 +103,36 @@ if [ -n "$branch" ] && command -v gh >/dev/null 2>&1; then
   fi
 
   # One session can push several branches from the same worktree. The reflog
-  # remembers every branch checked out here in the last 12 hours; show the
-  # open PRs of those branches too.
+  # remembers every branch checked out here in the last 7 days (60 entries at
+  # most); show the open PRs of those branches too, up to five.
   recent_branches=$(git -C "$cwd" --no-optional-locks reflog show --date=unix --format='%gd %gs' HEAD -n 60 2>/dev/null \
-    | awk -v since=$((now - 43200)) '
+    | awk -v since=$((now - 604800)) '
         match($1, /@\{[0-9]+\}/) { ts = substr($1, RSTART + 2, RLENGTH - 3) }
         ts >= since && /checkout: moving from / { print $(NF - 2); print $NF }' \
     | sort -u)
-  if [ -n "$recent_branches" ]; then
+  # PRs this session created or worked on, from the transcript. A second PR from
+  # one session often comes from another worktree or a branch pushed without a
+  # checkout, which this worktree's reflog never sees. Only this repository's
+  # PRs count, and only open ones authored by me (same list as above).
+  mentioned_prs=""
+  transcript=$(echo "$input" | jq -r '.transcript_path // empty')
+  remote_slug=$(git -C "$cwd" --no-optional-locks remote get-url origin 2>/dev/null \
+    | sed -E 's#^.*github\.com[:/]##; s#\.git$##')
+  if [ -n "$transcript" ] && [ -f "$transcript" ] && [ -n "$remote_slug" ]; then
+    transcript_key=$(printf '%s' "$transcript" | shasum 2>/dev/null | cut -c1-16)
+    mentioned_prs=$(cached "transcript-prs-$transcript_key" . \
+      grep -oE "https://github.com/$remote_slug/pull/[0-9]+" "$transcript" | sort -u)
+  fi
+
+  if [ -n "$recent_branches" ] || [ -n "$mentioned_prs" ]; then
     open_prs=$(cached "open-prs-$repo_key" "$repo_root" gh pr list --author @me --state open --limit 50 --json number,url,headRefName)
     while IFS=' ' read -r number url; do
       [ -n "$url" ] && [ "$number" != "$current_number" ] && pr_links+=("$number $url")
-    done < <(printf '%s' "$open_prs" | jq -r --arg branches "$recent_branches" '
+    done < <(printf '%s' "$open_prs" | jq -r --arg branches "$recent_branches" --arg urls "$mentioned_prs" '
       ($branches | split("\n")) as $b
-      | .[] | select(.headRefName as $h | $b | index($h)) | "\(.number) \(.url)"' 2>/dev/null | head -n 3)
+      | ($urls | split("\n")) as $u
+      | .[] | select((.headRefName as $h | $b | index($h)) or (.url as $x | $u | index($x)))
+      | "\(.number) \(.url)"' 2>/dev/null | head -n 5)
   fi
 fi
 
@@ -175,7 +205,7 @@ for entry in "${pr_links[@]}"; do
 done
 
 if [ -n "$linear_id" ] && [ -n "$linear_url" ]; then
-  out="${out} $(printf "${LINEAR}%s${RESET}" "$(hyperlink "$linear_url" "$linear_id")")"
+  out="${out} $(printf "${LINEAR}%s${RESET}" "$(hyperlink "$linear_url" "$(printf '\356\206\260')  $linear_id")")"
 fi
 
 meta=""

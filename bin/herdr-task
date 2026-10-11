@@ -17,9 +17,16 @@
 #   herdr-task open [PANE]                open the focused (or given) pane's ticket or PR in the
 #                                         browser, with a picker when there are several
 #   herdr-task branch <ticket>            print the branch name a ticket would get
-#   herdr-task                            interactive: project of the focused workspace, ticket
-#                                         from the clipboard or typed, agent started in the
-#                                         background so the popup closes at once
+#   herdr-task tag <ticket> [-t TITLE]    tag the current workspace with a ticket created
+#                                         after the work started: sidebar, label, and the
+#                                         branch renamed to carry the id if not pushed yet
+#   herdr-task                            interactive (prefix+t): a ticket link or id, a branch
+#                                         name, or free text describing the task ("fix flaky
+#                                         login test" becomes the title, the first prompt and a
+#                                         slug branch); suggested from the clipboard, project
+#                                         guessed from the ticket's team or the focused
+#                                         workspace; agent started in the background so the
+#                                         popup closes at once
 #
 # HERDR_TASK_PROJECT_ROOTS (colon separated, private shell config) lists directories to scan
 # for repositories in the interactive project picker.
@@ -29,7 +36,7 @@ set -euo pipefail
 # Nerd Font glyphs as raw UTF-8 bytes: \u escapes come out as literal text in a C locale,
 # which is what herdr popups run in. U+F41B nf-oct-issue_opened (Nerd Fonts ships no Linear
 # logo), U+EC82 nf-cod-claude, U+EC81 nf-cod-openai, U+EC20 nf-cod-robot.
-linear_glyph=$(printf '\357\220\233')
+linear_glyph=$(printf '\356\206\260')  # U+E1B0, Linear logo from herdr/fonts/HerdrTaskIcons
 
 # Sidebar label per agent kind.
 agent_label() {
@@ -42,6 +49,38 @@ agent_label() {
 metadata_source="herdr-task"
 project_roots="${HERDR_TASK_PROJECT_ROOTS:-}"
 default_agent="${HERDR_TASK_AGENT:-claude}"
+
+# detach <cmd...>: run a command in its own session so it survives the popup pane
+# closing. A closing pane kills its process group, which nohup alone does not escape;
+# macOS has no setsid binary, so use Python's.
+detach() {
+    local log="${XDG_CACHE_HOME:-$HOME/.cache}/herdr-task/detach.log"
+    mkdir -p "${log%/*}"
+    printf '%s detach: %s\n' "$(date '+%F %T')" "$*" >> "$log"
+    if command -v python3 >/dev/null 2>&1; then
+        # Daemonize: double fork so the starter is never a child of the popup, a new session
+        # so it has no controlling terminal, and every inherited descriptor closed so it does
+        # not keep the popup's pty open (Herdr reaps what still holds a closed pane's pty).
+        python3 - "$log" "$@" <<'PY'
+import os, sys
+log, argv = sys.argv[1], sys.argv[2:]
+if os.fork():
+    sys.exit(0)
+os.setsid()
+if os.fork():
+    os._exit(0)
+os.chdir(os.environ.get("HOME", "/"))
+fd_in = os.open(os.devnull, os.O_RDONLY)
+fd_out = os.open(log, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
+os.dup2(fd_in, 0); os.dup2(fd_out, 1); os.dup2(fd_out, 2)
+os.closerange(3, 4096)
+os.execvp(argv[0], argv)
+PY
+    else
+        nohup "$@" </dev/null >>"$log" 2>&1 &
+        disown 2>/dev/null || true
+    fi
+}
 
 die() { printf 'herdr-task: %s\n' "$*" >&2; exit 1; }
 note() { printf 'herdr-task: %s\n' "$*" >&2; }
@@ -105,11 +144,11 @@ parse_ticket() {
     local ref=$1
     ticket_id="" ticket_url="" ticket_slug=""
     if [[ "$ref" =~ ^https?://[^/]*linear\.app/[^/]+/issue/([A-Za-z][A-Za-z0-9]*-[0-9]+)(/([^/?#]*))? ]]; then
-        ticket_id=${BASH_REMATCH[1]^^}
+        ticket_id=$(printf '%s' "${BASH_REMATCH[1]}" | tr '[:lower:]' '[:upper:]')
         ticket_slug=${BASH_REMATCH[3]:-}
         ticket_url=${ref%%[?#]*}
     elif [[ "$ref" =~ ^([A-Za-z][A-Za-z0-9]*-[0-9]+)$ ]]; then
-        ticket_id=${BASH_REMATCH[1]^^}
+        ticket_id=$(printf '%s' "${BASH_REMATCH[1]}" | tr '[:lower:]' '[:upper:]')
     fi
     if [[ -n "$ticket_id" ]]; then
         branch=$(slugify "$ticket_id")
@@ -138,13 +177,15 @@ copy_env_files() {
 start_agent() {
     local agent_name=$1 agent=$2 root_pane=$3 prompt=$4 started=false
     # The new pane's shell takes a moment to become an available agent target.
+    local err=""
     for _ in $(seq 1 20); do
-        if "$herdr_bin" agent start "$agent_name" --kind "$agent" --pane "$root_pane" >/dev/null 2>&1; then
+        if err=$("$herdr_bin" agent start "$agent_name" --kind "$agent" --pane "$root_pane" 2>&1 >/dev/null); then
             started=true
             break
         fi
         sleep 0.5
     done
+    [[ "$started" == true ]] || note "agent start failed for pane $root_pane: ${err:-no output}"
     if [[ "$started" == true ]]; then
         "$herdr_bin" pane report-metadata "$root_pane" --source "$metadata_source" \
             --display-agent "$(agent_label "$agent")" >/dev/null 2>&1 || true
@@ -182,8 +223,10 @@ cmd_start() {
     local ticket_id ticket_url ticket_slug branch label
     parse_ticket "$ref"
     [[ -n "$url_opt" ]] && ticket_url=$url_opt
+    # The sidebar's $linear token carries the ticket id, so the label is the title alone.
     if [[ -n "$ticket_id" ]]; then
-        label="$ticket_id ${title:-${ticket_slug//-/ }}"
+        label="${title:-${ticket_slug//-/ }}"
+        [[ -n "$label" ]] || label=$ticket_id   # bare id, no title: better the id than nothing
     else
         label="${title:-$branch}"
     fi
@@ -209,9 +252,11 @@ cmd_start() {
     note "workspace $workspace_id at $checkout_path ($((SECONDS - start))s)"
     [[ -n "$ticket_id" ]] && remember_team_repo "${ticket_id%%-*}" "$project"
 
+    "$herdr_bin" workspace report-metadata "$workspace_id" --source "$metadata_source" \
+        --token "repo=$(basename "$project")" >/dev/null
     if [[ -n "$ticket_id" ]]; then
         "$herdr_bin" workspace report-metadata "$workspace_id" --source "$metadata_source" \
-            --token "linear=${linear_glyph} ${ticket_id}" \
+            --token "linear=${linear_glyph}  ${ticket_id}" \
             --token "linear_id=$ticket_id" \
             --token "linear_url=$ticket_url" \
             --token "linear_title=$title" >/dev/null
@@ -220,15 +265,21 @@ cmd_start() {
 
     if [[ "$agent" != none ]]; then
         local agent_name
-        agent_name=$(slugify "${ticket_id:-$branch}")
-        agent_name=${agent_name:0:32}
+        # Unique per workspace: a ticket retried after a closed workspace must not collide
+        # with an agent name Herdr still holds.
+        agent_name="$(slugify "${ticket_id:-$branch}")"
+        agent_name="${agent_name:0:26}-${workspace_id#w}"
         if [[ -z "$prompt" ]]; then
-            prompt="Work on ${ticket_url:-${ticket_id:-$branch}}."
-            [[ -n "$ticket_id" ]] && prompt="$prompt Read the ticket first (Linear MCP), restate the goal in one line, then plan before editing."
+            if [[ -n "$ticket_id" ]]; then
+                prompt="Work on ${ticket_url:-$ticket_id}. Groom it first (groom skill)."
+                [[ -z "$title" ]] && prompt="$prompt After reading it, name this Herdr workspace after it: herdr workspace rename \"\$HERDR_WORKSPACE_ID\" \"<ticket title>\"."
+            else
+                prompt="Task: ${title:-$branch}. Groom it first (groom skill)."
+            fi
         fi
         if [[ "$agent_async" == true ]]; then
             # Let the popup close now; the agent keeps starting in the pane.
-            nohup "$0" agent-start "$agent_name" "$agent" "$root_pane" "$prompt" >/dev/null 2>&1 &
+            detach "$0" agent-start "$agent_name" "$agent" "$root_pane" "$prompt"
             note "starting $agent as '$agent_name' in the background"
         else
             start_agent "$agent_name" "$agent" "$root_pane" "$prompt"
@@ -264,21 +315,58 @@ clipboard_ticket() {
     fi
 }
 
+# Tag the current workspace with a ticket created after the work started (groom skill):
+# sidebar tokens on the workspace and this pane, the label, and the branch renamed to carry
+# the ticket id while nothing has been pushed yet.
+cmd_tag() {
+    local ref=${1:?ticket link or id} title="" ws=${HERDR_WORKSPACE_ID:-} ticket_id ticket_url ticket_slug branch
+    shift
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -t|--title) title=$2; shift 2 ;;
+            *) die "unknown option: $1" ;;
+        esac
+    done
+    [[ -n "$ws" ]] || die "not inside a Herdr workspace (HERDR_WORKSPACE_ID unset)"
+    parse_ticket "$ref"
+    [[ -n "$ticket_id" ]] || die "'$ref' is not a Linear ticket link or id"
+    local -a tokens=(--token "linear=${linear_glyph}  ${ticket_id}" --token "linear_id=$ticket_id"
+                     --token "linear_url=$ticket_url" --token "linear_title=$title")
+    "$herdr_bin" workspace report-metadata "$ws" --source "$metadata_source" "${tokens[@]}" >/dev/null
+    [[ -n "${HERDR_PANE_ID:-}" ]] && "$herdr_bin" pane report-metadata "$HERDR_PANE_ID" --source "$metadata_source" "${tokens[@]}" >/dev/null
+    local label="${title:-${ticket_slug//-/ }}"
+    [[ -n "$label" ]] || label=$ticket_id
+    "$herdr_bin" workspace rename "$ws" "${label:0:36}" >/dev/null
+    local current
+    current=$(git branch --show-current 2>/dev/null || true)
+    if [[ -n "$current" && "$current" != "$branch" ]] && ! git rev-parse --verify -q "$current@{upstream}" >/dev/null 2>&1; then
+        git branch -m "$current" "$branch" && note "branch renamed $current -> $branch"
+    fi
+    note "workspace tagged with $ticket_id"
+}
+
 cmd_interactive() {
     local project ref suggestion ticket_id ticket_url ticket_slug branch
     suggestion=$(clipboard_ticket)
+    # readline (-e) does its own line editing, so backspace works in the popup pty whatever
+    # its erase setting. No -i: macOS bash 3.2 lacks it, so the suggestion is the default.
     if [[ -n "$suggestion" ]]; then
-        printf 'Ticket link, id, or branch name [%s]: ' "$suggestion"
+        read -e -r -p "Ticket link, id, branch, or task [$suggestion]: " ref || exit 0
     else
-        printf 'Ticket link, id, or branch name: '
+        read -e -r -p 'Ticket link, id, branch, or task: ' ref || exit 0
     fi
-    read -r ref
     ref=${ref:-$suggestion}
     [[ -n "$ref" ]] || exit 0
     parse_ticket "$ref"
     # Best guess first: the repo this ticket's team was last started in, then the focused one.
     project=$(pick_project "$(team_repo "${ticket_id%%-*}")" "$(focused_repo)") || exit 0
-    cmd_start "$ref" --project "$project" --async-agent
+    # Free text ("fix flaky login test") is a task, not a ref: keep it as the title and first
+    # prompt, with the slug as the branch. A ticket or a valid branch name passes through.
+    if [[ -z "$ticket_id" ]] && ! git check-ref-format --branch "$ref" >/dev/null 2>&1; then
+        cmd_start "$ref" --project "$project" --title "$ref" --async-agent
+    else
+        cmd_start "$ref" --project "$project" --async-agent
+    fi
 }
 
 # tsv_field <tsv> <key> <n>: field n of the first line whose first field equals key, literally.
@@ -434,9 +522,10 @@ case "${1:-}" in
     "") cmd_interactive ;;
     start) shift; cmd_start "$@" ;;
     branch) parse_ticket "${2:?ticket}"; printf '%s\n' "$branch" ;;
+    tag) cmd_tag "${2:?ticket}" "${@:3}" ;;
     open) cmd_open "${2:-}" ;;
     agent-start) start_agent "$2" "$3" "$4" "$5" ;;
     prune) cmd_prune "${2:-}" ;;
-    -h|--help) sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//' ;;
-    *) die "unknown command: $1 (use start or prune)" ;;
+    -h|--help) awk 'NR > 1 && !/^#/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "$0" ;;
+    *) die "unknown command: $1 (start, tag, open, prune, branch)" ;;
 esac
