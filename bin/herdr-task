@@ -240,8 +240,6 @@ cmd_start() {
         existing_path=$(jq -r --arg p "$branch-" '.result.worktrees[] | select(.branch != null) | select(.branch | startswith($p)) | .path' <<<"$worktrees" | head -n1)
     fi
     start=$SECONDS
-    local before
-    before=$(open_workspace_ids)
     if [[ -n "$existing_path" ]]; then
         note "branch $branch already has a worktree at $existing_path, opening it"
         response=$("$herdr_bin" worktree open --cwd "$project" --path "$existing_path" --label "$label" --focus)
@@ -252,7 +250,6 @@ cmd_start() {
     checkout_path=$(jq -r '.result.worktree.path' <<<"$response")
     root_pane=$(jq -r '.result.root_pane.pane_id' <<<"$response")
     note "workspace $workspace_id at $checkout_path ($((SECONDS - start))s)"
-    close_extra_workspaces "$before" "$workspace_id"
     [[ -n "$ticket_id" ]] && remember_team_repo "${ticket_id%%-*}" "$project"
 
     "$herdr_bin" workspace report-metadata "$workspace_id" --source "$metadata_source" \
@@ -293,33 +290,6 @@ cmd_start() {
     if [[ -z "${HERDR_SOCKET_PATH:-}" ]]; then
         exec "$herdr_bin"
     fi
-}
-
-open_workspace_ids() {
-    "$herdr_bin" workspace list 2>/dev/null | jq -r '.result.workspaces[].workspace_id' | sort
-}
-
-# Herdr groups a worktree workspace under a workspace for the repository itself and creates
-# that one (a plain shell at the repo root) when none is open. One task is one pane, so that
-# extra workspace goes: the API refuses to close a group member, but its shell exiting closes
-# it the way a typed `exit` does.
-close_extra_workspaces() {
-    local before=$1 keep=$2 extra ws pane tries
-    extra=$(comm -13 <(printf '%s\n' "$before") <(open_workspace_ids) | grep -vx "$keep" || true)
-    for ws in $extra; do
-        pane=$("$herdr_bin" pane list --workspace "$ws" 2>/dev/null | jq -r '.result.panes[0].pane_id // empty')
-        [[ -n "$pane" ]] || continue
-        "$herdr_bin" pane run "$pane" exit >/dev/null 2>&1 || true
-        tries=0
-        while "$herdr_bin" workspace get "$ws" >/dev/null 2>&1 && (( tries++ < 20 )); do
-            sleep 0.25
-        done
-        if "$herdr_bin" workspace get "$ws" >/dev/null 2>&1; then
-            note "could not close the extra repo workspace $ws"
-        else
-            note "closed the extra repo workspace $ws"
-        fi
-    done
 }
 
 # Repository behind the focused Herdr workspace: its checkout, else its first pane's cwd.
