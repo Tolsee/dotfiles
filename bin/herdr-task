@@ -275,7 +275,7 @@ cmd_start() {
         if [[ -z "$prompt" ]]; then
             if [[ -n "$ticket_id" ]]; then
                 prompt="Work on ${ticket_url:-$ticket_id}. Groom it first (groom skill)."
-                [[ -z "$title" ]] && prompt="$prompt After reading it, name this Herdr workspace after it: herdr workspace rename \"\$HERDR_WORKSPACE_ID\" \"<ticket title>\"."
+                [[ -z "$title" ]] && prompt="$prompt After reading it, name this Herdr workspace after its title, without the ticket id (the sidebar shows that already): herdr workspace rename \"\$HERDR_WORKSPACE_ID\" \"<ticket title>\"."
             else
                 prompt="Task: ${title:-$branch}. Groom it first (groom skill)."
             fi

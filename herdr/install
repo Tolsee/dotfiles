@@ -67,6 +67,23 @@ if [[ -n "$sidebar_plugin_config" ]]; then
     grep -q '^conversation_titles' "$sidebar_plugin_config/config.toml" 2>/dev/null \
         || printf 'conversation_titles = true\n' >> "$sidebar_plugin_config/config.toml"
 fi
+# The plugin is Python 3.11+ (tomllib) and runs with a fixed PATH (~/.local/bin, Homebrew,
+# /usr/bin). macOS ships 3.9, and Homebrew's python@3.x keeps its unversioned python3 out of
+# the bin directory, so a brew upgrade can leave the plugin without a usable python3 (the
+# sidebar then silently stops updating). Expose Homebrew's python3 through ~/.local/bin.
+if ! PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin" python3 -c 'import tomllib' 2>/dev/null; then
+    brew_python=$(ls -d /opt/homebrew/opt/python@3.*/libexec/bin/python3 /usr/local/opt/python@3.*/libexec/bin/python3 2>/dev/null | sort -V | tail -n 1)
+    if [[ -z "$brew_python" ]] && command -v brew >/dev/null 2>&1; then
+        brew install python
+        brew_python=$(ls -d /opt/homebrew/opt/python@3.*/libexec/bin/python3 /usr/local/opt/python@3.*/libexec/bin/python3 2>/dev/null | sort -V | tail -n 1)
+    fi
+    if [[ -n "$brew_python" ]]; then
+        mkdir -p "$HOME/.local/bin"
+        ln -sf "$brew_python" "$HOME/.local/bin/python3"
+    else
+        printf 'No Python 3.11+ found for the sidebar plugin; install one on PATH.\n' >&2
+    fi
+fi
 if [[ "$(uname -s)" == Darwin ]]; then
     for font in "$HOME"/.config/herdr/plugins/github/testy-cool.herdr-sidebar-*/dist/HerdrSidebarLogos-Regular.ttf \
                 "$dotfiles_root/herdr/fonts/HerdrTaskIcons-Regular.ttf"; do
