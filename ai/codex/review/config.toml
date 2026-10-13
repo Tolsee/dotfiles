@@ -1,0 +1,5 @@
+# Codex config for local reviews run by coding agents (see codex-review).
+# Kept apart from ~/.codex/config.toml so reviews run cheaper than interactive
+# Codex: medium effort and the standard tier (no service_tier = "fast").
+model = "gpt-6.1-sol"
+model_reasoning_effort = "medium"

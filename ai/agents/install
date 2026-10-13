@@ -106,6 +106,21 @@ if selected codex && [ -e ~/.codex ]; then
   fi
 fi
 
+# Review-only Codex home for agents' local reviews: cheaper config, shared login.
+if { selected claude-code || selected codex; } && [ -e ~/.codex ]; then
+  mkdir -p ~/.codex-review
+  ln -sf "$DOTFILES/ai/codex/review/config.toml" ~/.codex-review/config.toml
+  ln -sf "$DOTFILES/ai/codex/review/codex-review" ~/.codex-review/codex-review
+  # Keep a refreshed login that replaced the auth link (see codex-review).
+  if [ ! -L ~/.codex-review/auth.json ]; then
+    if [ -f ~/.codex-review/auth.json ] && [ ~/.codex-review/auth.json -nt ~/.codex/auth.json ]; then
+      cp -p ~/.codex-review/auth.json ~/.codex/auth.json
+    fi
+    ln -sf ~/.codex/auth.json ~/.codex-review/auth.json
+  fi
+  echo "linked ~/.codex-review/{config.toml,codex-review,auth.json}"
+fi
+
 # Gemini / Antigravity — append import if missing
 if selected antigravity && [ -e ~/.gemini ]; then
   if grep -q "dotfiles/agents/AGENTS.md" ~/.gemini/GEMINI.md 2>/dev/null; then
