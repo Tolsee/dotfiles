@@ -25,6 +25,12 @@ For isolated agent work, use Open worktree... to group existing harness/LTD
 checkouts and keep one task per workspace. Session restore is enabled; integrations supply resumable agent IDs.
 Re-run the installer after adding an agent such as Pi.
 
+Closing a worktree workspace prunes it: the local `worktree-cleanup` plugin runs
+`herdr-task prune-worktree`, which removes the worktree only when its branch has
+merged (branch kept) and stops the Codex plugin's leftover brokers for it. Anything
+unmerged, dirty or with an open PR stays for Ctrl+B, Shift+T (`herdr-task prune`).
+Hook output: `herdr plugin log list --plugin dotfiles.worktree-cleanup`.
+
 `herdr status` reports client/server version compatibility. Homebrew upgrades the
 binary but an existing server may still run the older version. Use the running
 TUI's reload action for config-only changes; plan a server restart separately
