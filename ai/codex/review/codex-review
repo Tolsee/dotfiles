@@ -1,0 +1,48 @@
+#!/bin/bash
+# Run the Codex Claude Code plugin's native review against a review-only Codex
+# home (~/.codex-review by default), so reviews use its cheaper config instead
+# of interactive Codex's. Arguments pass through to `codex-companion.mjs review`,
+# e.g. `codex-review --wait --base main --scope branch`.
+set -euo pipefail
+
+# The broker is torn down on exit (below), which would kill a detached review.
+for arg in "$@"; do
+  if [ "$arg" = "--background" ]; then
+    echo "codex-review: --background is not supported; run in the foreground (--wait) or background the whole command" >&2
+    exit 2
+  fi
+done
+
+review_home="${CODEX_REVIEW_HOME:-$HOME/.codex-review}"
+main_home="${CODEX_MAIN_HOME:-$HOME/.codex}"
+plugin_root="$(ls -d "$HOME"/.claude/plugins/cache/openai-codex/codex/*/ 2>/dev/null | sort -V | tail -1)"
+if [ -z "$plugin_root" ]; then
+  echo "codex-review: Codex Claude Code plugin not found" >&2
+  exit 1
+fi
+
+# Share the login with interactive Codex. If a token refresh replaced the link
+# with a newer file, hand that file back to the main home before relinking.
+auth="$review_home/auth.json"
+if [ ! -L "$auth" ]; then
+  mkdir -p "$review_home"
+  if [ -f "$auth" ] && [ "$auth" -nt "$main_home/auth.json" ]; then
+    cp -p "$auth" "$main_home/auth.json"
+  fi
+  ln -sf "$main_home/auth.json" "$auth"
+fi
+
+# A shared app-server broker would carry the main CODEX_HOME, so give reviews
+# their own companion state (and broker) and drop any inherited endpoint.
+unset CODEX_COMPANION_APP_SERVER_ENDPOINT
+export CODEX_HOME="$review_home"
+export CLAUDE_PLUGIN_DATA="$review_home/companion"
+
+# The review leaves its broker running, and the plugin's own SessionEnd hook
+# only cleans the main plugin data dir, so run that teardown for ours.
+teardown() {
+  printf '{"cwd":"%s","hook_event_name":"SessionEnd"}' "$PWD" |
+    node "$plugin_root/scripts/session-lifecycle-hook.mjs" SessionEnd >/dev/null 2>&1 || true
+}
+trap teardown EXIT
+node "$plugin_root/scripts/codex-companion.mjs" review "$@"

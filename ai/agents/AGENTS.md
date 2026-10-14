@@ -27,7 +27,9 @@ Shared by all coding agents (Claude Code, Codex, Antigravity/Gemini). Source of 
 
 ## Pull Requests
 
-- Before opening a PR and before every push that updates one, run a local Codex review (`/codex:review` in Claude Code, or the equivalent companion command) on the branch diff and address its findings first, so review bots and humans see the cleaned-up version.
+- Before opening a PR, run a local Codex review on the branch diff and address its findings first, so review bots and humans see the cleaned-up version. In Claude Code run `~/.codex-review/codex-review --wait --base <base> --scope branch`: it wraps the Codex plugin's native review with a cheaper review-only config. Do not call `/codex:review` (it cannot be self-invoked) or the plugin's `codex-companion.mjs` directly (that uses interactive Codex's config). Other agents use their native Codex review (Codex's `/review`, Pi's `/codex-review`).
+- Before a later push to the PR, run it again only when the push adds substantive new logic. Skip it for review-comment fixes, renames, test, doc or config tweaks and rebases; the PR's review bots cover those. At most three local Codex reviews per PR.
+- Only the main session runs the local Codex review. Subagents never run it.
 - After finishing an implementation task, push, open the PR, and babysit it to merge-ready (watch CI, address bot and human review, keep rebased) without asking. Never merge or self-approve.
 - After pushing a fix for a bot reviewer's comment, re-trigger that bot (`@codex review`, `@cursor review`, `@coderabbitai review`; Devin re-reviews on push and has no working mention trigger) as an in-thread reply to one of its existing threads, never a top-level PR comment, and wait for its re-review of current HEAD before resolving the thread or declaring merge-ready.
 - When design or behavior changes mid-PR, update the PR description in the same push; a stale description makes reviewers flag the new code as contradicting the stated model.
