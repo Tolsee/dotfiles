@@ -14,6 +14,9 @@
 #                             or claude); "none" leaves a shell
 #       --prompt TEXT         first prompt for the agent (default: work on the ticket)
 #   herdr-task prune [DIR]                remove worktree workspaces whose branch has merged
+#   herdr-task prune-worktree PATH        the same check for one worktree, removed without
+#                                         asking; run by the worktree-cleanup plugin when its
+#                                         workspace closes
 #   herdr-task open [PANE]                open the focused (or given) pane's ticket or PR in the
 #                                         browser, with a picker when there are several
 #   herdr-task branch <ticket>            print the branch name a ticket would get
@@ -374,6 +377,45 @@ tsv_field() {
     awk -F'\t' -v key="$2" -v n="$3" '$1 == key { print $n; exit }' <<<"$1"
 }
 
+# prune_verdict <worktree> <branch> <prunable>: set the caller's verdict to "remove: why" or
+# "keep: why". Reads repo_root, default_branch, merged_heads and open_heads from the caller.
+prune_verdict() {
+    local wt_path=$1 branch=$2 prunable=$3 pr_state head_sha merged_sha
+    verdict=""
+    if [[ "$prunable" == true ]]; then
+        verdict="remove: directory gone"
+    elif [[ -z "$branch" ]]; then
+        verdict="keep: detached HEAD"
+    elif [[ -n "$(git -C "$wt_path" status --porcelain 2>/dev/null)" ]]; then
+        verdict="keep: uncommitted changes"
+    elif [[ -n "$(tsv_field "$open_heads" "$branch" 2)" ]]; then
+        verdict="keep: open PR $(tsv_field "$open_heads" "$branch" 2)"
+    elif git -C "$repo_root" merge-base --is-ancestor "$branch" "origin/$default_branch" 2>/dev/null; then
+        verdict="remove: merged into $default_branch"
+    else
+        # A merged PR only proves the commit it merged; the branch may have moved on.
+        head_sha=$(git -C "$repo_root" rev-parse "$branch" 2>/dev/null || true)
+        merged_sha=$(tsv_field "$merged_heads" "$branch" 2)
+        if [[ -z "$merged_sha" ]]; then
+            # Older than the bulk lists reach: ask about this branch alone.
+            pr_state=$(cd "$repo_root" && gh pr list --head "$branch" --state all --limit 1 --json state,number,headRefOid --jq '.[0] | "\(.state) #\(.number) \(.headRefOid)"' 2>/dev/null || true)
+            case "$pr_state" in
+                MERGED*) merged_sha=${pr_state##* } ;;
+                OPEN*) verdict="keep: open PR $(cut -d' ' -f2 <<<"$pr_state")" ;;
+                CLOSED*) verdict="keep: PR $(cut -d' ' -f2 <<<"$pr_state") closed unmerged" ;;
+                *) verdict="keep: unmerged, no PR" ;;
+            esac
+        fi
+        if [[ -n "$merged_sha" ]]; then
+            if [[ "$merged_sha" == "$head_sha" ]]; then
+                verdict="remove: PR merged"
+            else
+                verdict="keep: commits after the merged PR"
+            fi
+        fi
+    fi
+}
+
 cmd_prune() {
     local project worktrees repo_root default_branch merged_heads open_heads
     local -a remove_paths remove_workspaces remove_branches
@@ -395,43 +437,11 @@ cmd_prune() {
     printf '%-56s %s\n' "WORKTREE" "VERDICT"
     # "-" stands in for empty fields: read collapses consecutive tabs otherwise.
     while IFS=$'\t' read -r wt_path branch workspace_id prunable; do
-        local short verdict pr_state head_sha merged_sha
+        local short verdict
         [[ "$branch" == "-" ]] && branch=""
         [[ "$workspace_id" == "-" ]] && workspace_id=""
         short=${wt_path/#$HOME/\~}
-        verdict=""
-        if [[ "$prunable" == true ]]; then
-            verdict="remove: directory gone"
-        elif [[ -z "$branch" ]]; then
-            verdict="keep: detached HEAD"
-        elif [[ -n "$(git -C "$wt_path" status --porcelain 2>/dev/null)" ]]; then
-            verdict="keep: uncommitted changes"
-        elif [[ -n "$(tsv_field "$open_heads" "$branch" 2)" ]]; then
-            verdict="keep: open PR $(tsv_field "$open_heads" "$branch" 2)"
-        elif git -C "$repo_root" merge-base --is-ancestor "$branch" "origin/$default_branch" 2>/dev/null; then
-            verdict="remove: merged into $default_branch"
-        else
-            # A merged PR only proves the commit it merged; the branch may have moved on.
-            head_sha=$(git -C "$repo_root" rev-parse "$branch" 2>/dev/null || true)
-            merged_sha=$(tsv_field "$merged_heads" "$branch" 2)
-            if [[ -z "$merged_sha" ]]; then
-                # Older than the bulk lists reach: ask about this branch alone.
-                pr_state=$(cd "$repo_root" && gh pr list --head "$branch" --state all --limit 1 --json state,number,headRefOid --jq '.[0] | "\(.state) #\(.number) \(.headRefOid)"' 2>/dev/null || true)
-                case "$pr_state" in
-                    MERGED*) merged_sha=${pr_state##* } ;;
-                    OPEN*) verdict="keep: open PR $(cut -d' ' -f2 <<<"$pr_state")" ;;
-                    CLOSED*) verdict="keep: PR $(cut -d' ' -f2 <<<"$pr_state") closed unmerged" ;;
-                    *) verdict="keep: unmerged, no PR" ;;
-                esac
-            fi
-            if [[ -n "$merged_sha" ]]; then
-                if [[ "$merged_sha" == "$head_sha" ]]; then
-                    verdict="remove: PR merged"
-                else
-                    verdict="keep: commits after the merged PR"
-                fi
-            fi
-        fi
+        prune_verdict "$wt_path" "$branch" "$prunable"
         printf '%-56s %s\n' "$short" "$verdict"
         if [[ "$verdict" == remove:* ]]; then
             remove_paths+=("$wt_path")
@@ -470,6 +480,50 @@ cmd_prune() {
     done
     git -C "$repo_root" worktree prune
     note "done"
+}
+
+# prune-worktree <path>: the worktree-cleanup plugin's entry point when a workspace closes.
+# Applies prune's rules to that one worktree and removes it without asking; anything not
+# clearly merged is kept. Also stops the Codex plugin brokers left running for it.
+cmd_prune_worktree() {
+    local wt_path=$1 repo_root default_branch merged_heads="" open_heads="" branch verdict
+    # A `herdr worktree remove` that closed the workspace may still be deleting the checkout.
+    sleep 2
+    [[ -d "$wt_path" ]] || { note "already gone: $wt_path"; return; }
+    wt_path=$(cd "$wt_path" && pwd -P)
+    repo_root=$(git -C "$wt_path" worktree list --porcelain | sed -n '1s/^worktree //p')
+    [[ -n "$repo_root" && "$repo_root" != "$wt_path" ]] || { note "not a linked worktree: $wt_path"; return; }
+    stop_codex_brokers "$wt_path"
+
+    branch=$(git -C "$wt_path" symbolic-ref --short -q HEAD || true)
+    git -C "$repo_root" fetch --prune --quiet origin || note "fetch failed, using local refs"
+    default_branch=$(git -C "$repo_root" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##' || true)
+    default_branch=${default_branch:-main}
+    # Nobody confirms this removal, so an open PR we failed to look up keeps the worktree.
+    if [[ -n "$branch" ]]; then
+        open_heads=$(cd "$repo_root" && gh pr list --head "$branch" --state open --json headRefName,number --jq '.[] | "\(.headRefName)\t#\(.number)"' 2>/dev/null) ||
+            { note "$wt_path: keep: GitHub lookup failed"; return 0; }
+    fi
+    prune_verdict "$wt_path" "$branch" false
+    note "$wt_path: $verdict"
+    [[ "$verdict" == remove:* ]] || return 0
+    git -C "$repo_root" worktree remove "$wt_path" && note "removed $wt_path (branch kept)"
+    git -C "$repo_root" worktree prune
+}
+
+# stop_codex_brokers <path>: shut down the Codex Claude Code plugin's app-server brokers for a
+# workspace path, in its own data dir and in codex-review's. They outlive crashed or subagent
+# sessions, so a closed workspace is the last chance to stop them.
+stop_codex_brokers() {
+    local hook data_dir
+    hook=$(ls -d "$HOME"/.claude/plugins/cache/openai-codex/codex/*/scripts/session-lifecycle-hook.mjs 2>/dev/null | sort -V | tail -n 1) || true
+    [[ -n "$hook" ]] && command -v node >/dev/null 2>&1 || return 0
+    for data_dir in "$HOME/.claude/plugins/data/codex-openai-codex" "$HOME/.codex-review/companion"; do
+        [[ -d "$data_dir" ]] || continue
+        jq -cn --arg cwd "$1" '{cwd: $cwd, hook_event_name: "SessionEnd"}' |
+            (cd "$1" && env -u CODEX_COMPANION_APP_SERVER_ENDPOINT CLAUDE_PLUGIN_DATA="$data_dir" \
+                node "$hook" SessionEnd) >/dev/null 2>&1 || true
+    done
 }
 
 # Links reported onto the focused pane: the ticket (herdr-task, SessionStart hook) and the PRs
@@ -526,6 +580,7 @@ case "${1:-}" in
     open) cmd_open "${2:-}" ;;
     agent-start) start_agent "$2" "$3" "$4" "$5" ;;
     prune) cmd_prune "${2:-}" ;;
+    prune-worktree) cmd_prune_worktree "${2:?worktree path}" ;;
     -h|--help) awk 'NR > 1 && !/^#/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "$0" ;;
-    *) die "unknown command: $1 (start, tag, open, prune, branch)" ;;
+    *) die "unknown command: $1 (start, tag, open, prune, prune-worktree, branch)" ;;
 esac

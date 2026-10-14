@@ -55,6 +55,11 @@ for plugin in testy-cool/herdr-sidebar-config; do
     fi
 done
 
+# Worktree cleanup: removes a task worktree when its workspace closes, if the branch merged.
+if ! herdr plugin list 2>/dev/null | grep -q 'dotfiles.worktree-cleanup'; then
+    herdr plugin link "$herdr_root/plugins/worktree-cleanup"
+fi
+
 # The sidebar plugin draws logos from its own font (U+E1A0-U+E1AB, mapped in the Ghostty
 # config). Copy it to the user font folder and pin the plugin to font mode; Ghostty needs a
 # fresh launch to pick up a new font.

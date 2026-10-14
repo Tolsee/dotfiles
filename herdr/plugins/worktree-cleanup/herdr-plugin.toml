@@ -1,0 +1,10 @@
+id = "dotfiles.worktree-cleanup"
+name = "Worktree cleanup"
+version = "0.1.0"
+min_herdr_version = "0.9.0"
+description = "When a worktree workspace closes, remove its worktree if the branch has merged (herdr-task prune-worktree)."
+platforms = ["linux", "macos"]
+
+[[events]]
+on = "workspace.closed"
+command = ["sh", "on-close.sh"]
