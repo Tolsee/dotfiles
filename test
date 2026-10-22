@@ -11,11 +11,18 @@
 # A check whose tool is missing (fzf, node, tomlkit, ...) is skipped; TEST_STRICT=1 (CI) makes
 # a skip a failure.
 set -uo pipefail
-cd "$(dirname "$0")"
-export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+cd "$(dirname "$0")" || exit 1
+# On the Mac, Homebrew tools and ~/.local/bin's Python 3.11+ (tomllib); CI sets up its own.
+[[ -n "${CI:-}" ]] || export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 
 failed=() skipped=()
 skip() { printf 'skip  %s: %s\n' "$1" "$2"; skipped+=("$1"); }
+# annotate <title> < text: a GitHub Actions error annotation (newlines encoded as %0A).
+annotate() {
+    printf '::error title=%s::' "$1"
+    awk 'BEGIN { ORS = "%0A" } { gsub(/%/, "%25"); gsub(/\r/, ""); print }'
+    echo
+}
 
 # Shell scripts by extension or shebang; zsh functions are zsh, not sh.
 shell_scripts() {
@@ -106,7 +113,17 @@ for name in "${selected[@]}"; do
         exit 2
     fi
     printf '\n== %s\n' "$name"
-    "check_$name" || failed+=("$name")
+    # Into a file, not a pipe: the check must run in this shell so its skips are counted.
+    log=$(mktemp)
+    "check_$name" >"$log" 2>&1
+    status=$?
+    cat "$log"
+    if [[ $status -ne 0 ]]; then
+        failed+=("$name")
+        # In GitHub Actions, surface the tail as an annotation on the run and the PR.
+        [[ -z "${GITHUB_ACTIONS:-}" ]] || annotate "./test $name failed" < <(tail -n 30 "$log")
+    fi
+    rm -f "$log"
 done
 
 printf '\n'
@@ -117,6 +134,7 @@ if [[ ${#failed[@]} -gt 0 ]]; then
 fi
 if [[ -n "${TEST_STRICT:-}" && ${#skipped[@]} -gt 0 ]]; then
     printf 'FAILED: skipped checks under TEST_STRICT\n'
+    [[ -z "${GITHUB_ACTIONS:-}" ]] || annotate "./test skipped checks" <<<"${skipped[*]}"
     exit 1
 fi
 printf 'all checks passed\n'
