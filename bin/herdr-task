@@ -23,14 +23,13 @@
 #   herdr-task tag <ticket> [-t TITLE]    tag the current workspace with a ticket created
 #                                         after the work started: sidebar, label, and the
 #                                         branch renamed to carry the id if not pushed yet
-#   herdr-task                            interactive (prefix+t): a ticket link or id, a GitHub
-#                                         issue link, a branch name, or free text describing
-#                                         the task ("fix flaky login test" becomes the title,
-#                                         the first prompt and a slug branch); suggested from
-#                                         $HERDR_TASK_SUGGEST (a clicked link) or the clipboard,
-#                                         project guessed from the ticket's team, the issue's
-#                                         repository or the focused workspace; agent started in
-#                                         the background so the popup closes at once
+#   herdr-task                            interactive (prefix+t): a ticket link or id, a branch
+#                                         name, or free text describing the task ("fix flaky
+#                                         login test" becomes the title, the first prompt and a
+#                                         slug branch); suggested from $HERDR_TASK_SUGGEST (a
+#                                         clicked Linear link) or the clipboard, project guessed
+#                                         from the ticket's team or the focused workspace; agent
+#                                         started in the background so the popup closes at once
 #   herdr-task prs                        (prefix+m) pick from my open PRs and PRs waiting for my
 #                                         review, with CI and review state in the preview; Enter
 #                                         opens it as a task workspace, ctrl-o in the browser
@@ -165,23 +164,16 @@ remember_team_repo() {
     return 0
 }
 
-# Sets ticket_id, ticket_url, ticket_slug, branch from a link, an id, or a branch name, and
-# gh_repo, gh_issue for a GitHub issue link (branch issue-<n>, no Linear tokens).
+# Sets ticket_id, ticket_url, ticket_slug, branch from a link, an id, or a branch name.
 parse_ticket() {
     local ref=$1
-    ticket_id="" ticket_url="" ticket_slug="" gh_repo="" gh_issue=""
+    ticket_id="" ticket_url="" ticket_slug=""
     if [[ "$ref" =~ ^https?://[^/]*linear\.app/[^/]+/issue/([A-Za-z][A-Za-z0-9]*-[0-9]+)(/([^/?#]*))? ]]; then
         ticket_id=$(printf '%s' "${BASH_REMATCH[1]}" | tr '[:lower:]' '[:upper:]')
         ticket_slug=${BASH_REMATCH[3]:-}
         ticket_url=${ref%%[?#]*}
     elif [[ "$ref" =~ ^([A-Za-z][A-Za-z0-9]*-[0-9]+)$ ]]; then
         ticket_id=$(printf '%s' "${BASH_REMATCH[1]}" | tr '[:lower:]' '[:upper:]')
-    elif [[ "$ref" =~ ^https?://github\.com/([^/]+/[^/]+)/issues/([0-9]+) ]]; then
-        gh_repo=${BASH_REMATCH[1]}
-        gh_issue=${BASH_REMATCH[2]}
-        ticket_url="https://github.com/$gh_repo/issues/$gh_issue"
-        branch="issue-$gh_issue"
-        return
     fi
     if [[ -n "$ticket_id" ]]; then
         branch=$(slugify "$ticket_id")
@@ -255,15 +247,13 @@ cmd_start() {
     git -C "$project" rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "$project is not a git repository"
     server_running || die "herdr server is not running; start herdr first"
 
-    local ticket_id ticket_url ticket_slug branch label gh_repo gh_issue
+    local ticket_id ticket_url ticket_slug branch label
     parse_ticket "$ref"
     [[ -n "$url_opt" ]] && ticket_url=$url_opt
     # The sidebar's $linear token carries the ticket id, so the label is the title alone.
     if [[ -n "$ticket_id" ]]; then
         label="${title:-${ticket_slug//-/ }}"
         [[ -n "$label" ]] || label=$ticket_id   # bare id, no title: better the id than nothing
-    elif [[ -n "$gh_issue" ]]; then
-        label="${title:-issue #$gh_issue}"
     else
         label="${title:-$branch}"
     fi
@@ -297,9 +287,6 @@ cmd_start() {
             --token "linear_id=$ticket_id" \
             --token "linear_url=$ticket_url" \
             --token "linear_title=$title" >/dev/null
-    elif [[ -n "$gh_issue" ]]; then
-        "$herdr_bin" workspace report-metadata "$workspace_id" --source "$metadata_source" \
-            --token "issue_url=$ticket_url" >/dev/null
     fi
     [[ -z "$existing_path" ]] && copy_env_files "$project" "$checkout_path"
 
@@ -310,7 +297,7 @@ cmd_start() {
         agent_name="$(slugify "${ticket_id:-$branch}")"
         agent_name="${agent_name:0:26}-${workspace_id#w}"
         if [[ -z "$prompt" ]]; then
-            if [[ -n "$ticket_id" || -n "$gh_issue" ]]; then
+            if [[ -n "$ticket_id" ]]; then
                 prompt="Work on ${ticket_url:-$ticket_id}. Groom it first (groom skill)."
                 [[ -z "$title" ]] && prompt="$prompt After reading it, name this Herdr workspace after its title, without the ticket id (the sidebar shows that already): herdr workspace rename \"\$HERDR_WORKSPACE_ID\" \"<ticket title>\"."
             else
@@ -346,8 +333,7 @@ focused_repo() {
 }
 
 # The ticket to suggest: a clicked link handed over by the task plugin's link handler, else a
-# Linear link or id or a GitHub issue link sitting in the clipboard, so copy-link then prefix+t
-# then Enter works.
+# Linear link or id sitting in the clipboard, so copy-link then prefix+t then Enter works.
 clipboard_ticket() {
     if [[ -n "${HERDR_TASK_SUGGEST:-}" ]]; then
         printf '%s' "$HERDR_TASK_SUGGEST"
@@ -356,14 +342,13 @@ clipboard_ticket() {
     command -v pbpaste >/dev/null 2>&1 || return 0
     local clip
     clip=$(pbpaste 2>/dev/null | head -n1 | tr -d '[:space:]')
-    if [[ "$clip" =~ ^https?://[^/]*linear\.app/[^/]+/issue/ || "$clip" =~ ^[A-Za-z][A-Za-z0-9]*-[0-9]+$ \
-          || "$clip" =~ ^https?://github\.com/[^/]+/[^/]+/issues/[0-9]+ ]]; then
+    if [[ "$clip" =~ ^https?://[^/]*linear\.app/[^/]+/issue/ || "$clip" =~ ^[A-Za-z][A-Za-z0-9]*-[0-9]+$ ]]; then
         printf '%s' "$clip"
     fi
 }
 
 # repo_for_slug <owner/repo>: the repository under the project roots whose origin is that
-# GitHub repository, so a GitHub issue link preselects its project.
+# GitHub repository (the PR picker's project).
 repo_for_slug() {
     [[ -n "${1:-}" && -n "$project_roots" ]] || return 0
     local roots dir remote want
@@ -410,7 +395,7 @@ cmd_tag() {
 }
 
 cmd_interactive() {
-    local project ref suggestion ticket_id ticket_url ticket_slug branch gh_repo gh_issue
+    local project ref suggestion ticket_id ticket_url ticket_slug branch
     suggestion=$(clipboard_ticket)
     # readline (-e) does its own line editing, so backspace works in the popup pty whatever
     # its erase setting. No -i: macOS bash 3.2 lacks it, so the suggestion is the default.
@@ -422,13 +407,11 @@ cmd_interactive() {
     ref=${ref:-$suggestion}
     [[ -n "$ref" ]] || exit 0
     parse_ticket "$ref"
-    # Best guess first: the repo this ticket's team was last started in (or the issue's
-    # repository), then the focused one.
-    project=$(pick_project "$(team_repo "${ticket_id%%-*}")" "$(repo_for_slug "$gh_repo")" "$(focused_repo)") || exit 0
+    # Best guess first: the repo this ticket's team was last started in, then the focused one.
+    project=$(pick_project "$(team_repo "${ticket_id%%-*}")" "$(focused_repo)") || exit 0
     # Free text ("fix flaky login test") is a task, not a ref: keep it as the title and first
-    # prompt, with the slug as the branch. A ticket, an issue link or a valid branch name
-    # passes through.
-    if [[ -z "$ticket_id" && -z "$gh_issue" ]] && ! git check-ref-format --branch "$ref" >/dev/null 2>&1; then
+    # prompt, with the slug as the branch. A ticket or a valid branch name passes through.
+    if [[ -z "$ticket_id" ]] && ! git check-ref-format --branch "$ref" >/dev/null 2>&1; then
         cmd_start "$ref" --project "$project" --title "$ref" --async-agent
     else
         cmd_start "$ref" --project "$project" --async-agent
@@ -617,7 +600,6 @@ cmd_open() {
         <("$herdr_bin" workspace get "$ws" | jq -c '.result.workspace.tokens // {}'))
     links=$(jq -r '
         (if .linear_url and .linear_url != "" then "\(.linear_id // "ticket")\t\(.linear_url)" else empty end),
-        (if .issue_url and .issue_url != "" then "issue #\(.issue_url | split("/") | last)\t\(.issue_url)" else empty end),
         (if .pr_url and .pr_url != "" then (.pr_url | split(" ")[] | "#\(split("/") | last)\t\(.)") else empty end)' <<<"$tokens")
     [[ -n "$links" ]] || fail_open "no ticket or PR reported on pane $pane (start the task with prefix+t, or open a PR from it)"
     if [[ $(wc -l <<<"$links") -eq 1 ]]; then
@@ -665,10 +647,10 @@ load_task() {
     [[ "$branch" != "$base" ]] || fail "$(basename "$repo") is on $base; run this from a task branch"
 }
 
-# Ticket or issue link the workspace was tagged with by start or tag.
+# Linear link the workspace was tagged with by start or tag.
 workspace_ticket_url() {
     "$herdr_bin" workspace get "$1" 2>/dev/null \
-        | jq -r '.result.workspace.tokens // {} | .linear_url // .issue_url // empty' 2>/dev/null || true
+        | jq -r '.result.workspace.tokens.linear_url // empty' 2>/dev/null || true
 }
 
 split_pane() {

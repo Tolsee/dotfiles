@@ -43,7 +43,7 @@ Shared by all coding agents (Claude Code, Codex, Antigravity/Gemini). Source of 
 
 | Key | Does | You run instead |
 | --- | --- | --- |
-| `prefix+t` | Start a task (Linear link or id, GitHub issue link, branch or free text) in its own worktree workspace with an agent | `herdr-task start <ticket> --project <repo> --title "<title>"` (see Git) |
+| `prefix+t` | Start a task (Linear link or id, branch or free text) in its own worktree workspace with an agent | `herdr-task start <ticket> --project <repo> --title "<title>"` (see Git) |
 | `prefix+m` | Pick one of my PRs or a PR waiting for my review: task workspace or browser | `gh search prs --author=@me --state=open` to list; ask first before opening workspaces |
 | `prefix+y` | Review the branch: Codex and a no-edit Claude reviewer in splits | `herdr-task review` (ask first: starts agents) |
 | `prefix+u` | Ship: the task's agent reviews, pushes, opens the PR, babysits it | Nothing: you already do this when the task is done (see Pull Requests) |
@@ -59,7 +59,7 @@ Shared by all coding agents (Claude Code, Codex, Antigravity/Gemini). Source of 
 | `prefix+shift+g` / `prefix+alt+x` | New / remove worktree | Ask first |
 | `prefix+[` / `prefix+e` | Copy mode / scrollback in the editor | |
 | `prefix+?` | Show every binding | |
-| Ctrl-click a link | http(s) opens in the browser; a Linear or GitHub issue link starts a task; a file path opens in nvim at its line | |
+| Ctrl-click a link | http(s) opens in the browser; a Linear link starts a task; a file path opens in nvim at its line | |
 
 - Inside Herdr (`HERDR_ENV=1`), use the `herdr` skill for pane and agent control. Without asking you may inspect (`herdr pane current --current`, `pane list`, `agent list`, `pane read`) and open one sibling pane with `herdr pane split --current --direction right --cwd "$PWD" --no-focus` for a long-running process I should see (dev server, watcher, log tail).
 - Ask first before creating workspaces, tabs or worktrees outside `herdr-task start`, starting another agent, sending input to a pane you did not create, or closing anything. Herdr owns notifications: do not add bell, sound or notify hooks.

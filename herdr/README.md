@@ -14,7 +14,7 @@ One task, one worktree workspace, one agent. `prefix` is Ctrl+B.
 
 | Key | Action |
 | --- | --- |
-| `prefix+t` | Start a task: Linear link or id, GitHub issue link, branch, or free text (prefilled from the clipboard) |
+| `prefix+t` | Start a task: Linear link or id, branch, or free text (prefilled from the clipboard) |
 | `prefix+m` | Pick from my open PRs and PRs waiting for my review (CI and review state in the preview): Enter opens it as a task workspace, ctrl-o in the browser |
 | `prefix+y` | Review the focused task's branch: Codex (`codex-review`) and a no-edit Claude reviewer in splits |
 | `prefix+u` | Ship: prompt the task's agent to review, push, open the PR and babysit it; with no agent, push and open a draft PR |
@@ -62,7 +62,7 @@ logged in; CI shows whatever checks report to GitHub (Buildkite needs its GitHub
 With `ui.mouse_capture = true`, Herdr owns clicks: **Ctrl-click** opens links, Cmd-click does
 not reach Ghostty. Herdr opens `http(s)` itself; the `dotfiles.task` plugin handles the rest:
 
-- Linear and GitHub issue links open the `prefix+t` popup prefilled with the link.
+- Linear links open the `prefix+t` popup prefilled with the link.
 - `file://` links (file paths agents print) open in `$EDITOR` in a split, at the line.
 
 Claude Code only prints real (OSC 8) links when it trusts the terminal, and it does not
@@ -84,7 +84,7 @@ Local plugins, linked by the installer:
 | Plugin | Does |
 | --- | --- |
 | `dotfiles.worktree-cleanup` | Prune a task worktree when its workspace closes |
-| `dotfiles.task` | Review and ship actions, link handlers for Linear, GitHub issues and files |
+| `dotfiles.task` | Review and ship actions, link handlers for Linear and files |
 
 Plugin output: `herdr plugin log list --plugin <id>`. Tests for `herdr-task` and
 `herdr-status` (fake herdr, no server): `bash herdr/tests/herdr-task.test.sh`.

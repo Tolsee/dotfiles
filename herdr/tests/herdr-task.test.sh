@@ -63,12 +63,8 @@ task="$root/bin/herdr-task"
 # shellcheck disable=SC1090
 HERDR_TASK_SOURCE_ONLY=1 source "$task"
 set +e
-parse_ticket "https://github.com/Tolsee/dotfiles/issues/42"
-check "github issue branch" "issue-42 Tolsee/dotfiles 42" "$branch $gh_repo $gh_issue"
-check "github issue url" "https://github.com/Tolsee/dotfiles/issues/42" "$ticket_url"
 parse_ticket "https://linear.app/acme/issue/ABC-12/fix-login?x=1"
 check "linear link" "ABC-12 abc-12-fix-login" "$ticket_id $branch"
-check "linear clears github" "" "$gh_issue"
 
 touch "$tmp/my file.ts"
 parse_file_url "file://$tmp/my%20file.ts#L12"
@@ -84,7 +80,7 @@ project_roots=$tmp
 git -C "$tmp/repo" remote set-url origin git@github.com:Tolsee/Dotfiles.git
 check "repo for slug, case-insensitive" "$tmp/repo" "$(repo_for_slug tolsee/dotfiles)"
 git -C "$tmp/repo" remote set-url origin "$tmp/origin.git"
-HERDR_TASK_SUGGEST=https://github.com/a/b/issues/1
+HERDR_TASK_SUGGEST=https://linear.app/x/issue/ABC-9/y
 check "suggestion prefers the clicked link" "$HERDR_TASK_SUGGEST" "$(clipboard_ticket)"
 unset HERDR_TASK_SUGGEST
 set -e

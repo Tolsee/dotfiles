@@ -2,7 +2,7 @@ id = "dotfiles.task"
 name = "Task"
 version = "0.1.0"
 min_herdr_version = "0.9.0"
-description = "herdr-task from keys and links: review and ship the focused task, start Linear or GitHub issue links as tasks, open file links in the editor."
+description = "herdr-task from keys and links: review and ship the focused task, start Linear links as tasks, open file links in the editor."
 platforms = ["linux", "macos"]
 
 # Bound in config.toml as plugin_action keys (prefix+y, prefix+u).
@@ -44,12 +44,6 @@ command = ["sh", "run.sh", "start"]
 id = "linear-issue"
 title = "Start Linear issue as a task"
 pattern = "^https://linear\\.app/[^/]+/issue/[A-Za-z][A-Za-z0-9]*-[0-9]+"
-action = "start-link"
-
-[[link_handlers]]
-id = "github-issue"
-title = "Start GitHub issue as a task"
-pattern = "^https://github\\.com/[^/]+/[^/]+/issues/[0-9]+"
 action = "start-link"
 
 # Agents print file paths as file:// links (FORCE_HYPERLINK=1); Herdr opens only http(s).
