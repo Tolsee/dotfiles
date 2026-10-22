@@ -299,7 +299,8 @@ cmd_start() {
         # Unique per workspace: a ticket retried after a closed workspace must not collide
         # with an agent name Herdr still holds.
         agent_name="$(slugify "${ticket_id:-$branch}")"
-        agent_name="${agent_name:0:26}-${workspace_id#w}"
+        # Workspace ids carry uppercase letters (w1V); agent names must be lowercase.
+        agent_name="$(slugify "${agent_name:0:26}-${workspace_id#w}")"
         if [[ -z "$prompt" ]]; then
             if [[ -n "$ticket_id" ]]; then
                 prompt="Work on ${ticket_url:-$ticket_id}. Groom it first (groom skill)."
