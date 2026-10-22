@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+  checks: write
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -25,4 +29,22 @@ jobs:
             | sudo tar -xz -C /usr/local/bin fzf
           python -m pip install -q 'tomlkit>=0.13,<1'
       - name: ./test
-        run: TEST_STRICT=1 ./test
+        id: test
+        shell: bash
+        run: TEST_STRICT=1 ./test 2>&1 | tee "$RUNNER_TEMP/test-output.txt"
+      # The output as a "./test output" check on the commit, readable on the PR's Checks tab and
+      # through the API without downloading job logs.
+      - name: Publish output
+        if: always() && steps.test.outcome != 'skipped'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          OUTCOME: ${{ steps.test.outcome }}
+        run: |
+          conclusion=$([ "$OUTCOME" = success ] && echo success || echo failure)
+          summary=$(grep -E '^(FAILED|skipped|all checks passed)' "$RUNNER_TEMP/test-output.txt" | tail -n 3)
+          jq -n --arg sha "$SHA" --arg conclusion "$conclusion" --arg summary "${summary:-no summary}" \
+                --rawfile text <(tail -c 60000 "$RUNNER_TEMP/test-output.txt") \
+            '{name: "./test output", head_sha: $sha, status: "completed", conclusion: $conclusion,
+              output: {title: "./test \($conclusion)", summary: $summary, text: ("```\n" + $text + "\n```")}}' \
+            | gh api "repos/$GITHUB_REPOSITORY/check-runs" --input - >/dev/null
