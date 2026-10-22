@@ -41,6 +41,14 @@ export LC_ALL=en_US.UTF-8
 export LANG=en_US.UTF-8
 
 # ----------
+# Herdr panes
+# ----------
+# Herdr sets TERM_PROGRAM=herdr, which Claude Code does not recognise as hyperlink-capable,
+# so it prints links and file paths as plain text. Force OSC 8 links inside Herdr only; Herdr
+# opens them on Ctrl-click (file:// via the dotfiles.task plugin).
+[[ -n "$HERDR_ENV" ]] && export FORCE_HYPERLINK=1
+
+# ----------
 # spaceship-prompt configurations
 # ----------
 SPACESHIP_DIR_TRUNC=0

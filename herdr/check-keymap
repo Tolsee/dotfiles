@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# Fails when the Herdr keymap docs drift from config.toml:
+#   - a key in a doc's table (first column, `prefix+...`) that config.toml does not bind
+#   - a custom [[keys.command]] key missing from a doc
+#   - one key bound to two actions in config.toml
+# Docs: ai/agents/AGENTS.md (what agents tell me) and herdr/README.md. herdr/install runs it.
+set -euo pipefail
+
+herdr_root=$(cd "$(dirname "$0")" && pwd)
+dotfiles_root=$(cd "$herdr_root/.." && pwd)
+# tomllib needs Python 3.11+; herdr/install exposes Homebrew's python3 in ~/.local/bin.
+export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+
+python3 - "$herdr_root/.config/herdr/config.toml" \
+    "$dotfiles_root/ai/agents/AGENTS.md" "$herdr_root/README.md" <<'PY'
+import re
+import sys
+import tomllib
+from collections import defaultdict
+
+config_path, *docs = sys.argv[1:]
+with open(config_path, "rb") as f:
+    keys = tomllib.load(f).get("keys", {})
+
+bound = defaultdict(list)
+for action, value in keys.items():
+    if action in ("prefix", "command", "indexed"):
+        continue
+    for key in value if isinstance(value, list) else [value]:
+        bound[key].append(action)
+custom = []
+for entry in keys.get("command", []):
+    bound[entry["key"]].append(f"command: {entry.get('description', entry.get('command'))}")
+    custom.append(entry["key"])
+
+errors = [f"config.toml binds {key} twice: {', '.join(actions)}"
+          for key, actions in bound.items() if len(actions) > 1]
+
+for doc in docs:
+    documented = set()
+    with open(doc, encoding="utf-8") as f:
+        for line in f:
+            if not line.startswith("|"):
+                continue
+            first_cell = line.split("|")[1]
+            documented.update(re.findall(r"`(prefix\+[^`]+)`", first_cell))
+    name = "/".join(doc.split("/")[-2:])
+    errors += [f"{name}: {key} is documented but not bound in config.toml"
+               for key in sorted(documented - bound.keys())]
+    errors += [f"{name}: {key} (custom command) is bound but not documented"
+               for key in custom if key not in documented]
+
+for error in errors:
+    print(f"check-keymap: {error}", file=sys.stderr)
+sys.exit(1 if errors else 0)
+PY
