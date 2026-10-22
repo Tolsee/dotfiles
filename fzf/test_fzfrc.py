@@ -39,8 +39,10 @@ def run_fzf(items, keys, *args, prompt="Pick > "):
     for key in keys:
         os.write(master, key.encode())
         drain(master, 0.25)
+    # wait + read, not communicate(): newer Pythons refuse to flush the stdin closed above.
     try:
-        out, _ = proc.communicate(timeout=5)
+        proc.wait(timeout=5)
+        out = proc.stdout.read()
     finally:
         if proc.poll() is None:
             proc.kill()
