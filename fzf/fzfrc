@@ -1,0 +1,11 @@
+# fzf defaults, shared by the shell (.zshrc sets FZF_DEFAULT_OPTS_FILE) and the herdr popups.
+# Vim-style modes. Insert (start): type to filter, ctrl-j/ctrl-k move.
+# Esc goes to normal: j/k move, g/G first/last, ctrl-d/ctrl-u half page, i or / back to insert,
+# q or esc quit. The prompt shows "[N] " while in normal mode.
+--bind=ctrl-j:down,ctrl-k:up
+--bind=j:down,k:up,g:first,G:last,q:abort,ctrl-d:half-page-down,ctrl-u:half-page-up
+--bind='start:unbind(j,k,g,G,q,i,/,ctrl-d,ctrl-u)'
+--bind='esc:transform:case "$FZF_PROMPT" in "[N] "*) echo abort ;; *) echo "change-prompt([N] $FZF_PROMPT)+rebind(j,k,g,G,q,i,/,ctrl-d,ctrl-u)" ;; esac'
+--bind='i:transform:echo "change-prompt(${FZF_PROMPT#"[N] "})+unbind(j,k,g,G,q,i,/,ctrl-d,ctrl-u)"'
+--bind='/:transform:echo "change-prompt(${FZF_PROMPT#"[N] "})+unbind(j,k,g,G,q,i,/,ctrl-d,ctrl-u)"'
+--bind=alt-j:preview-down,alt-k:preview-up

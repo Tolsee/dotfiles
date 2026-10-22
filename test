@@ -1,0 +1,140 @@
+#!/usr/bin/env bash
+# Repo checks. ./test runs all of them; ./test lint config ... runs some.
+#
+#   lint    shellcheck on every shell script (legacy scripts only at error level), zsh -n
+#   config  TOML and JSON files parse; the herdr keymap docs match config.toml
+#   herdr   herdr-task and herdr-status against a fake herdr (herdr/tests)
+#   fzf     the vim-mode fzf defaults, driven through a pseudo-terminal (fzf/test_fzfrc.py)
+#   aws     ai/aws unit tests
+#   mcps    ai/mcps installer tests
+#
+# A check whose tool is missing (fzf, node, tomlkit, ...) is skipped; TEST_STRICT=1 (CI) makes
+# a skip a failure.
+set -uo pipefail
+cd "$(dirname "$0")" || exit 1
+# On the Mac, Homebrew tools and ~/.local/bin's Python 3.11+ (tomllib); CI sets up its own.
+[[ -n "${CI:-}" ]] || export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+
+failed=() skipped=()
+skip() { printf 'skip  %s: %s\n' "$1" "$2"; skipped+=("$1"); }
+# annotate <title> < text: a GitHub Actions error annotation (newlines encoded as %0A).
+annotate() {
+    printf '::error title=%s::' "$1"
+    awk 'BEGIN { ORS = "%0A" } { gsub(/%/, "%25"); gsub(/\r/, ""); print }'
+    echo
+}
+
+# Shell scripts by extension or shebang; zsh functions are zsh, not sh.
+shell_scripts() {
+    git ls-files | while read -r f; do
+        [[ -f "$f" ]] || continue
+        case "$f" in
+            zsh/*) ;;
+            *.sh) echo "$f" ;;
+            *.*) ;;
+            *) head -c 64 "$f" | grep -qE '^#!.*[/ ](ba)?sh( |$)' && echo "$f" ;;
+        esac
+    done
+}
+# Pre-existing scripts with known sh-isms; checked for errors only until someone cleans them.
+legacy="bin/nimble binaries.sh"
+
+check_lint() {
+    command -v shellcheck >/dev/null || { skip lint "shellcheck not installed"; return 0; }
+    local f status=0
+    for f in $(shell_scripts); do
+        if [[ " $legacy " == *" $f "* ]]; then
+            shellcheck -S error "$f" || status=1
+        else
+            shellcheck -S warning "$f" || status=1
+        fi
+    done
+    if command -v zsh >/dev/null; then
+        for f in .zshrc zsh/functions/*.sh; do zsh -n "$f" || status=1; done
+    else
+        skip lint-zsh "zsh not installed"
+    fi
+    return $status
+}
+
+check_config() {
+    python3 - <<'PY' || return 1
+import json, subprocess, sys
+try:
+    import tomllib
+except ModuleNotFoundError:
+    sys.exit("tomllib needs Python 3.11+")
+files = subprocess.run(["git", "ls-files"], capture_output=True, text=True, check=True).stdout.split()
+bad = 0
+for f in files:
+    if f.endswith(".toml") or f.endswith(".json"):
+        try:
+            with open(f, "rb") as fh:
+                (tomllib.load if f.endswith(".toml") else json.load)(fh)
+        except Exception as e:
+            print(f"{f}: {e}", file=sys.stderr)
+            bad = 1
+sys.exit(bad)
+PY
+    ./herdr/check-keymap
+}
+
+check_herdr() {
+    command -v jq >/dev/null || { skip herdr "jq not installed"; return 0; }
+    bash herdr/tests/herdr-task.test.sh
+}
+
+check_fzf() {
+    command -v fzf >/dev/null || { skip fzf "fzf not installed"; return 0; }
+    python3 -W ignore fzf/test_fzfrc.py
+}
+
+check_aws() {
+    if command -v uv >/dev/null; then
+        uv run -q --with 'tomlkit>=0.13,<1' python -m unittest discover -s ai/aws -p 'test_*.py'
+    elif python3 -c 'import tomlkit' 2>/dev/null; then
+        python3 -m unittest discover -s ai/aws -p 'test_*.py'
+    else
+        skip aws "needs uv or python3 with tomlkit"
+    fi
+}
+
+check_mcps() {
+    command -v node >/dev/null || { skip mcps "node not installed"; return 0; }
+    node --test ai/mcps/install.test.cjs
+}
+
+all=(lint config herdr fzf aws mcps)
+selected=("$@")
+[[ ${#selected[@]} -gt 0 ]] || selected=("${all[@]}")
+for name in "${selected[@]}"; do
+    if ! declare -F "check_$name" >/dev/null; then
+        printf 'unknown check: %s (%s)\n' "$name" "${all[*]}" >&2
+        exit 2
+    fi
+    printf '\n== %s\n' "$name"
+    # Into a file, not a pipe: the check must run in this shell so its skips are counted.
+    log=$(mktemp)
+    "check_$name" >"$log" 2>&1
+    status=$?
+    cat "$log"
+    if [[ $status -ne 0 ]]; then
+        failed+=("$name")
+        # In GitHub Actions, surface the tail as an annotation on the run and the PR.
+        [[ -z "${GITHUB_ACTIONS:-}" ]] || annotate "./test $name failed" < <(tail -n 30 "$log")
+    fi
+    rm -f "$log"
+done
+
+printf '\n'
+[[ ${#skipped[@]} -eq 0 ]] || printf 'skipped: %s\n' "${skipped[*]}"
+if [[ ${#failed[@]} -gt 0 ]]; then
+    printf 'FAILED: %s\n' "${failed[*]}"
+    exit 1
+fi
+if [[ -n "${TEST_STRICT:-}" && ${#skipped[@]} -gt 0 ]]; then
+    printf 'FAILED: skipped checks under TEST_STRICT\n'
+    [[ -z "${GITHUB_ACTIONS:-}" ]] || annotate "./test skipped checks" <<<"${skipped[*]}"
+    exit 1
+fi
+printf 'all checks passed\n'

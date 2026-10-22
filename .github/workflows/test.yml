@@ -1,0 +1,50 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+  checks: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install tools
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q zsh shellcheck jq
+          # fzf/fzfrc needs fzf 0.45+ (transform actions); apt ships older.
+          curl -fsSL https://github.com/junegunn/fzf/releases/download/v0.67.0/fzf-0.67.0-linux_amd64.tar.gz \
+            | sudo tar -xz -C /usr/local/bin fzf
+          python -m pip install -q 'tomlkit>=0.13,<1'
+      - name: ./test
+        id: test
+        shell: bash
+        run: TEST_STRICT=1 ./test 2>&1 | tee "$RUNNER_TEMP/test-output.txt"
+      # The output as a "./test output" check on the commit, readable on the PR's Checks tab and
+      # through the API without downloading job logs.
+      - name: Publish output
+        if: always() && steps.test.outcome != 'skipped'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          OUTCOME: ${{ steps.test.outcome }}
+        run: |
+          conclusion=$([ "$OUTCOME" = success ] && echo success || echo failure)
+          summary=$(grep -E '^(FAILED|skipped|all checks passed)' "$RUNNER_TEMP/test-output.txt" | tail -n 3)
+          jq -n --arg sha "$SHA" --arg conclusion "$conclusion" --arg summary "${summary:-no summary}" \
+                --rawfile text <(tail -c 60000 "$RUNNER_TEMP/test-output.txt") \
+            '{name: "./test output", head_sha: $sha, status: "completed", conclusion: $conclusion,
+              output: {title: "./test \($conclusion)", summary: $summary, text: ("```\n" + $text + "\n```")}}' \
+            | gh api "repos/$GITHUB_REPOSITORY/check-runs" --input - >/dev/null

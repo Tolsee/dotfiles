@@ -38,6 +38,10 @@ fi
 ln -s "$config_source" "$config_file"
 ln -nsf "$dotfiles_root/bin/herdr-sessionizer" "$HOME/bin/herdr-sessionizer"
 ln -nsf "$dotfiles_root/bin/herdr-task" "$HOME/bin/herdr-task"
+ln -nsf "$dotfiles_root/bin/herdr-status" "$HOME/bin/herdr-status"
+# Vim-mode fzf defaults for the popups' pickers (also linked by ./setup for the shell).
+mkdir -p "$HOME/.config/fzf"
+ln -nsf "$dotfiles_root/fzf/fzfrc" "$HOME/.config/fzf/fzfrc"
 
 herdr config check
 
@@ -49,6 +53,8 @@ done
 
 # Sidebar plugin: agent logos, state spinners and the workspace > tab > agent tree.
 # Its own setup step is never run; the rows are hand-merged in config.toml.
+# A list of one, so another marketplace plugin is a one-word change.
+# shellcheck disable=SC2043
 for plugin in testy-cool/herdr-sidebar-config; do
     if ! herdr plugin list 2>/dev/null | grep -qi "${plugin##*/}"; then
         herdr plugin install --yes "$plugin"
@@ -59,6 +65,15 @@ done
 if ! herdr plugin list 2>/dev/null | grep -q 'dotfiles.worktree-cleanup'; then
     herdr plugin link "$herdr_root/plugins/worktree-cleanup"
 fi
+
+# Task plugin: review/ship actions (prefix+y, prefix+u) and Ctrl-click handlers for Linear and
+# GitHub issue links and file:// links.
+if ! herdr plugin list 2>/dev/null | grep -q 'dotfiles.task'; then
+    herdr plugin link "$herdr_root/plugins/task"
+fi
+
+# The keymap in AGENTS.md and README.md must match config.toml; warn, never block setup.
+"$herdr_root/check-keymap" || printf 'herdr: keymap docs are out of date (see above)\n' >&2
 
 # The sidebar plugin draws logos from its own font (U+E1A0-U+E1AB, mapped in the Ghostty
 # config). Copy it to the user font folder and pin the plugin to font mode; Ghostty needs a

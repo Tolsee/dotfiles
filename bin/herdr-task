@@ -26,13 +26,28 @@
 #   herdr-task                            interactive (prefix+t): a ticket link or id, a branch
 #                                         name, or free text describing the task ("fix flaky
 #                                         login test" becomes the title, the first prompt and a
-#                                         slug branch); suggested from the clipboard, project
-#                                         guessed from the ticket's team or the focused
-#                                         workspace; agent started in the background so the
-#                                         popup closes at once
+#                                         slug branch); suggested from $HERDR_TASK_SUGGEST (a
+#                                         clicked Linear link) or the clipboard, project guessed
+#                                         from the ticket's team or the focused workspace; agent
+#                                         started in the background so the popup closes at once
+#   herdr-task prs                        (prefix+m) pick from my open PRs and PRs waiting for my
+#                                         review, with CI and review state in the preview; Enter
+#                                         opens it as a task workspace, ctrl-o in the browser
+#   herdr-task review [options]           (prefix+y) open reviewer splits beside the pane: Codex
+#                                         (~/.codex-review/codex-review) and a Claude agent told
+#                                         not to edit, both on the branch diff against its base
+#       --with codex|claude|both  reviewers (default: $HERDR_TASK_REVIEWERS or both)
+#       --base BRANCH             base branch (default: origin's default branch)
+#       --pane PANE               task pane (default: this pane, else the focused one)
+#   herdr-task ship [--pane PANE]         (prefix+u) ask the task's agent to ship (review, push,
+#                                         open the PR, babysit); with no agent in the workspace,
+#                                         push the branch and open a draft PR directly
+#   herdr-task open-file <url> [--pane P] open a file:// link in $EDITOR in a split beside the
+#                                         pane, at the line the link carries (#L12 or :12)
 #
 # HERDR_TASK_PROJECT_ROOTS (colon separated, private shell config) lists directories to scan
-# for repositories in the interactive project picker.
+# for repositories in the interactive project picker. As plugin actions (dotfiles.task),
+# review, ship and open-file report through Herdr notifications instead of stderr.
 
 set -euo pipefail
 
@@ -50,6 +65,10 @@ agent_label() {
     esac
 }
 metadata_source="herdr-task"
+# Popups start zsh without .zshrc, so pick up the shared vim-mode fzf defaults here.
+if [[ -z "${FZF_DEFAULT_OPTS_FILE:-}" && -f "$HOME/.config/fzf/fzfrc" ]]; then
+    export FZF_DEFAULT_OPTS_FILE="$HOME/.config/fzf/fzfrc"
+fi
 project_roots="${HERDR_TASK_PROJECT_ROOTS:-}"
 default_agent="${HERDR_TASK_AGENT:-claude}"
 
@@ -87,6 +106,13 @@ PY
 
 die() { printf 'herdr-task: %s\n' "$*" >&2; exit 1; }
 note() { printf 'herdr-task: %s\n' "$*" >&2; }
+# say: a note, plus a notification when run as a plugin action, where nobody sees stderr.
+say() {
+    note "$*"
+    [[ -n "${HERDR_PLUGIN_ACTION_ID:-}" ]] || return 0
+    "$herdr_bin" notification show "herdr-task" --body "$*" >/dev/null 2>&1 || true
+}
+fail() { say "$*"; exit 1; }
 
 for dependency in jq git; do
     command -v "$dependency" >/dev/null 2>&1 || die "$dependency is required"
@@ -177,8 +203,10 @@ copy_env_files() {
         done
 }
 
+# start_agent <name> <kind> <pane> <prompt> [label]: label is appended to the sidebar agent
+# name ("review" for reviewers).
 start_agent() {
-    local agent_name=$1 agent=$2 root_pane=$3 prompt=$4 started=false
+    local agent_name=$1 agent=$2 root_pane=$3 prompt=$4 label=${5:-} started=false
     # The new pane's shell takes a moment to become an available agent target.
     local err=""
     for _ in $(seq 1 20); do
@@ -191,11 +219,11 @@ start_agent() {
     [[ "$started" == true ]] || note "agent start failed for pane $root_pane: ${err:-no output}"
     if [[ "$started" == true ]]; then
         "$herdr_bin" pane report-metadata "$root_pane" --source "$metadata_source" \
-            --display-agent "$(agent_label "$agent")" >/dev/null 2>&1 || true
+            --display-agent "$(agent_label "$agent")${label:+ $label}" >/dev/null 2>&1 || true
         if "$herdr_bin" agent prompt "$agent_name" "$prompt" >/dev/null; then
-            note "started $agent as '$agent_name' with the ticket prompt"
+            note "started $agent as '$agent_name' with its first prompt"
         else
-            note "started $agent as '$agent_name'; paste the ticket yourself"
+            note "started $agent as '$agent_name'; paste the prompt yourself"
         fi
     else
         note "could not start $agent in pane $root_pane; the workspace is ready anyway"
@@ -308,14 +336,36 @@ focused_repo() {
     [[ -n "$cwd" ]] && git -C "$cwd" rev-parse --show-toplevel 2>/dev/null || true
 }
 
-# A Linear link or issue id sitting in the clipboard, so copy-link then prefix+t then Enter works.
+# The ticket to suggest: a clicked link handed over by the task plugin's link handler, else a
+# Linear link or id sitting in the clipboard, so copy-link then prefix+t then Enter works.
 clipboard_ticket() {
+    if [[ -n "${HERDR_TASK_SUGGEST:-}" ]]; then
+        printf '%s' "$HERDR_TASK_SUGGEST"
+        return
+    fi
     command -v pbpaste >/dev/null 2>&1 || return 0
     local clip
     clip=$(pbpaste 2>/dev/null | head -n1 | tr -d '[:space:]')
     if [[ "$clip" =~ ^https?://[^/]*linear\.app/[^/]+/issue/ || "$clip" =~ ^[A-Za-z][A-Za-z0-9]*-[0-9]+$ ]]; then
         printf '%s' "$clip"
     fi
+}
+
+# repo_for_slug <owner/repo>: the repository under the project roots whose origin is that
+# GitHub repository (the PR picker's project).
+repo_for_slug() {
+    [[ -n "${1:-}" && -n "$project_roots" ]] || return 0
+    local roots dir remote want
+    want=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
+    IFS=: read -r -a roots <<<"$project_roots"
+    while read -r dir; do
+        remote=$(git -C "$dir" remote get-url origin 2>/dev/null) || continue
+        remote=$(printf '%s' "$remote" | sed -E 's#^.*github\.com[:/]##; s#\.git$##' | tr '[:upper:]' '[:lower:]')
+        if [[ "$remote" == "$want" ]]; then
+            printf '%s\n' "$dir"
+            return
+        fi
+    done < <(find "${roots[@]}" -mindepth 2 -maxdepth 2 -name .git 2>/dev/null | sed 's#/\.git$##')
 }
 
 # Tag the current workspace with a ticket created after the work started (groom skill):
@@ -352,7 +402,9 @@ cmd_interactive() {
     local project ref suggestion ticket_id ticket_url ticket_slug branch
     suggestion=$(clipboard_ticket)
     # readline (-e) does its own line editing, so backspace works in the popup pty whatever
-    # its erase setting. No -i: macOS bash 3.2 lacks it, so the suggestion is the default.
+    # its erase setting; vi keys like everywhere else (Esc for normal mode). No -i: macOS
+    # bash 3.2 lacks it, so the suggestion is the default.
+    set -o vi
     if [[ -n "$suggestion" ]]; then
         read -e -r -p "Ticket link, id, branch, or task [$suggestion]: " ref || exit 0
     else
@@ -526,8 +578,6 @@ stop_codex_brokers() {
     done
 }
 
-# Links reported onto the focused pane: the ticket (herdr-task, SessionStart hook) and the PRs
-# (Claude status line). Sidebar rows are not clickable, so this is the keyboard route.
 # In a popup the window closes with the script, so hold the message until a key is pressed.
 fail_open() {
     note "$*"
@@ -538,8 +588,21 @@ fail_open() {
     exit 1
 }
 
+# Octicons (Nerd Font) for the link picker, as raw UTF-8 bytes like the glyphs above.
+i_pr=$(printf '\357\220\207')        # nf-oct-git_pull_request
+i_diff=$(printf '\357\223\222')      # nf-oct-file_diff
+i_checks=$(printf '\357\221\236')    # nf-oct-checklist
+i_fail=$(printf '\357\224\257')      # nf-oct-x_circle
+i_compare=$(printf '\357\221\277')   # nf-oct-git_compare
+i_branch=$(printf '\357\220\230')    # nf-oct-git_branch
+
+# open [PANE] (prefix+o): every link for the focused task in one picker. The Linear ticket; the
+# branch's PR with its changed files, its checks and each failing check's own page; PRs the
+# Claude status line reported; the branch on GitHub (and a compare view before there is a PR).
+# Sidebar rows and the tab bar are not clickable, so this is the keyboard route. Enter opens,
+# ctrl-y copies; a single link opens straight away.
 cmd_open() {
-    local ws pane=${1:-} tokens links choice url
+    local ws pane=${1:-} tokens links cwd="" branch="" slug="" base pr_json="" out key choice url
     if [[ -z "$pane" ]]; then
         ws=$("$herdr_bin" workspace list | jq -r '.result.workspaces[] | select(.focused) | .workspace_id' | head -n1)
         [[ -n "$ws" ]] || fail_open "no focused workspace"
@@ -552,18 +615,351 @@ cmd_open() {
     tokens=$(jq -cs '.[1] + .[0]' \
         <("$herdr_bin" pane get "$pane" | jq -c '.result.pane.tokens // {}') \
         <("$herdr_bin" workspace get "$ws" | jq -c '.result.workspace.tokens // {}'))
-    links=$(jq -r '
-        (if .linear_url and .linear_url != "" then "\(.linear_id // "ticket")\t\(.linear_url)" else empty end),
-        (if .pr_url and .pr_url != "" then (.pr_url | split(" ")[] | "#\(split("/") | last)\t\(.)") else empty end)' <<<"$tokens")
-    [[ -n "$links" ]] || fail_open "no ticket or PR reported on pane $pane (start the task with prefix+t, or open a PR from it)"
+
+    cwd=$("$herdr_bin" pane get "$pane" 2>/dev/null | jq -r '.result.pane.foreground_cwd // .result.pane.cwd // empty')
+    if [[ -n "$cwd" ]] && git -C "$cwd" rev-parse --git-dir >/dev/null 2>&1; then
+        branch=$(git -C "$cwd" symbolic-ref --short -q HEAD || true)
+        slug=$(git -C "$cwd" remote get-url origin 2>/dev/null | sed -E 's#\.git$##' | sed -nE 's#^.*github\.com[:/]([^/]+/[^/]+)$#\1#p')
+        base=$(git -C "$cwd" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##' || true)
+        [[ "$branch" == "${base:-main}" ]] && branch=""
+    fi
+    if [[ -n "$branch" ]] && command -v gh >/dev/null 2>&1; then
+        pr_json=$(cd "$cwd" && gh pr view --json number,url,title,statusCheckRollup 2>/dev/null) || pr_json=""
+    fi
+
+    # "label<TAB>url" lines, first occurrence of a url wins.
+    links=$( {
+        jq -r --arg ticket "$linear_glyph" '
+            if (.linear_url // "") != "" then
+                "\($ticket)  \(.linear_id // "ticket")  \(.linear_title // "")\t\(.linear_url)"
+            else empty end' <<<"$tokens"
+        if [[ -n "$pr_json" ]]; then
+            jq -r --arg pr "$i_pr" --arg diff "$i_diff" --arg checks "$i_checks" --arg fail "$i_fail" '
+                .url as $u
+                | "\($pr)  #\(.number)  \(.title)\t\($u)",
+                  "\($diff)  changed files\t\($u)/files",
+                  "\($checks)  checks\t\($u)/checks",
+                  (.statusCheckRollup[]?
+                    | select((if (.conclusion // "") != "" then .conclusion else (.state // "") end | ascii_upcase) as $c
+                        | ["FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE"] | index($c))
+                    | "\($fail)  failing: \(.name // .context)\t\(.detailsUrl // .targetUrl // "")")' <<<"$pr_json"
+        elif [[ -n "$slug" && -n "$branch" ]]; then
+            printf '%s  compare %s\thttps://github.com/%s/compare/%s...%s\n' "$i_compare" "$branch" "$slug" "${base:-main}" "$branch"
+        fi
+        jq -r --arg pr "$i_pr" '
+            if (.pr_url // "") != "" then (.pr_url | split(" ")[] | "\($pr)  #\(split("/") | last)\t\(.)") else empty end' <<<"$tokens"
+        if [[ -n "$slug" && -n "$branch" ]]; then
+            printf '%s  branch %s\thttps://github.com/%s/tree/%s\n' "$i_branch" "$branch" "$slug" "$branch"
+        fi
+    } | awk -F'\t' 'NF == 2 && $2 != "" && !seen[$2]++')
+
+    [[ -n "$links" ]] || fail_open "no ticket, PR or GitHub branch for pane $pane (start the task with prefix+t)"
     if [[ $(wc -l <<<"$links") -eq 1 ]]; then
-        choice=$links
+        key="" choice=$links
     else
         command -v fzf >/dev/null 2>&1 || fail_open "fzf is required to pick between several links"
-        choice=$(fzf --delimiter=$'\t' --with-nth=1 --prompt='Open > ' <<<"$links") || exit 0
+        # shellcheck disable=SC2016
+        out=$(fzf --delimiter=$'\t' --with-nth=1 --prompt='Open > ' --expect=ctrl-y \
+            --header='enter: open   ctrl-y: copy link' \
+            --preview='u={2}; case "$u" in
+                */checks) gh pr checks "${u%/checks}" 2>/dev/null ;;
+                */pull/*) gh pr view "${u%/files}" 2>/dev/null | head -n 40 ;;
+                *) printf "%s\n" "$u" ;;
+            esac' --preview-window='down,50%,wrap' <<<"$links") || exit 0
+        key=$(head -n1 <<<"$out")
+        choice=$(sed -n 2p <<<"$out")
+        [[ -n "$choice" ]] || exit 0
     fi
     url=${choice#*$'\t'}
+    if [[ "$key" == ctrl-y ]]; then
+        if command -v pbcopy >/dev/null 2>&1; then
+            printf '%s' "$url" | pbcopy
+            "$herdr_bin" notification show "Link copied" --body "$url" >/dev/null 2>&1 || true
+        else
+            fail_open "no pbcopy; the link is $url"
+        fi
+        return
+    fi
     "${HERDR_TASK_OPEN:-open}" "$url"
+}
+
+# target_pane [PANE]: the given pane, else the calling pane (an agent's own pane, or the
+# focused pane a plugin action runs for), else the focused pane.
+target_pane() {
+    local pane=${1:-${HERDR_PANE_ID:-}} ws
+    if [[ -z "$pane" ]]; then
+        ws=$("$herdr_bin" workspace list | jq -r '.result.workspaces[] | select(.focused) | .workspace_id' | head -n1)
+        [[ -n "$ws" ]] || return 1
+        pane=$("$herdr_bin" pane list --workspace "$ws" | jq -r '[.result.panes[] | select(.focused)][0].pane_id // empty')
+    fi
+    [[ -n "$pane" ]] || return 1
+    printf '%s\n' "$pane"
+}
+
+# load_pane <pane>: sets pane_ws and pane_cwd (the foreground process's cwd when Herdr knows it).
+load_pane() {
+    local info
+    info=$("$herdr_bin" pane get "$1" 2>/dev/null) || fail "pane $1 not found"
+    pane_ws=$(jq -r '.result.pane.workspace_id // empty' <<<"$info")
+    pane_ws=${pane_ws:-${1%%:*}}
+    pane_cwd=$(jq -r '.result.pane.foreground_cwd // .result.pane.cwd // empty' <<<"$info")
+    [[ -n "$pane_cwd" ]] || fail "no working directory for pane $1"
+}
+
+# load_task <pane>: load_pane, then sets repo, branch and base for the pane's task branch.
+load_task() {
+    load_pane "$1"
+    repo=$(git -C "$pane_cwd" rev-parse --show-toplevel 2>/dev/null) || fail "pane $1 is not in a git repository"
+    branch=$(git -C "$repo" symbolic-ref --short -q HEAD) || fail "detached HEAD in $repo; check out the task branch"
+    if [[ -z "${base:-}" ]]; then
+        base=$(git -C "$repo" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##' || true)
+        base=${base:-main}
+    fi
+    [[ "$branch" != "$base" ]] || fail "$(basename "$repo") is on $base; run this from a task branch"
+}
+
+# Linear link the workspace was tagged with by start or tag.
+workspace_ticket_url() {
+    "$herdr_bin" workspace get "$1" 2>/dev/null \
+        | jq -r '.result.workspace.tokens.linear_url // empty' 2>/dev/null || true
+}
+
+split_pane() {
+    "$herdr_bin" pane split "$1" --direction "$2" --cwd "$3" --no-focus | jq -re '.result.pane.pane_id'
+}
+
+# Reviewer panes per workspace, so a second review does not stack more splits, and ship never
+# mistakes a reviewer for the task's agent.
+review_state_dir="${XDG_CACHE_HOME:-$HOME/.cache}/herdr-task/reviews"
+
+# live_reviewers <workspace>: reviewer panes recorded for the workspace that still exist.
+live_reviewers() {
+    local state="$review_state_dir/$1" p
+    [[ -f "$state" ]] || return 0
+    while read -r p; do
+        [[ -n "$p" ]] && "$herdr_bin" pane get "$p" >/dev/null 2>&1 && printf '%s\n' "$p"
+    done < "$state"
+    return 0
+}
+
+cmd_review() {
+    local with=${HERDR_TASK_REVIEWERS:-both} base="" pane=""
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --with) with=$2; shift 2 ;;
+            --base) base=$2; shift 2 ;;
+            --pane) pane=$2; shift 2 ;;
+            *) fail "unknown option: $1" ;;
+        esac
+    done
+    case $with in codex|claude|both) ;; *) fail "--with takes codex, claude or both" ;; esac
+    server_running || fail "herdr server is not running; start herdr first"
+    pane=$(target_pane "$pane") || fail "no focused pane"
+    local pane_ws pane_cwd repo branch
+    load_task "$pane"
+
+    if [[ -n "$(live_reviewers "$pane_ws")" ]]; then
+        say "reviewers for this workspace are still open; close them (prefix+x) for a fresh review"
+        return 0
+    fi
+    git -C "$repo" fetch --quiet origin "$base" 2>/dev/null || note "fetch failed, reviewing against the local origin/$base"
+    if git -C "$repo" diff --quiet "origin/$base...HEAD" 2>/dev/null && [[ -z "$(git -C "$repo" status --porcelain)" ]]; then
+        fail "$branch has no changes against origin/$base"
+    fi
+
+    local ticket prompt first claude_pane="" codex_pane="" suffix
+    ticket=$(workspace_ticket_url "$pane_ws")
+    prompt="Review branch $branch against origin/$base as a reviewer, not its author: read git diff origin/$base...HEAD and any uncommitted changes${ticket:+, and check them against $ticket}. Do not edit, commit or push anything. Report findings ranked by severity (bugs and regressions, risky behavior changes, missing tests, then nits), each with file:line, and end with one line: ready to ship or not."
+    first=$(split_pane "$pane" right "$repo") || fail "could not split pane $pane"
+    case $with in
+        claude) claude_pane=$first ;;
+        codex) codex_pane=$first ;;
+        both)
+            claude_pane=$first
+            codex_pane=$(split_pane "$first" down "$repo") || fail "could not split pane $first"
+            ;;
+    esac
+    mkdir -p "$review_state_dir"
+    printf '%s\n' $claude_pane $codex_pane > "$review_state_dir/$pane_ws"
+    suffix=$(slugify "${pane_ws#w}")
+
+    if [[ -n "$codex_pane" ]]; then
+        "$herdr_bin" pane rename "$codex_pane" "codex review" >/dev/null 2>&1 || true
+        if [[ -x "$HOME/.codex-review/codex-review" ]]; then
+            # Runs in the pane's shell (~ expands there); the notification marks the end of a
+            # non-agent process.
+            # shellcheck disable=SC2088
+            "$herdr_bin" pane run "$codex_pane" "~/.codex-review/codex-review --wait --base $(printf %q "origin/$base") --scope branch; herdr notification show 'Codex review done' --body $(printf %q "$branch") --sound done" >/dev/null \
+                || note "could not start the Codex review in pane $codex_pane"
+        else
+            start_agent "rv-codex-$suffix" codex "$codex_pane" "$prompt" review
+        fi
+    fi
+    if [[ -n "$claude_pane" ]]; then
+        "$herdr_bin" pane rename "$claude_pane" "claude review" >/dev/null 2>&1 || true
+        start_agent "rv-claude-$suffix" claude "$claude_pane" "$prompt" review
+    fi
+    say "review of $branch started ($with)"
+}
+
+# task_agent <pane> <workspace>: the agent to ship with, as a pane id: the given pane when it
+# hosts an agent, else the first other agent in the workspace. Reviewers never count.
+task_agent() {
+    local reviewers p
+    reviewers=$(live_reviewers "$2")
+    for p in "$1" $("$herdr_bin" pane list --workspace "$2" 2>/dev/null | jq -r '.result.panes[].pane_id'); do
+        grep -qxF "$p" <<<"$reviewers" && continue
+        if "$herdr_bin" agent get "$p" >/dev/null 2>&1; then
+            printf '%s\n' "$p"
+            return
+        fi
+    done
+}
+
+cmd_ship() {
+    local pane=""
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --pane) pane=$2; shift 2 ;;
+            *) fail "unknown option: $1" ;;
+        esac
+    done
+    server_running || fail "herdr server is not running; start herdr first"
+    pane=$(target_pane "$pane") || fail "no focused pane"
+    local pane_ws pane_cwd repo branch base="" agent err
+    load_task "$pane"
+
+    agent=$(task_agent "$pane" "$pane_ws")
+    if [[ -n "$agent" ]]; then
+        # The agent already knows how (AGENTS.md, Pull Requests); this only says "now".
+        if err=$("$herdr_bin" agent prompt "$agent" "Ship this task now: follow the Pull Requests rules in AGENTS.md (local Codex review unless this PR already had one for the current logic, push, open or update the PR with the ticket id, then babysit it to merge-ready). If anything is unfinished or failing, stop and tell me instead." 2>&1 >/dev/null); then
+            say "asked the task agent to ship $branch"
+        elif [[ "$err" == *agent_blocked* ]]; then
+            fail "the task agent is waiting for you; answer it, then ship again"
+        else
+            fail "could not prompt the task agent: $err"
+        fi
+        return 0
+    fi
+
+    # No agent here: do the mechanical part only, as a draft for a human to finish.
+    [[ -z "$(git -C "$repo" status --porcelain)" ]] || fail "uncommitted changes in $branch; commit them first"
+    git -C "$repo" push --quiet -u origin HEAD 2>/dev/null || fail "git push failed for $branch"
+    command -v gh >/dev/null 2>&1 || fail "pushed $branch; gh is required to open the PR"
+    local pr ticket ticket_id title body
+    if pr=$(cd "$repo" && gh pr view "$branch" --json url --jq .url 2>/dev/null) && [[ -n "$pr" ]]; then
+        say "pushed $branch to $pr"
+    else
+        ticket=$(workspace_ticket_url "$pane_ws")
+        ticket_id=$("$herdr_bin" workspace get "$pane_ws" 2>/dev/null | jq -r '.result.workspace.tokens.linear_id // empty' 2>/dev/null || true)
+        title=$(git -C "$repo" log --reverse --format=%s "origin/$base..HEAD" | head -n1)
+        title=${title:-$branch}
+        [[ -n "$ticket_id" && "$title" != *"$ticket_id"* ]] && title="$ticket_id: $title"
+        body="${ticket:+$ticket
+
+}## Changes
+
+$(git -C "$repo" log --reverse --format='- %s' "origin/$base..HEAD")"
+        pr=$(cd "$repo" && gh pr create --draft --base "$base" --head "$branch" --title "$title" --body "$body" 2>/dev/null | tail -n1) \
+            || fail "pushed $branch; gh pr create failed"
+        say "opened draft PR $pr"
+    fi
+    "$herdr_bin" pane report-metadata "$pane" --source "$metadata_source" \
+        --token "pr=#${pr##*/}" --token "pr_url=$pr" >/dev/null 2>&1 || true
+}
+
+# open-file <file-url> [--pane PANE]: the task plugin's file:// link handler (Ctrl-click on a
+# path an agent printed). Herdr opens only http(s) links itself.
+cmd_open_file() {
+    local url=${1:-} pane="" path line=""
+    [[ -n "$url" ]] || fail "usage: herdr-task open-file <file-url> [--pane PANE]"
+    shift
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --pane) pane=$2; shift 2 ;;
+            *) fail "unknown option: $1" ;;
+        esac
+    done
+    parse_file_url "$url"
+    [[ -e "$path" ]] || fail "no such file: $path"
+    pane=$(target_pane "$pane") || fail "no focused pane"
+    local dir new
+    if [[ -d "$path" ]]; then dir=$path; else dir=$(dirname "$path"); fi
+    # Focused, unlike reviewer splits: the click asked to look at this file now.
+    new=$("$herdr_bin" pane split "$pane" --direction right --cwd "$dir" --focus | jq -re '.result.pane.pane_id') \
+        || fail "could not split pane $pane"
+    "$herdr_bin" pane run "$new" "exec \${EDITOR:-nvim}${line:+ +$line} $(printf %q "$path")" >/dev/null \
+        || fail "could not open $path"
+}
+
+# parse_file_url <url>: sets path and line. file:///p and file://host/p both give /p; the line
+# comes from #L12, #12, or a trailing :12 (or :12:5) when the path without it exists.
+parse_file_url() {
+    path=${1#file://}
+    path=/${path#*/}
+    line=""
+    case $path in
+        *'#L'*) line=${path##*#L}; path=${path%%#L*} ;;
+        *'#'*) line=${path##*#}; path=${path%%#*} ;;
+    esac
+    path=$(printf '%b' "${path//%/\\x}")
+    # ERE has no lazy match, so strip a :col first, then the :line.
+    if [[ ! -e "$path" && "$path" =~ ^(.+):([0-9]+):[0-9]+$ ]]; then
+        path=${BASH_REMATCH[1]}
+        line=${BASH_REMATCH[2]}
+    elif [[ ! -e "$path" && "$path" =~ ^(.+):([0-9]+)$ ]]; then
+        path=${BASH_REMATCH[1]}
+        line=${BASH_REMATCH[2]}
+    fi
+    if [[ "$line" =~ ^[0-9]+ ]]; then line=${BASH_REMATCH[0]}; else line=""; fi
+}
+
+# prs: picker over my open PRs and PRs waiting for my review, newest first, with gh's view and
+# checks in the preview. Enter opens the PR as a task workspace (reusing its worktree when
+# there is one): mine with an agent told to pick it up, reviews with a plain shell for
+# prefix+y. ctrl-o opens it in the browser instead.
+cmd_prs() {
+    command -v gh >/dev/null 2>&1 || fail_open "gh is required"
+    command -v fzf >/dev/null 2>&1 || fail_open "fzf is required"
+    local rows out key choice kind slug number url title project branch
+    rows=$( {
+        gh search prs --author=@me --state=open --limit 50 \
+            --json number,title,repository,url,isDraft,updatedAt \
+            --jq '.[] | [.updatedAt, "mine", .repository.nameWithOwner, (.number | tostring), (if .isDraft then "draft " else "" end) + .title, .url] | @tsv'
+        gh search prs --review-requested=@me --state=open --limit 50 \
+            --json number,title,repository,url,updatedAt \
+            --jq '.[] | [.updatedAt, "review", .repository.nameWithOwner, (.number | tostring), .title, .url] | @tsv'
+    } 2>/dev/null | sort -r | awk -F'\t' '!seen[$6]++ { printf "%-6s  %s#%s  %s\t%s\t%s\t%s\t%s\n", $2, $3, $4, $5, $2, $3, $4, $6 }')
+    [[ -n "$rows" ]] || fail_open "no open PRs of yours or waiting for your review (or gh is not logged in)"
+    out=$(fzf --delimiter=$'\t' --with-nth=1 --expect=ctrl-o --prompt='PR > ' \
+        --header='enter: task workspace   ctrl-o: browser' \
+        --preview='gh pr view {5} 2>/dev/null | head -n 30; echo; gh pr checks {5} 2>/dev/null | head -n 20' \
+        --preview-window='down,60%,wrap' <<<"$rows") || exit 0
+    key=$(head -n1 <<<"$out")
+    choice=$(sed -n 2p <<<"$out")
+    [[ -n "$choice" ]] || exit 0
+    IFS=$'\t' read -r _ kind slug number url <<<"$choice"
+    if [[ "$key" == ctrl-o ]]; then
+        "${HERDR_TASK_OPEN:-open}" "$url"
+        return
+    fi
+
+    project=$(repo_for_slug "$slug")
+    [[ -n "$project" ]] || fail_open "$slug is not under HERDR_TASK_PROJECT_ROOTS; ctrl-o opens it in the browser"
+    read -r branch title < <(gh pr view "$url" --json headRefName,title,isCrossRepository \
+        --jq 'if .isCrossRepository then "" else "\(.headRefName) \(.title)" end' 2>/dev/null) || true
+    [[ -n "$branch" ]] || fail_open "$slug#$number comes from a fork or could not be read; ctrl-o opens it in the browser"
+    # The worktree checks out the PR's branch, so make sure it exists locally.
+    if ! git -C "$project" show-ref --verify -q "refs/heads/$branch"; then
+        git -C "$project" fetch -q origin "$branch:$branch" || fail_open "could not fetch $branch"
+    fi
+    if [[ "$kind" == review ]]; then
+        cmd_start "$branch" --project "$project" --title "$title" --no-agent
+        note "review workspace for $slug#$number ready; prefix+y starts the reviewers"
+    else
+        cmd_start "$branch" --project "$project" --title "$title" --async-agent \
+            --prompt "Pick up $url: read the PR, its CI and its review threads, then take it to merge-ready per the Pull Requests rules."
+    fi
 }
 
 # Sourced for tests: define the functions and stop.
@@ -578,9 +974,13 @@ case "${1:-}" in
     branch) parse_ticket "${2:?ticket}"; printf '%s\n' "$branch" ;;
     tag) cmd_tag "${2:?ticket}" "${@:3}" ;;
     open) cmd_open "${2:-}" ;;
-    agent-start) start_agent "$2" "$3" "$4" "$5" ;;
+    agent-start) start_agent "$2" "$3" "$4" "$5" "${6:-}" ;;
+    prs) cmd_prs ;;
+    review) shift; cmd_review "$@" ;;
+    ship) shift; cmd_ship "$@" ;;
+    open-file) shift; cmd_open_file "$@" ;;
     prune) cmd_prune "${2:-}" ;;
     prune-worktree) cmd_prune_worktree "${2:?worktree path}" ;;
     -h|--help) awk 'NR > 1 && !/^#/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "$0" ;;
-    *) die "unknown command: $1 (start, tag, open, prune, prune-worktree, branch)" ;;
+    *) die "unknown command: $1 (start, tag, open, prs, review, ship, open-file, prune, prune-worktree, branch)" ;;
 esac
