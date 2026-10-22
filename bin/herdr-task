@@ -65,6 +65,10 @@ agent_label() {
     esac
 }
 metadata_source="herdr-task"
+# Popups start zsh without .zshrc, so pick up the shared vim-mode fzf defaults here.
+if [[ -z "${FZF_DEFAULT_OPTS_FILE:-}" && -f "$HOME/.config/fzf/fzfrc" ]]; then
+    export FZF_DEFAULT_OPTS_FILE="$HOME/.config/fzf/fzfrc"
+fi
 project_roots="${HERDR_TASK_PROJECT_ROOTS:-}"
 default_agent="${HERDR_TASK_AGENT:-claude}"
 
@@ -398,7 +402,9 @@ cmd_interactive() {
     local project ref suggestion ticket_id ticket_url ticket_slug branch
     suggestion=$(clipboard_ticket)
     # readline (-e) does its own line editing, so backspace works in the popup pty whatever
-    # its erase setting. No -i: macOS bash 3.2 lacks it, so the suggestion is the default.
+    # its erase setting; vi keys like everywhere else (Esc for normal mode). No -i: macOS
+    # bash 3.2 lacks it, so the suggestion is the default.
+    set -o vi
     if [[ -n "$suggestion" ]]; then
         read -e -r -p "Ticket link, id, branch, or task [$suggestion]: " ref || exit 0
     else
@@ -572,8 +578,6 @@ stop_codex_brokers() {
     done
 }
 
-# Links reported onto the focused pane: the ticket (herdr-task, SessionStart hook) and the PRs
-# (Claude status line). Sidebar rows are not clickable, so this is the keyboard route.
 # In a popup the window closes with the script, so hold the message until a key is pressed.
 fail_open() {
     note "$*"
@@ -584,8 +588,21 @@ fail_open() {
     exit 1
 }
 
+# Octicons (Nerd Font) for the link picker, as raw UTF-8 bytes like the glyphs above.
+i_pr=$(printf '\357\220\207')        # nf-oct-git_pull_request
+i_diff=$(printf '\357\223\222')      # nf-oct-file_diff
+i_checks=$(printf '\357\221\236')    # nf-oct-checklist
+i_fail=$(printf '\357\224\257')      # nf-oct-x_circle
+i_compare=$(printf '\357\221\277')   # nf-oct-git_compare
+i_branch=$(printf '\357\220\230')    # nf-oct-git_branch
+
+# open [PANE] (prefix+o): every link for the focused task in one picker. The Linear ticket; the
+# branch's PR with its changed files, its checks and each failing check's own page; PRs the
+# Claude status line reported; the branch on GitHub (and a compare view before there is a PR).
+# Sidebar rows and the tab bar are not clickable, so this is the keyboard route. Enter opens,
+# ctrl-y copies; a single link opens straight away.
 cmd_open() {
-    local ws pane=${1:-} tokens links choice url
+    local ws pane=${1:-} tokens links cwd="" branch="" slug="" base pr_json="" out key choice url
     if [[ -z "$pane" ]]; then
         ws=$("$herdr_bin" workspace list | jq -r '.result.workspaces[] | select(.focused) | .workspace_id' | head -n1)
         [[ -n "$ws" ]] || fail_open "no focused workspace"
@@ -598,17 +615,71 @@ cmd_open() {
     tokens=$(jq -cs '.[1] + .[0]' \
         <("$herdr_bin" pane get "$pane" | jq -c '.result.pane.tokens // {}') \
         <("$herdr_bin" workspace get "$ws" | jq -c '.result.workspace.tokens // {}'))
-    links=$(jq -r '
-        (if .linear_url and .linear_url != "" then "\(.linear_id // "ticket")\t\(.linear_url)" else empty end),
-        (if .pr_url and .pr_url != "" then (.pr_url | split(" ")[] | "#\(split("/") | last)\t\(.)") else empty end)' <<<"$tokens")
-    [[ -n "$links" ]] || fail_open "no ticket or PR reported on pane $pane (start the task with prefix+t, or open a PR from it)"
+
+    cwd=$("$herdr_bin" pane get "$pane" 2>/dev/null | jq -r '.result.pane.foreground_cwd // .result.pane.cwd // empty')
+    if [[ -n "$cwd" ]] && git -C "$cwd" rev-parse --git-dir >/dev/null 2>&1; then
+        branch=$(git -C "$cwd" symbolic-ref --short -q HEAD || true)
+        slug=$(git -C "$cwd" remote get-url origin 2>/dev/null | sed -E 's#\.git$##' | sed -nE 's#^.*github\.com[:/]([^/]+/[^/]+)$#\1#p')
+        base=$(git -C "$cwd" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##' || true)
+        [[ "$branch" == "${base:-main}" ]] && branch=""
+    fi
+    if [[ -n "$branch" ]] && command -v gh >/dev/null 2>&1; then
+        pr_json=$(cd "$cwd" && gh pr view --json number,url,title,statusCheckRollup 2>/dev/null) || pr_json=""
+    fi
+
+    # "label<TAB>url" lines, first occurrence of a url wins.
+    links=$( {
+        jq -r --arg ticket "$linear_glyph" '
+            if (.linear_url // "") != "" then
+                "\($ticket)  \(.linear_id // "ticket")  \(.linear_title // "")\t\(.linear_url)"
+            else empty end' <<<"$tokens"
+        if [[ -n "$pr_json" ]]; then
+            jq -r --arg pr "$i_pr" --arg diff "$i_diff" --arg checks "$i_checks" --arg fail "$i_fail" '
+                .url as $u
+                | "\($pr)  #\(.number)  \(.title)\t\($u)",
+                  "\($diff)  changed files\t\($u)/files",
+                  "\($checks)  checks\t\($u)/checks",
+                  (.statusCheckRollup[]?
+                    | select((if (.conclusion // "") != "" then .conclusion else (.state // "") end | ascii_upcase) as $c
+                        | ["FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE"] | index($c))
+                    | "\($fail)  failing: \(.name // .context)\t\(.detailsUrl // .targetUrl // "")")' <<<"$pr_json"
+        elif [[ -n "$slug" && -n "$branch" ]]; then
+            printf '%s  compare %s\thttps://github.com/%s/compare/%s...%s\n' "$i_compare" "$branch" "$slug" "${base:-main}" "$branch"
+        fi
+        jq -r --arg pr "$i_pr" '
+            if (.pr_url // "") != "" then (.pr_url | split(" ")[] | "\($pr)  #\(split("/") | last)\t\(.)") else empty end' <<<"$tokens"
+        if [[ -n "$slug" && -n "$branch" ]]; then
+            printf '%s  branch %s\thttps://github.com/%s/tree/%s\n' "$i_branch" "$branch" "$slug" "$branch"
+        fi
+    } | awk -F'\t' 'NF == 2 && $2 != "" && !seen[$2]++')
+
+    [[ -n "$links" ]] || fail_open "no ticket, PR or GitHub branch for pane $pane (start the task with prefix+t)"
     if [[ $(wc -l <<<"$links") -eq 1 ]]; then
-        choice=$links
+        key="" choice=$links
     else
         command -v fzf >/dev/null 2>&1 || fail_open "fzf is required to pick between several links"
-        choice=$(fzf --delimiter=$'\t' --with-nth=1 --prompt='Open > ' <<<"$links") || exit 0
+        # shellcheck disable=SC2016
+        out=$(fzf --delimiter=$'\t' --with-nth=1 --prompt='Open > ' --expect=ctrl-y \
+            --header='enter: open   ctrl-y: copy link' \
+            --preview='u={2}; case "$u" in
+                */checks) gh pr checks "${u%/checks}" 2>/dev/null ;;
+                */pull/*) gh pr view "${u%/files}" 2>/dev/null | head -n 40 ;;
+                *) printf "%s\n" "$u" ;;
+            esac' --preview-window='down,50%,wrap' <<<"$links") || exit 0
+        key=$(head -n1 <<<"$out")
+        choice=$(sed -n 2p <<<"$out")
+        [[ -n "$choice" ]] || exit 0
     fi
     url=${choice#*$'\t'}
+    if [[ "$key" == ctrl-y ]]; then
+        if command -v pbcopy >/dev/null 2>&1; then
+            printf '%s' "$url" | pbcopy
+            "$herdr_bin" notification show "Link copied" --body "$url" >/dev/null 2>&1 || true
+        else
+            fail_open "no pbcopy; the link is $url"
+        fi
+        return
+    fi
     "${HERDR_TASK_OPEN:-open}" "$url"
 }
 

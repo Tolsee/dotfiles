@@ -18,7 +18,7 @@ One task, one worktree workspace, one agent. `prefix` is Ctrl+B.
 | `prefix+m` | Pick from my open PRs and PRs waiting for my review (CI and review state in the preview): Enter opens it as a task workspace, ctrl-o in the browser |
 | `prefix+y` | Review the focused task's branch: Codex (`codex-review`) and a no-edit Claude reviewer in splits |
 | `prefix+u` | Ship: prompt the task's agent to review, push, open the PR and babysit it; with no agent, push and open a draft PR |
-| `prefix+o` | Open the focused agent's ticket, issue or PR in the browser |
+| `prefix+o` | Links for the focused task: ticket, PR, changed files, checks, each failing check, the branch (compare view before a PR); Enter opens, ctrl-y copies |
 | `prefix+alt+t` | Prune task worktrees whose branch has merged |
 | `prefix+f` | Pick a project directory and open or focus its workspace |
 
@@ -27,6 +27,10 @@ are open only says so; close them (`prefix+x`) for a fresh review. Reviewers are
 `rv-claude-<n>` / `rv-codex-<n>` and labelled "review" in the sidebar. Set
 `HERDR_TASK_REVIEWERS=codex` or `claude` for a single reviewer. Agents can run the same
 flows: `herdr-task review`, `herdr-task ship`, `herdr-task --help`.
+
+Every picker (these popups and fzf in the shell) uses `fzf/fzfrc`: type to filter,
+ctrl-j/ctrl-k move; Esc for normal mode, where j/k move, g/G jump to the ends, ctrl-d/ctrl-u
+page, i or / go back to typing, q or Esc quit. The `prefix+t` prompt edits with vi keys.
 
 ## Moving around
 
@@ -52,10 +56,13 @@ either doc. Agents read the AGENTS.md table, so keep both in step with the confi
 
 ## Status bar
 
-`ui.tab_bar_right` shows the zoom pill, `~/bin/herdr-status`, and the time. The status reads
-like `▲ 2 blocked · #123 draft · changes requested · CI ✗`: agents waiting for you across the
-session, then the focused pane's branch PR (draft, review decision, CI rollup). It needs `gh`
-logged in; CI shows whatever checks report to GitHub (Buildkite needs its GitHub integration).
+`ui.tab_bar_right` shows the zoom pill, `~/bin/herdr-status`, and the time. The status uses
+GitHub's own Octicons (Nerd Font) and reads like `(alert) 2 blocked · (draft PR) #123 ·
+(diff) changes · (x) CI`: agents waiting for you across the session, then the focused pane's
+branch PR (open, draft, merged or closed icon), its review decision and CI rollup. It needs
+`gh` logged in; CI shows whatever checks report to GitHub (Buildkite needs its GitHub
+integration). Herdr strips escape sequences from the tab bar, so nothing in it is clickable:
+`prefix+o` opens the same PR.
 
 ## Links
 

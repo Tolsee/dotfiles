@@ -59,6 +59,20 @@ export HERDR_BIN_PATH="$tmp/bin/herdr" XDG_CACHE_HOME="$tmp/cache" HOME="$tmp/ho
 export HERDR_PANE_ID=w1:p1 HERDR_WORKSPACE_ID=w1
 task="$root/bin/herdr-task"
 
+cat > "$tmp/bin/record-open" <<'EOF'
+#!/bin/sh
+printf '%s\n' "$1" >> "$FAKE_OPENED"
+EOF
+# fzf stub: records what it was offered, prints the --expect key line ($FAKE_FZF_KEY) and
+# picks the first line matching $FAKE_FZF_PICK.
+cat > "$tmp/bin/fzf" <<'EOF'
+#!/bin/sh
+printf '%s\n' "${FAKE_FZF_KEY:-}"
+tee "$FAKE_FZF_IN" | grep -m1 -e "$FAKE_FZF_PICK"
+EOF
+chmod +x "$tmp/bin/record-open" "$tmp/bin/fzf"
+export FAKE_OPENED="$tmp/opened" FAKE_FZF_IN="$tmp/fzf-in" PATH="$tmp/bin:$PATH"
+
 # --- parsing (sourced) ---
 # shellcheck disable=SC1090
 HERDR_TASK_SOURCE_ONLY=1 source "$task"
@@ -134,7 +148,28 @@ check "open-file on a missing file" 1 "$(grep -c 'no such file' <<<"$out")"
 # --- status line ---
 printf '#!/bin/sh\necho %s\n' "'{\"number\":7,\"state\":\"OPEN\",\"isDraft\":true,\"reviewDecision\":\"APPROVED\",\"statusCheckRollup\":[{\"conclusion\":\"FAILURE\"}]}'" > "$tmp/home/gh"
 mkdir -p "$HOME/bin" && mv "$tmp/home/gh" "$HOME/bin/gh" && chmod +x "$HOME/bin/gh"
-check "status line" "▲ 1 blocked · #7 draft · approved · CI ✗" "$(bash "$root/bin/herdr-status")"
+expected="$(printf '\357\220\241') 1 blocked · $(printf '\357\223\235') #7 · $(printf '\357\222\236') approved · $(printf '\357\221\247') CI"
+check "status line (octicons)" "$expected" "$(bash "$root/bin/herdr-status")"
+
+# --- open: one picker for ticket, PR, files, checks, failing checks, branch ---
+cat > "$tmp/bin/gh" <<'EOF'
+#!/bin/sh
+echo '{"number":7,"url":"https://github.com/o/r/pull/7","title":"Fix login","statusCheckRollup":[{"name":"build","conclusion":"FAILURE","detailsUrl":"https://ci.example/build/1"},{"name":"lint","conclusion":"SUCCESS","detailsUrl":"https://ci.example/lint/1"}]}'
+EOF
+chmod +x "$tmp/bin/gh"
+git -C "$tmp/repo" remote set-url origin git@github.com:o/r.git
+: > "$tmp/opened"
+FAKE_FZF_PICK="failing: build" HERDR_TASK_OPEN="$tmp/bin/record-open" bash "$task" open w1:p1 >/dev/null 2>&1
+check "open: failing check opens its own page" "https://ci.example/build/1" "$(cat "$tmp/opened")"
+offered=$(cut -f2 "$tmp/fzf-in" | tr '\n' ' ')
+check "open: every link, ticket first, deduped" \
+    "https://linear.app/x/issue/ABC-1/fix https://github.com/o/r/pull/7 https://github.com/o/r/pull/7/files https://github.com/o/r/pull/7/checks https://ci.example/build/1 https://github.com/o/r/tree/abc-1-fix " \
+    "$offered"
+printf '#!/bin/sh\nexit 1\n' > "$tmp/bin/gh"
+: > "$tmp/opened"
+FAKE_FZF_PICK=compare HERDR_TASK_OPEN="$tmp/bin/record-open" bash "$task" open w1:p1 >/dev/null 2>&1
+check "open: compare view before a PR" "https://github.com/o/r/compare/main...abc-1-fix" "$(cat "$tmp/opened")"
+git -C "$tmp/repo" remote set-url origin "$tmp/origin.git"
 
 printf '\n%d failure(s)\n' "$failures"
 [[ $failures -eq 0 ]]

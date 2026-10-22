@@ -39,6 +39,9 @@ ln -s "$config_source" "$config_file"
 ln -nsf "$dotfiles_root/bin/herdr-sessionizer" "$HOME/bin/herdr-sessionizer"
 ln -nsf "$dotfiles_root/bin/herdr-task" "$HOME/bin/herdr-task"
 ln -nsf "$dotfiles_root/bin/herdr-status" "$HOME/bin/herdr-status"
+# Vim-mode fzf defaults for the popups' pickers (also linked by ./setup for the shell).
+mkdir -p "$HOME/.config/fzf"
+ln -nsf "$dotfiles_root/fzf/fzfrc" "$HOME/.config/fzf/fzfrc"
 
 herdr config check
 
@@ -50,6 +53,7 @@ done
 
 # Sidebar plugin: agent logos, state spinners and the workspace > tab > agent tree.
 # Its own setup step is never run; the rows are hand-merged in config.toml.
+# shellcheck disable=SC2043 # a list of one, so another marketplace plugin is a one-word change
 for plugin in testy-cool/herdr-sidebar-config; do
     if ! herdr plugin list 2>/dev/null | grep -qi "${plugin##*/}"; then
         herdr plugin install --yes "$plugin"

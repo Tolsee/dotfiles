@@ -47,7 +47,7 @@ Shared by all coding agents (Claude Code, Codex, Antigravity/Gemini). Source of 
 | `prefix+m` | Pick one of my PRs or a PR waiting for my review: task workspace or browser | `gh search prs --author=@me --state=open` to list; ask first before opening workspaces |
 | `prefix+y` | Review the branch: Codex and a no-edit Claude reviewer in splits | `herdr-task review` (ask first: starts agents) |
 | `prefix+u` | Ship: the task's agent reviews, pushes, opens the PR, babysits it | Nothing: you already do this when the task is done (see Pull Requests) |
-| `prefix+o` | Open the task's ticket or PR in the browser | Print the link instead |
+| `prefix+o` | Pick from the task's links (ticket, PR, changed files, checks, failing checks, branch) | Print the link instead |
 | `prefix+alt+t` | Prune task worktrees whose branch has merged | `herdr-task prune` (ask first) |
 | `prefix+f` | Open or focus a project workspace | Ask first |
 | `prefix+a` / `prefix+shift+a` | Next / previous agent | |

@@ -11,6 +11,10 @@ for dependency in fzf jq; do
 done
 
 herdr_bin="${HERDR_BIN_PATH:-$(command -v herdr || true)}"
+# Popups start zsh without .zshrc, so pick up the shared vim-mode fzf defaults here.
+if [[ -z "${FZF_DEFAULT_OPTS_FILE:-}" && -f "$HOME/.config/fzf/fzfrc" ]]; then
+    export FZF_DEFAULT_OPTS_FILE="$HOME/.config/fzf/fzfrc"
+fi
 if [[ -z "$herdr_bin" ]]; then
     printf 'herdr-sessionizer: herdr is required\n' >&2
     exit 1

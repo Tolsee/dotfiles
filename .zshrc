@@ -48,6 +48,9 @@ export LANG=en_US.UTF-8
 # opens them on Ctrl-click (file:// via the dotfiles.task plugin).
 [[ -n "$HERDR_ENV" ]] && export FORCE_HYPERLINK=1
 
+# fzf defaults with vim modes (fzf/fzfrc, linked by ./setup); herdr popups load it themselves.
+[[ -f "$HOME/.config/fzf/fzfrc" ]] && export FZF_DEFAULT_OPTS_FILE="$HOME/.config/fzf/fzfrc"
+
 # ----------
 # spaceship-prompt configurations
 # ----------
