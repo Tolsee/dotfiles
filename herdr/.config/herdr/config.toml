@@ -42,7 +42,19 @@ close_pane = "prefix+x"
 zoom = "prefix+z"
 resize_mode = "prefix+shift+r"
 new_worktree = "prefix+shift+g"
-remove_worktree = "prefix+shift+x"
+# prefix+shift+x is Herdr's default close_tab; keep that and move this off it.
+remove_worktree = "prefix+alt+x"
+# Agent navigation: blocked agents are one key away instead of a sidebar scan.
+next_agent = "prefix+a"
+previous_agent = "prefix+shift+a"
+focus_agent = "prefix+alt+1..9"
+# Herdr defaults, pinned because AGENTS.md and herdr/README.md document them
+# (herdr/check-keymap fails on any documented key that is not bound here).
+help = "prefix+?"
+copy_mode = "prefix+["
+edit_scrollback = "prefix+e"
+rename_tab = "prefix+shift+t"
+close_tab = "prefix+shift+x"
 
 # Popups load the private shell config (HERDR_TASK_PROJECT_ROOTS and friends) without the
 # full interactive zsh startup, so they open instantly.
@@ -71,13 +83,28 @@ description = "open the focused agent's ticket or PR in the browser"
 width = "50%"
 height = "30%"
 
+# prefix+shift+t is Herdr's default rename_tab; keep that and move prune off it.
 [[keys.command]]
-key = "prefix+shift+t"
+key = "prefix+alt+t"
 type = "popup"
 command = "zsh -c 'source ~/.secrets.zshrc 2>/dev/null; exec ~/bin/herdr-task prune'"
 description = "remove task worktrees whose branch has merged"
 width = "80%"
 height = "80%"
+
+# dotfiles.task plugin (herdr/plugins/task). Both act on the focused pane's task and report
+# through a notification, so nothing opens over the work.
+[[keys.command]]
+key = "prefix+y"
+type = "plugin_action"
+command = "dotfiles.task.review"
+description = "review the branch: Codex and Claude reviewers in splits"
+
+[[keys.command]]
+key = "prefix+u"
+type = "plugin_action"
+command = "dotfiles.task.ship"
+description = "ship: the task's agent reviews, pushes and opens the PR"
 
 [ui]
 mouse_capture = true
@@ -88,6 +115,15 @@ pane_scrollbars = false
 pane_gaps = false
 hide_tab_bar_when_single_tab = false
 tab_bar_position = "top"
+# Right end of the tab row: zoom pill, then ~/bin/herdr-status (blocked agents across the
+# session, the focused branch's PR, review state and CI), then the time. Commands run on the
+# server and only their last line shows, as plain text.
+tab_bar_right = [
+  { type = "zoom" },
+  { type = "command", command = "~/bin/herdr-status", interval_seconds = 20, timeout_seconds = 10 },
+  { type = "datetime", format = "%H:%M" },
+]
+tab_bar_right_separator = " · "
 accent = "#82aaff"
 agent_panel_sort = "spaces"
 
