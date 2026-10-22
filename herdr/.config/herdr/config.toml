@@ -48,6 +48,10 @@ remove_worktree = "prefix+alt+x"
 next_agent = "prefix+a"
 previous_agent = "prefix+shift+a"
 focus_agent = "prefix+alt+1..9"
+# tmux muscle memory: last pane (task agent <-> reviewer), previous/next workspace.
+last_pane = "prefix+;"
+previous_workspace = "prefix+("
+next_workspace = "prefix+)"
 # Herdr defaults, pinned because AGENTS.md and herdr/README.md document them
 # (herdr/check-keymap fails on any documented key that is not bound here).
 help = "prefix+?"
@@ -92,6 +96,14 @@ description = "remove task worktrees whose branch has merged"
 width = "80%"
 height = "80%"
 
+[[keys.command]]
+key = "prefix+m"
+type = "popup"
+command = "zsh -c 'source ~/.secrets.zshrc 2>/dev/null; exec ~/bin/herdr-task prs'"
+description = "pick one of my PRs or a PR waiting for my review: task workspace or browser"
+width = "90%"
+height = "90%"
+
 # dotfiles.task plugin (herdr/plugins/task). Both act on the focused pane's task and report
 # through a notification, so nothing opens over the work.
 [[keys.command]]
@@ -115,6 +127,8 @@ pane_scrollbars = false
 pane_gaps = false
 hide_tab_bar_when_single_tab = false
 tab_bar_position = "top"
+# Name the agent on split borders, so a task agent and its reviewers are told apart.
+show_agent_labels_on_pane_borders = true
 # Right end of the tab row: zoom pill, then ~/bin/herdr-status (blocked agents across the
 # session, the focused branch's PR, review state and CI), then the time. Commands run on the
 # server and only their last line shows, as plain text.

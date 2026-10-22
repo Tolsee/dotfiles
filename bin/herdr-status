@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# One line for Herdr's tab bar (ui.tab_bar_right): agents waiting for you across the session,
+# then the focused pane's branch PR with its draft, review and CI state, e.g.
+#   ▲ 2 blocked · #123 draft · changes requested · CI ✗
+# Herdr runs it on the server with the active pane's context, keeps only the last line and
+# strips styling. Every lookup degrades to printing less, never an error.
+
+set -uo pipefail
+export PATH="$HOME/bin:$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+command -v jq >/dev/null 2>&1 || exit 0
+herdr_bin=${HERDR_BIN_PATH:-$(command -v herdr || true)}
+[[ -n "$herdr_bin" ]] || exit 0
+
+parts=()
+
+blocked=$("$herdr_bin" pane list 2>/dev/null | jq '[.result.panes[]? | select(.agent_status == "blocked")] | length' 2>/dev/null)
+[[ "${blocked:-0}" =~ ^[1-9] ]] && parts+=("▲ $blocked blocked")
+
+# The focused pane's checkout: the calling context's pane, else the focused one.
+pane=${HERDR_PANE_ID:-}
+if [[ -z "$pane" ]]; then
+    ws=$("$herdr_bin" workspace list 2>/dev/null | jq -r '.result.workspaces[]? | select(.focused) | .workspace_id' 2>/dev/null | head -n1)
+    [[ -n "$ws" ]] && pane=$("$herdr_bin" pane list --workspace "$ws" 2>/dev/null | jq -r '[.result.panes[]? | select(.focused)][0].pane_id // empty' 2>/dev/null)
+fi
+cwd=""
+[[ -n "$pane" ]] && cwd=$("$herdr_bin" pane get "$pane" 2>/dev/null | jq -r '.result.pane.foreground_cwd // .result.pane.cwd // empty' 2>/dev/null)
+cwd=${cwd:-$PWD}
+
+repo=$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null)
+branch=""
+[[ -n "$repo" ]] && branch=$(git -C "$repo" symbolic-ref --short -q HEAD 2>/dev/null)
+base=""
+[[ -n "$repo" ]] && base=$(git -C "$repo" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##')
+
+if [[ -n "$branch" && "$branch" != "${base:-main}" ]] && command -v gh >/dev/null 2>&1; then
+    pr=$(cd "$repo" && gh pr view "$branch" --json number,state,isDraft,reviewDecision,statusCheckRollup 2>/dev/null)
+    if [[ -z "$pr" ]]; then
+        parts+=("no PR")
+    else
+        parts+=("$(jq -r '
+            def check_state:
+                if (.conclusion // "") != "" then .conclusion
+                elif (.state // "") != "" then .state
+                else (.status // "") end | ascii_upcase;
+            [.statusCheckRollup[]? | check_state] as $s
+            | [
+                "#\(.number)" + (if .isDraft then " draft" else "" end),
+                (if .state == "MERGED" then "merged"
+                 elif .state == "CLOSED" then "closed"
+                 else
+                    ({"APPROVED": "approved", "CHANGES_REQUESTED": "changes requested",
+                      "REVIEW_REQUIRED": "review needed"}[.reviewDecision // ""] // empty)
+                 end),
+                (if .state != "OPEN" or ($s | length) == 0 then empty
+                 elif any($s[]; IN("FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE")) then "CI ✗"
+                 elif any($s[]; IN("SUCCESS", "NEUTRAL", "SKIPPED") | not) then "CI …"
+                 else "CI ✓" end)
+              ] | join(" · ")' <<<"$pr" 2>/dev/null)")
+    fi
+fi
+
+[[ ${#parts[@]} -gt 0 ]] || exit 0
+out=${parts[0]}
+for part in "${parts[@]:1}"; do
+    [[ -n "$part" ]] && out="$out · $part"
+done
+printf '%s\n' "$out"

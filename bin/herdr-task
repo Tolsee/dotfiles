@@ -31,6 +31,9 @@
 #                                         project guessed from the ticket's team, the issue's
 #                                         repository or the focused workspace; agent started in
 #                                         the background so the popup closes at once
+#   herdr-task prs                        (prefix+m) pick from my open PRs and PRs waiting for my
+#                                         review, with CI and review state in the preview; Enter
+#                                         opens it as a task workspace, ctrl-o in the browser
 #   herdr-task review [options]           (prefix+y) open reviewer splits beside the pane: Codex
 #                                         (~/.codex-review/codex-review) and a Claude agent told
 #                                         not to edit, both on the branch diff against its base
@@ -730,7 +733,9 @@ cmd_review() {
     if [[ -n "$codex_pane" ]]; then
         "$herdr_bin" pane rename "$codex_pane" "codex review" >/dev/null 2>&1 || true
         if [[ -x "$HOME/.codex-review/codex-review" ]]; then
-            # Runs in the pane's shell; the notification marks the end of a non-agent process.
+            # Runs in the pane's shell (~ expands there); the notification marks the end of a
+            # non-agent process.
+            # shellcheck disable=SC2088
             "$herdr_bin" pane run "$codex_pane" "~/.codex-review/codex-review --wait --base $(printf %q "origin/$base") --scope branch; herdr notification show 'Codex review done' --body $(printf %q "$branch") --sound done" >/dev/null \
                 || note "could not start the Codex review in pane $codex_pane"
         else
@@ -845,11 +850,63 @@ parse_file_url() {
         *'#'*) line=${path##*#}; path=${path%%#*} ;;
     esac
     path=$(printf '%b' "${path//%/\\x}")
-    if [[ ! -e "$path" && "$path" =~ ^(.+):([0-9]+)(:[0-9]+)?$ ]]; then
+    # ERE has no lazy match, so strip a :col first, then the :line.
+    if [[ ! -e "$path" && "$path" =~ ^(.+):([0-9]+):[0-9]+$ ]]; then
+        path=${BASH_REMATCH[1]}
+        line=${BASH_REMATCH[2]}
+    elif [[ ! -e "$path" && "$path" =~ ^(.+):([0-9]+)$ ]]; then
         path=${BASH_REMATCH[1]}
         line=${BASH_REMATCH[2]}
     fi
     if [[ "$line" =~ ^[0-9]+ ]]; then line=${BASH_REMATCH[0]}; else line=""; fi
+}
+
+# prs: picker over my open PRs and PRs waiting for my review, newest first, with gh's view and
+# checks in the preview. Enter opens the PR as a task workspace (reusing its worktree when
+# there is one): mine with an agent told to pick it up, reviews with a plain shell for
+# prefix+y. ctrl-o opens it in the browser instead.
+cmd_prs() {
+    command -v gh >/dev/null 2>&1 || fail_open "gh is required"
+    command -v fzf >/dev/null 2>&1 || fail_open "fzf is required"
+    local rows out key choice kind slug number url title project branch
+    rows=$( {
+        gh search prs --author=@me --state=open --limit 50 \
+            --json number,title,repository,url,isDraft,updatedAt \
+            --jq '.[] | [.updatedAt, "mine", .repository.nameWithOwner, (.number | tostring), (if .isDraft then "draft " else "" end) + .title, .url] | @tsv'
+        gh search prs --review-requested=@me --state=open --limit 50 \
+            --json number,title,repository,url,updatedAt \
+            --jq '.[] | [.updatedAt, "review", .repository.nameWithOwner, (.number | tostring), .title, .url] | @tsv'
+    } 2>/dev/null | sort -r | awk -F'\t' '!seen[$6]++ { printf "%-6s  %s#%s  %s\t%s\t%s\t%s\t%s\n", $2, $3, $4, $5, $2, $3, $4, $6 }')
+    [[ -n "$rows" ]] || fail_open "no open PRs of yours or waiting for your review (or gh is not logged in)"
+    out=$(fzf --delimiter=$'\t' --with-nth=1 --expect=ctrl-o --prompt='PR > ' \
+        --header='enter: task workspace   ctrl-o: browser' \
+        --preview='gh pr view {5} 2>/dev/null | head -n 30; echo; gh pr checks {5} 2>/dev/null | head -n 20' \
+        --preview-window='down,60%,wrap' <<<"$rows") || exit 0
+    key=$(head -n1 <<<"$out")
+    choice=$(sed -n 2p <<<"$out")
+    [[ -n "$choice" ]] || exit 0
+    IFS=$'\t' read -r _ kind slug number url <<<"$choice"
+    if [[ "$key" == ctrl-o ]]; then
+        "${HERDR_TASK_OPEN:-open}" "$url"
+        return
+    fi
+
+    project=$(repo_for_slug "$slug")
+    [[ -n "$project" ]] || fail_open "$slug is not under HERDR_TASK_PROJECT_ROOTS; ctrl-o opens it in the browser"
+    read -r branch title < <(gh pr view "$url" --json headRefName,title,isCrossRepository \
+        --jq 'if .isCrossRepository then "" else "\(.headRefName) \(.title)" end' 2>/dev/null) || true
+    [[ -n "$branch" ]] || fail_open "$slug#$number comes from a fork or could not be read; ctrl-o opens it in the browser"
+    # The worktree checks out the PR's branch, so make sure it exists locally.
+    if ! git -C "$project" show-ref --verify -q "refs/heads/$branch"; then
+        git -C "$project" fetch -q origin "$branch:$branch" || fail_open "could not fetch $branch"
+    fi
+    if [[ "$kind" == review ]]; then
+        cmd_start "$branch" --project "$project" --title "$title" --no-agent
+        note "review workspace for $slug#$number ready; prefix+y starts the reviewers"
+    else
+        cmd_start "$branch" --project "$project" --title "$title" --async-agent \
+            --prompt "Pick up $url: read the PR, its CI and its review threads, then take it to merge-ready per the Pull Requests rules."
+    fi
 }
 
 # Sourced for tests: define the functions and stop.
@@ -865,11 +922,12 @@ case "${1:-}" in
     tag) cmd_tag "${2:?ticket}" "${@:3}" ;;
     open) cmd_open "${2:-}" ;;
     agent-start) start_agent "$2" "$3" "$4" "$5" "${6:-}" ;;
+    prs) cmd_prs ;;
     review) shift; cmd_review "$@" ;;
     ship) shift; cmd_ship "$@" ;;
     open-file) shift; cmd_open_file "$@" ;;
     prune) cmd_prune "${2:-}" ;;
     prune-worktree) cmd_prune_worktree "${2:?worktree path}" ;;
     -h|--help) awk 'NR > 1 && !/^#/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "$0" ;;
-    *) die "unknown command: $1 (start, tag, open, review, ship, open-file, prune, prune-worktree, branch)" ;;
+    *) die "unknown command: $1 (start, tag, open, prs, review, ship, open-file, prune, prune-worktree, branch)" ;;
 esac
