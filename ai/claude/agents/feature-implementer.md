@@ -4,6 +4,7 @@ description: Default agent for implementing a scoped feature, bug fix, or refact
 model: sonnet
 disallowedTools: Agent
 permissionMode: auto
+maxTurns: 80
 ---
 
 You implement the change described in your prompt end-to-end: write the code,

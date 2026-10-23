@@ -7,6 +7,7 @@
 #   fzf     the vim-mode fzf defaults, driven through a pseudo-terminal (fzf/test_fzfrc.py)
 #   aws     ai/aws unit tests
 #   mcps    ai/mcps installer tests
+#   claude  agent files pin a model and can't spawn; jev-model-router policy (ai/claude/tests)
 #
 # A check whose tool is missing (fzf, node, tomlkit, ...) is skipped; TEST_STRICT=1 (CI) makes
 # a skip a failure.
@@ -104,7 +105,14 @@ check_mcps() {
     node --test ai/mcps/install.test.cjs
 }
 
-all=(lint config herdr fzf aws mcps)
+check_claude() {
+    command -v node >/dev/null || { skip claude "node not installed"; return 0; }
+    # Node 22.6+ runs .ts by stripping types (the mod's policy.ts is plain TypeScript).
+    node --experimental-strip-types -e 0 2>/dev/null || { skip claude "node $(node --version) cannot strip types (needs 22.6+)"; return 0; }
+    node --test --experimental-strip-types --disable-warning=ExperimentalWarning ai/claude/tests/*.test.ts
+}
+
+all=(lint config herdr fzf aws mcps claude)
 selected=("$@")
 [[ ${#selected[@]} -gt 0 ]] || selected=("${all[@]}")
 for name in "${selected[@]}"; do

@@ -1,7 +1,7 @@
 {
   "name": "jev-model-router",
-  "version": "0.1.0",
-  "description": "Corrects the model tier of every subagent spawn (agent.spawn) with a live Jev judgment (haiku / sonnet / opus), instead of relying on /delegate's static routing table. A risky task (touches production, money, or irreversible data) is always forced to opus regardless of confidence.",
+  "version": "0.2.0",
+  "description": "Sets the model of every subagent spawn (agent.spawn). The agent type sets the baseline: agents whose definition pins a model keep it, general-purpose, claude and Plan get sonnet, and TypeSafe's Jev may move those down to haiku, or up to opus when the task is risky (production, money, irreversible data). Sonnet is the ceiling otherwise; a description starting with [opus] goes to opus. No key or no verdict in time leaves the baseline, never the parent's Opus.",
   "author": {
     "name": "tulsi"
   },
@@ -11,27 +11,33 @@
     "typesafeApiKey": {
       "type": "string",
       "title": "TypeSafe API key",
-      "description": "Key for TypeSafe's own API. Falls back to the TYPESAFE_API_KEY environment variable when unset.",
+      "description": "Key for TypeSafe's own API. Falls back to the TYPESAFE_API_KEY environment variable when unset. Without one, spawns are routed by agent type alone.",
       "default": "",
       "sensitive": true
     },
-    "minUpgradeConfidence": {
+    "minHaikuConfidence": {
       "type": "number",
-      "title": "Confidence to move up a tier (haiku -> sonnet -> opus)",
-      "description": "Being wrong here just costs a bit more; the bar is low.",
-      "default": 0.3
+      "title": "Confidence to pick haiku",
+      "description": "Jev's confidence that a general-purpose, claude or Plan task is mechanical, needed to run it on haiku instead of sonnet.",
+      "default": 0.6
     },
-    "minDowngradeConfidence": {
+    "minRiskyForOpus": {
       "type": "number",
-      "title": "Confidence to move down a tier (opus -> sonnet -> haiku)",
-      "description": "Being wrong here means an under-powered subagent; the bar is high.",
-      "default": 0.7
+      "title": "Risk that lifts a spawn to opus",
+      "description": "Jev's probability that doing the task wrong is costly or irreversible, at or above which a judged spawn runs on opus.",
+      "default": 0.8
     },
     "timeoutMs": {
       "type": "number",
       "title": "Latency budget (ms)",
-      "description": "How long to wait for Jev before leaving the spawn unchanged.",
+      "description": "How long to wait for Jev before routing by agent type alone.",
       "default": 800
+    },
+    "maxBriefChars": {
+      "type": "number",
+      "title": "Brief length sent to Jev",
+      "description": "The subagent prompt is cut to this many characters before it leaves the machine.",
+      "default": 4000
     },
     "logDecisions": {
       "type": "boolean",

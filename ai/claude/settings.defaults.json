@@ -1,7 +1,10 @@
 {
   "env": {
     "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
-    "CLAUDE_CODE_ENABLE_FUNCTION_HOOKS": "1"
+    "CLAUDE_CODE_ENABLE_FUNCTION_HOOKS": "1",
+    "CLAUDE_CODE_SUBAGENT_MODEL": "sonnet",
+    "CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH": "1",
+    "CLAUDE_CODE_DISABLE_ADVISOR_TOOL": "1"
   },
   "permissions": {
     "allow": [
@@ -40,7 +43,8 @@
       "Bash(curl * | bash*)",
       "Bash(wget * | bash*)",
       "Read(~/.secrets.zshrc)",
-      "Bash(* ~/.secrets.zshrc*)"
+      "Bash(* ~/.secrets.zshrc*)",
+      "Agent(fork)"
     ],
     "defaultMode": "auto"
   },
