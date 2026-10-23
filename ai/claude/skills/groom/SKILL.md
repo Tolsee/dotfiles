@@ -9,7 +9,7 @@ Reach a shared understanding of the problem and scope before touching code, reco
 
 ## 1. Read
 
-Read the ticket, its comments, linked PRs and its project (Linear MCP). A free-text task has no ticket: what the user typed is the ticket. Look up facts in the repository with haiku or sonnet subagents per `/delegate`; a question the code or the tracker can answer is never asked of the user.
+Read the ticket, its comments, linked PRs and its project (Linear MCP). A free-text task has no ticket: what the user typed is the ticket. Look up facts in the repository with `Explore`, and long Linear or PR histories with `fetcher` (Model routing in `~/.claude/CLAUDE.md`); a question the code or the tracker can answer is never asked of the user.
 
 Done when you can state in one line who hurts, what should change, and what already exists for it.
 

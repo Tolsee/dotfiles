@@ -4,6 +4,7 @@ description: Use for well-specified, low-judgment code edits — renames, boiler
 model: haiku
 tools: Read, Edit, Write, Bash, Glob, Grep
 permissionMode: auto
+maxTurns: 30
 ---
 
 You make exactly the edit you're told to make. The prompt you receive already

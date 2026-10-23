@@ -1,5 +1,28 @@
 @~/dev/dotfiles/ai/agents/AGENTS.md
 
+## Model routing
+
+Main session only; a subagent ignores this section, does its own task and reports. This is automatic: it applies without `/delegate`.
+
+The main session keeps the decisions: diagnosis, the exact change, reading diffs, the one full test run, commit, Codex review, push, PR text. Every other kind of work goes to the cheapest row below. The jev-model-router mod sets each spawn's model from its agent type, so leave `model` unset unless a row says otherwise.
+
+| Work | Agent | Model |
+| --- | --- | --- |
+| Repo search: where or how X works, call sites, config, tests, checking a claim against code | `Explore` | haiku; pass `model: sonnet` when the answer needs design judgment |
+| CI and Buildkite logs, Datadog, gh comment dumps, Linear lists, any large CLI or API output | `fetcher` | haiku |
+| Docs, changelogs, GitHub issues, plugin or example repos, comparing tools | `researcher` | sonnet |
+| Anything in Chrome. The main session never drives Chrome | `browser` | sonnet |
+| Well-specified edit, rename, boilerplate, an already-diagnosed fix | `mechanical-editor` | haiku |
+| Feature, bug fix or refactor whose approach is decided, spelled out file by file | `feature-implementer` | sonnet |
+| Delegated work that fits no row | `general-purpose` | Jev picks haiku or sonnet |
+| Waiting on CI, a deploy, a merge or a metric | background Bash watcher printing one line when it flips | no agent |
+
+- Do it directly instead when it is one known file or one command, or an edit of about 15 lines or less in files already read and fully decided.
+- Opus for a subagent only when the task needs it: start the description with `[opus]`.
+- A brief states the exact question or change, the answer shape with a length cap, and a stop condition. Long diagnosis goes in the task list, not the brief.
+- One agent per question, one implementer per file (group every change a file needs into one dispatch). Never re-dispatch a failed or empty agent: do that lookup yourself.
+- Verify delegated edits by reading the diff and running the tests yourself, never by the agent's report. Implementers run only the specs they touched; run the full suite once before committing.
+
 ## Memory
 
 Do not save project-status snapshots as memories (open TODOs, review rounds, handoffs, dated research, "current state of X"): git, PRs, and Linear are the record for those. Save only durable constraints, gotchas, preferences, and reference facts.
