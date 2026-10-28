@@ -647,8 +647,16 @@ cmd_open() {
         elif [[ -n "$slug" && -n "$branch" ]]; then
             printf '%s  compare %s\thttps://github.com/%s/compare/%s...%s\n' "$i_compare" "$branch" "$slug" "${base:-main}" "$branch"
         fi
+        # pr_url_<n> tokens: the status line reports one per PR because Herdr
+        # truncates long token values. pr_url (unindexed) is the old scheme,
+        # space-joined and possibly truncated, so split it and drop fragments.
         jq -r --arg pr "$i_pr" '
-            if (.pr_url // "") != "" then (.pr_url | split(" ")[] | "\($pr)  #\(split("/") | last)\t\(.)") else empty end' <<<"$tokens"
+            [ to_entries[]
+              | select(.key == "pr_url" or (.key | startswith("pr_url_")))
+              | if .key == "pr_url" then (.value | split(" ")[]) else .value end
+              | select(test("/pull/[0-9]+$")) ]
+            | unique[]
+            | "\($pr)  #\(split("/") | last)\t\(.)"' <<<"$tokens"
         if [[ -n "$slug" && -n "$branch" ]]; then
             printf '%s  branch %s\thttps://github.com/%s/tree/%s\n' "$i_branch" "$branch" "$slug" "$branch"
         fi
@@ -866,7 +874,7 @@ $(git -C "$repo" log --reverse --format='- %s' "origin/$base..HEAD")"
         say "opened draft PR $pr"
     fi
     "$herdr_bin" pane report-metadata "$pane" --source "$metadata_source" \
-        --token "pr=#${pr##*/}" --token "pr_url=$pr" >/dev/null 2>&1 || true
+        --token "pr=#${pr##*/}" --token "pr_url_1=$pr" --clear-token pr_url >/dev/null 2>&1 || true
 }
 
 # open-file <file-url> [--pane PANE]: the task plugin's file:// link handler (Ctrl-click on a
