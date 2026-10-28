@@ -92,9 +92,11 @@ if [ -n "$branch" ] && command -v gh >/dev/null 2>&1; then
   # resolves the correct remote even when cwd is a worktree.
   # Claude Code passes the current branch's PR in the status line JSON; fall back to gh
   # only when it does not (older versions, or before the first refresh).
-  current_pr=$(echo "$input" | jq -c 'select(.pr.url and .pr.number) | {url: .pr.url, number: .pr.number}' 2>/dev/null)
+  # Merged and closed PRs are dropped: the branch is done, so its PR is noise.
+  current_pr=$(echo "$input" | jq -c 'select(.pr.url and .pr.number and ((.pr.state // "OPEN") | ascii_upcase == "OPEN")) | {url: .pr.url, number: .pr.number}' 2>/dev/null)
   if [ -z "$current_pr" ]; then
-    current_pr=$(cached "pr-$branch_key" "$repo_root" gh pr view "$branch" --json url,number)
+    current_pr=$(cached "pr-$branch_key" "$repo_root" gh pr view "$branch" --json url,number,state \
+      | jq -c 'select(.state == "OPEN") | {url, number}')
   fi
   current_number=$(printf '%s' "$current_pr" | jq -r '.number // empty' 2>/dev/null)
   current_url=$(printf '%s' "$current_pr" | jq -r '.url // empty' 2>/dev/null)
@@ -140,21 +142,33 @@ fi
 # agent row shows them next to the ticket.
 if [ -n "$HERDR_PANE_ID" ] && command -v herdr >/dev/null 2>&1; then
   pr_label=""
-  pr_urls=""
+  # Herdr truncates token values at about 80 chars and a repeated token key
+  # keeps only the last value, so each PR URL gets its own pr_url_<n> token.
+  pr_tokens=()
+  pr_count=0
   for entry in "${pr_links[@]}"; do
     pr_label="${pr_label:+$pr_label }#${entry%% *}"
-    pr_urls="${pr_urls:+$pr_urls }${entry#* }"
+    pr_count=$((pr_count + 1))
+    pr_tokens+=(--token "pr_url_$pr_count=${entry#* }")
   done
+  # Clear the slots above the current count so a merged or closed PR drops off
+  # the pane. pr_url (unindexed) is the pre-index scheme, cleared for good.
+  if [ "$pr_count" -lt 8 ]; then
+    for slot in $(seq $((pr_count + 1)) 8); do
+      pr_tokens+=(--clear-token "pr_url_$slot")
+    done
+  fi
   pr_state_file="$cache_dir/${cache_prefix}pane-pr-$HERDR_PANE_ID"
-  if [ "$(cat "$pr_state_file" 2>/dev/null)" != "$pr_label $pr_urls" ]; then
-    printf '%s' "$pr_label $pr_urls" 2>/dev/null > "$pr_state_file"
+  if [ "$(cat "$pr_state_file" 2>/dev/null)" != "$pr_label ${pr_links[*]}" ]; then
+    printf '%s' "$pr_label ${pr_links[*]}" 2>/dev/null > "$pr_state_file"
+    report_args=(--clear-token pr_url)
     if [ -n "$pr_label" ]; then
-      with_deadline 2 herdr pane report-metadata "$HERDR_PANE_ID" --source statusline \
-        --token "pr=$pr_label" --token "pr_url=$pr_urls" >/dev/null 2>&1
+      report_args+=(--token "pr=$pr_label")
     else
-      with_deadline 2 herdr pane report-metadata "$HERDR_PANE_ID" --source statusline \
-        --clear-token pr --clear-token pr_url >/dev/null 2>&1
+      report_args+=(--clear-token pr)
     fi
+    with_deadline 2 herdr pane report-metadata "$HERDR_PANE_ID" --source statusline \
+      "${report_args[@]}" "${pr_tokens[@]}" >/dev/null 2>&1
   fi
 fi
 
