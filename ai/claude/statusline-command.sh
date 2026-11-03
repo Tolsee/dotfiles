@@ -138,8 +138,11 @@ if [ -n "$branch" ] && command -v gh >/dev/null 2>&1; then
   fi
 fi
 
-# Mirror the PR numbers onto the Herdr pane (once per change) so the sidebar's
-# agent row shows them next to the ticket.
+# Mirror the PR links onto the Herdr pane (once per change) for the prefix+o
+# picker. The sidebar's PR badge is herdr-github's $prs token; pane tokens are
+# one map shared by every source, so its `pr` is neither set nor cleared here.
+# After a Herdr restart (tokens are not kept) herdr-task retag --startup drops
+# the pane-pr markers below, so this reports again.
 if [ -n "$HERDR_PANE_ID" ] && command -v herdr >/dev/null 2>&1; then
   pr_label=""
   # Herdr truncates token values at about 80 chars and a repeated token key
@@ -162,11 +165,6 @@ if [ -n "$HERDR_PANE_ID" ] && command -v herdr >/dev/null 2>&1; then
   if [ "$(cat "$pr_state_file" 2>/dev/null)" != "$pr_label ${pr_links[*]}" ]; then
     printf '%s' "$pr_label ${pr_links[*]}" 2>/dev/null > "$pr_state_file"
     report_args=(--clear-token pr_url)
-    if [ -n "$pr_label" ]; then
-      report_args+=(--token "pr=$pr_label")
-    else
-      report_args+=(--clear-token pr)
-    fi
     with_deadline 2 herdr pane report-metadata "$HERDR_PANE_ID" --source statusline \
       "${report_args[@]}" "${pr_tokens[@]}" >/dev/null 2>&1
   fi

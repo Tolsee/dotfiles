@@ -1,9 +1,28 @@
 id = "dotfiles.task"
 name = "Task"
-version = "0.1.0"
+version = "0.2.0"
 min_herdr_version = "0.9.0"
-description = "herdr-task from keys and links: review and ship the focused task, start Linear links as tasks, open file links in the editor."
+description = "herdr-task from keys, links and restarts: review and ship the focused task, jump to a Linear link's task, open file links in the editor, and put task tags back after a server restart."
 platforms = ["linux", "macos"]
+
+# Herdr keeps no metadata tokens across a server restart: put each task workspace's ticket,
+# repo and agent labels back from what herdr-task saved on the branch.
+[[startup]]
+command = ["sh", "run.sh", "retag"]
+
+# A worktree opened later (herdr-task, herdr-github) and an agent that starts or resumes in a
+# task workspace get the same tags.
+[[events]]
+on = "worktree.created"
+command = ["sh", "run.sh", "retag"]
+
+[[events]]
+on = "worktree.opened"
+command = ["sh", "run.sh", "retag"]
+
+[[events]]
+on = "pane.agent_detected"
+command = ["sh", "run.sh", "retag"]
 
 # Bound in config.toml as plugin_action keys (prefix+y, prefix+u).
 [[actions]]
@@ -20,10 +39,10 @@ command = ["sh", "run.sh", "ship"]
 
 # Link handler targets (Ctrl-click, mouse capture on).
 [[actions]]
-id = "start-link"
-title = "Start link as a task"
+id = "open-ticket"
+title = "Go to the ticket's task, else open it"
 contexts = ["workspace"]
-command = ["sh", "run.sh", "start-link"]
+command = ["sh", "run.sh", "open-ticket"]
 
 [[actions]]
 id = "open-file"
@@ -31,20 +50,11 @@ title = "Open file in editor"
 contexts = ["workspace"]
 command = ["sh", "run.sh", "open-file"]
 
-# The prefix+t popup, prefilled with the clicked link.
-[[panes]]
-id = "start"
-title = "Start task"
-placement = "popup"
-width = "80%"
-height = "80%"
-command = ["sh", "run.sh", "start"]
-
 [[link_handlers]]
 id = "linear-issue"
-title = "Start Linear issue as a task"
+title = "Go to the ticket's task, else open it in the browser"
 pattern = "^https://linear\\.app/[^/]+/issue/[A-Za-z][A-Za-z0-9]*-[0-9]+"
-action = "start-link"
+action = "open-ticket"
 
 # Agents print file paths as file:// links (FORCE_HYPERLINK=1); Herdr opens only http(s).
 [[link_handlers]]
