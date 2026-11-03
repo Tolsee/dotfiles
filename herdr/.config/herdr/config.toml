@@ -96,13 +96,13 @@ description = "remove task worktrees whose branch has merged"
 width = "80%"
 height = "80%"
 
+# herdr-github (marketplace, installed by herdr/install): my PRs, PRs waiting for my review and
+# this repo's, with checks, reviews and threads; merge, draft/ready, or a worktree for one.
 [[keys.command]]
 key = "prefix+m"
-type = "popup"
-command = "zsh -c 'source ~/.secrets.zshrc 2>/dev/null; exec ~/bin/herdr-task prs'"
-description = "pick one of my PRs or a PR waiting for my review: task workspace or browser"
-width = "90%"
-height = "90%"
+type = "plugin_action"
+command = "herdr-github.open"
+description = "GitHub pull requests: mine, review requested, this repo"
 
 # dotfiles.task plugin (herdr/plugins/task). Both act on the focused pane's task and report
 # through a notification, so nothing opens over the work.
@@ -148,12 +148,11 @@ rows = [
   [{ token = "$linear", fg = "#7a88cf" }, { token = "$repo", dim = true }],
 ]
 
-# Agent rows: state and agent (the agent label carries a Nerd Font glyph per kind, reported
-# as pane metadata by herdr-task and the Claude SessionStart hook), the session's current
-# task (its terminal title), then the Linear ticket and PR reported onto the pane.
 # Agent rows: workspace > tab > agent tree from testy-cool/herdr-sidebar-config ($hs_* tokens),
-# plus our own rows (what the agent is doing, Linear ticket, PR). The plugin's setup step must
-# not run: it would replace this table. Per-agent colors follow the plugin's defaults.
+# then the Linear ticket (herdr-task, also after a restart) and the agent's PRs with review and
+# CI state ($prs, from herdr-github), both in the ticket's color so the row reads as one line.
+# The sidebar plugin's setup step must not run: it would replace this table. Per-agent colors
+# follow the plugin's defaults.
 [ui.sidebar.agents]
 row_gap = 0
 rows = [
@@ -174,7 +173,7 @@ rows = [
     { token = "$hs_unknown", fg = "#A8ADB9" },
     { token = "$hs_unknown_dim", fg = "#A8ADB9", dim = true },
   ],
-  [{ token = "$linear", fg = "#7a88cf" }, { token = "$pr", fg = "#7a88cf" }],
+  [{ token = "$linear", fg = "#7a88cf" }, { token = "$prs", fg = "#7a88cf" }],
   [{ token = "$hs_gap" }],
 ]
 
@@ -196,7 +195,7 @@ claude = [
     { token = "$hs_unknown", fg = "#A8ADB9" },
     { token = "$hs_unknown_dim", fg = "#A8ADB9", dim = true },
   ],
-  [{ token = "$linear", fg = "#7a88cf" }, { token = "$pr", fg = "#7a88cf" }],
+  [{ token = "$linear", fg = "#7a88cf" }, { token = "$prs", fg = "#7a88cf" }],
   [{ token = "$hs_gap" }],
 ]
 codex = [
@@ -216,7 +215,7 @@ codex = [
     { token = "$hs_unknown", fg = "#A8ADB9" },
     { token = "$hs_unknown_dim", fg = "#A8ADB9", dim = true },
   ],
-  [{ token = "$linear", fg = "#7a88cf" }, { token = "$pr", fg = "#7a88cf" }],
+  [{ token = "$linear", fg = "#7a88cf" }, { token = "$prs", fg = "#7a88cf" }],
   [{ token = "$hs_gap" }],
 ]
 

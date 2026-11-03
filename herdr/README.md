@@ -1,7 +1,7 @@
 # Herdr
 
 Run `./herdr/install` to install the shared config, `herdr-task`, `herdr-status`, the
-plugins, and integrations for installed agents. Root `./setup` includes it. Existing regular
+plugins (local and marketplace), and integrations for installed agents. Root `./setup` includes it. Existing regular
 config files are backed up once; rerunning keeps links current.
 
 Background agents use silent macOS banners with a two-second delay. macOS must
@@ -15,7 +15,7 @@ One task, one worktree workspace, one agent. `prefix` is Ctrl+B.
 | Key | Action |
 | --- | --- |
 | `prefix+t` | Start a task: Linear link or id, branch, or free text (prefilled from the clipboard) |
-| `prefix+m` | Pick from my open PRs and PRs waiting for my review (CI and review state in the preview): Enter opens it as a task workspace, ctrl-o in the browser |
+| `prefix+m` | GitHub PRs ([herdr-github](https://github.com/mrolafsson/herdr-github)): mine, waiting for my review, this repo's; checks, reviews and threads; merge, draft/ready, or a worktree for one |
 | `prefix+y` | Review the focused task's branch: Codex (`codex-review`) and a no-edit Claude reviewer in splits |
 | `prefix+u` | Ship: prompt the task's agent to review, push, open the PR and babysit it; with no agent, push and open a draft PR |
 | `prefix+o` | Links for the focused task: ticket, PR, changed files, checks, each failing check, the branch (compare view before a PR); Enter opens, ctrl-y copies |
@@ -69,11 +69,31 @@ integration). Herdr strips escape sequences from the tab bar, so nothing in it i
 With `ui.mouse_capture = true`, Herdr owns clicks: **Ctrl-click** opens links, Cmd-click does
 not reach Ghostty. Herdr opens `http(s)` itself; the `dotfiles.task` plugin handles the rest:
 
-- Linear links open the `prefix+t` popup prefilled with the link.
+- Linear links focus that ticket's task workspace when one is open, else open in the browser.
+  Starting a task stays on `prefix+t` (copy the link first and it is prefilled).
 - `file://` links (file paths agents print) open in `$EDITOR` in a split, at the line.
 
 Claude Code only prints real (OSC 8) links when it trusts the terminal, and it does not
 recognise `TERM_PROGRAM=herdr`, so `.zshrc` sets `FORCE_HYPERLINK=1` inside Herdr panes.
+
+## Restarts
+
+A server restart brings back workspaces, tabs, panes and agent conversations (native
+session restore), but Herdr keeps no metadata tokens, so the ticket, repo and agent labels
+would go blank. They are saved outside Herdr instead and put back:
+
+- `herdr-task start` and `tag` save the ticket on its branch:
+  `git config branch.<branch>.linear-id`, `linear-url`, `linear-title`. It goes with the branch.
+- The `dotfiles.task` plugin runs `herdr-task retag` at startup, when a worktree is created or
+  opened, and when an agent appears in a pane. It reads each task workspace's branch and
+  reports the ticket on the workspace and its panes, plus the agent glyph labels.
+- Branches from before this (or opened by herdr-github) fall back to the id in the branch name
+  (`abc-12-fix`, `me/abc-12-fix`), for team keys a task was started with before, linked through
+  the Linear workspace seen last. No Linear API.
+- PR badges come from herdr-github, which re-reads them from GitHub on its own startup hook.
+  `retag --startup` also drops the Claude status line's PR markers so it reports its links again.
+
+Run `herdr-task retag` by hand any time; it only reports, never changes git or layout.
 
 ## Worktrees and plugins
 
@@ -91,7 +111,14 @@ Local plugins, linked by the installer:
 | Plugin | Does |
 | --- | --- |
 | `dotfiles.worktree-cleanup` | Prune a task worktree when its workspace closes |
-| `dotfiles.task` | Review and ship actions, link handlers for Linear and files |
+| `dotfiles.task` | Review and ship actions, link handlers for Linear and files, task tags after a restart |
+
+Marketplace plugins, installed (pinned) by the installer:
+
+| Plugin | Does |
+| --- | --- |
+| [testy-cool/herdr-sidebar-config](https://github.com/testy-cool/herdr-sidebar-config) | Agent logos, state spinners, workspace > tab > agent tree |
+| [mrolafsson/herdr-github](https://github.com/mrolafsson/herdr-github) `v0.8.5` | `prefix+m` PR popup, `$prs` badge on agent rows; uses `gh`'s sign-in |
 
 Plugin output: `herdr plugin log list --plugin <id>`. Tests for `herdr-task` and
 `herdr-status` (fake herdr, no server): `bash herdr/tests/herdr-task.test.sh`.

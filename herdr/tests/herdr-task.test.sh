@@ -39,12 +39,26 @@ cat > "$tmp/bin/herdr" <<'EOF'
 printf '%s\n' "$*" >> "$FAKE_LOG"
 case "$1 $2" in
     "status server") echo '{"running":true}' ;;
-    "workspace list") echo '{"result":{"workspaces":[{"workspace_id":"w1","focused":true}]}}' ;;
+    "workspace list")
+        if [[ -n "${FAKE_WORKSPACES:-}" ]]; then echo "$FAKE_WORKSPACES"
+        else echo '{"result":{"workspaces":[{"workspace_id":"w1","focused":true}]}}'; fi ;;
     "workspace get") echo '{"result":{"workspace":{"tokens":{"linear_id":"ABC-1","linear_url":"https://linear.app/x/issue/ABC-1/fix"}}}}' ;;
     "pane get")
         [[ "$3" == w1:p9 ]] && exit 1
         echo "{\"result\":{\"pane\":{\"pane_id\":\"$3\",\"workspace_id\":\"w1\",\"cwd\":\"$FAKE_REPO\"}}}" ;;
-    "pane list") echo '{"result":{"panes":[{"pane_id":"w1:p1","focused":true,"agent_status":"blocked"},{"pane_id":"w1:p2"}]}}' ;;
+    "pane list")
+        if [[ -z "${FAKE_PANES:-}" ]]; then
+            echo '{"result":{"panes":[{"pane_id":"w1:p1","focused":true,"agent_status":"blocked"},{"pane_id":"w1:p2"}]}}'
+        elif [[ "${3:-}" == --workspace ]]; then
+            jq -c --arg w "$4:" '.result.panes |= map(select(.pane_id | startswith($w)))' <<<"$FAKE_PANES"
+        else
+            echo "$FAKE_PANES"
+        fi ;;
+    "worktree list") echo '{"result":{"worktrees":[]}}' ;;
+    "worktree create")
+        echo "{\"result\":{\"workspace\":{\"workspace_id\":\"w8\"},\"worktree\":{\"path\":\"$FAKE_WT\"},\"root_pane\":{\"pane_id\":\"w8:p1\"}}}" ;;
+    "agent list")
+        if [[ -n "${FAKE_AGENTS:-}" ]]; then echo "$FAKE_AGENTS"; else echo '{"result":{"agents":[]}}'; fi ;;
     "pane split")
         n=$(( $(cat "$FAKE_COUNTER" 2>/dev/null || echo 2) + 1 )); echo "$n" > "$FAKE_COUNTER"
         echo "{\"result\":{\"pane\":{\"pane_id\":\"w1:p$n\"}}}" ;;
@@ -90,13 +104,20 @@ check "file url range" "5" "$line"
 parse_file_url "file://$tmp/repo"
 check "file url dir" "$tmp/repo " "$path $line"
 
-project_roots=$tmp
-git -C "$tmp/repo" remote set-url origin git@github.com:Tolsee/Dotfiles.git
-check "repo for slug, case-insensitive" "$tmp/repo" "$(repo_for_slug tolsee/dotfiles)"
-git -C "$tmp/repo" remote set-url origin "$tmp/origin.git"
-HERDR_TASK_SUGGEST=https://linear.app/x/issue/ABC-9/y
-check "suggestion prefers the clicked link" "$HERDR_TASK_SUGGEST" "$(clipboard_ticket)"
-unset HERDR_TASK_SUGGEST
+# Ticket saved on the branch (survives a Herdr restart), else read from the branch name.
+git -C "$tmp/repo" worktree add -q -b abc-2-login "$tmp/wt" main 2>/dev/null
+save_ticket "$tmp/repo" abc-2-login ABC-2 https://linear.app/acme/issue/ABC-2/login "Fix login"
+branch_ticket "$tmp/wt" abc-2-login
+check "branch ticket from git config" "ABC-2|https://linear.app/acme/issue/ABC-2/login|Fix login" \
+    "$ticket_id|$ticket_url|$ticket_title"
+branch_ticket "$tmp/repo" abc-3-other
+check "branch name of an unknown team is no ticket" "|" "$ticket_id|$ticket_url"
+remember_team_repo ABC "$tmp/repo"
+remember_linear_org https://linear.app/acme/issue/ABC-2/login
+branch_ticket "$tmp/repo" me/abc-3-other
+check "branch name of a known team, linked" "ABC-3|https://linear.app/acme/issue/ABC-3" "$ticket_id|$ticket_url"
+branch_ticket "$tmp/repo" utf-8
+check "a team never started is no ticket" "" "$ticket_id"
 set -e
 set +e
 
@@ -170,6 +191,79 @@ printf '#!/bin/sh\nexit 1\n' > "$tmp/bin/gh"
 FAKE_FZF_PICK=compare HERDR_TASK_OPEN="$tmp/bin/record-open" bash "$task" open w1:p1 >/dev/null 2>&1
 check "open: compare view before a PR" "https://github.com/o/r/compare/main...abc-1-fix" "$(cat "$tmp/opened")"
 git -C "$tmp/repo" remote set-url origin "$tmp/origin.git"
+
+# --- retag: put task tags back after a Herdr restart ---
+git -C "$tmp/repo" worktree add -q -b abc-3-other "$tmp/wt3" main 2>/dev/null
+git -C "$tmp/repo" worktree add -q -b scratch "$tmp/wt4" main 2>/dev/null
+mkdir -p "$HOME/.claude/cache" && touch "$HOME/.claude/cache/v2-pane-pr-w1:p1"
+export FAKE_WORKSPACES='{"result":{"workspaces":[
+  {"workspace_id":"w1","worktree":{"checkout_path":"'"$tmp/wt"'"}},
+  {"workspace_id":"w2","worktree":{"checkout_path":"'"$tmp/repo"'"}},
+  {"workspace_id":"w3","worktree":{"checkout_path":"'"$tmp/wt3"'"}},
+  {"workspace_id":"w4"}]}}'
+export FAKE_PANES='{"result":{"panes":[
+  {"pane_id":"w1:p1","agent":"claude"},{"pane_id":"w1:p2","agent":"codex"},{"pane_id":"w1:p3"},
+  {"pane_id":"w4:p1","cwd":"'"$tmp/wt4"'"}]}}'
+export FAKE_AGENTS='{"result":{"agents":[{"pane_id":"w1:p1","name":"abc-2-w1"},{"pane_id":"w1:p2","name":"rv-codex-1"}]}}'
+: > "$FAKE_LOG"
+bash "$task" retag --startup 2>&1
+check "retag exit" 0 $?
+log=$(cat "$FAKE_LOG")
+glyph=$(printf '\356\206\260')
+check "retag: saved ticket back on the workspace" 1 "$(grep -cF "workspace report-metadata w1 --source herdr-task --token repo=repo --token linear=$glyph  ABC-2 --token linear_id=ABC-2 --token linear_url=https://linear.app/acme/issue/ABC-2/login --token linear_title=Fix login" <<<"$log")"
+check "retag: ticket and glyph label on the task agent" 1 "$(grep -cF "pane report-metadata w1:p1 --source herdr-task --token linear=$glyph  ABC-2 --token linear_id=ABC-2 --token linear_url=https://linear.app/acme/issue/ABC-2/login --token linear_title=Fix login --display-agent $(printf '\356\262\202') claude" <<<"$log")"
+check "retag: reviewer keeps its review label" 1 "$(grep -cF -- "--display-agent $(printf '\356\262\201') codex review" <<<"$log")"
+check "retag: a plain shell pane gets the ticket, no label" 1 "$(grep -F 'pane report-metadata w1:p3 ' <<<"$log" | grep -vc -- --display-agent)"
+check "retag: ticket from a branch name" 1 "$(grep -cF "workspace report-metadata w3 --source herdr-task --token repo=repo --token linear=$glyph  ABC-3 --token linear_id=ABC-3 --token linear_url=https://linear.app/acme/issue/ABC-3 --token linear_title=" <<<"$log")"
+check "retag: plain checkouts are left alone" 0 "$(grep -c 'report-metadata w2 ' <<<"$log")"
+check "retag: a worktree with no ticket gets its repo only" 1 "$(grep -cxF 'workspace report-metadata w4 --source herdr-task --token repo=repo' <<<"$log")"
+check "retag --startup drops the status line's PR markers" "" "$(ls "$HOME/.claude/cache")"
+: > "$FAKE_LOG"
+bash "$task" retag --workspace w3 >/dev/null 2>&1
+check "retag --workspace touches one workspace" "w3" "$(grep -o 'report-metadata w[0-9]' "$FAKE_LOG" | sort -u | cut -d' ' -f2 | tr '\n' ' ' | xargs)"
+
+# The plugin hands events to retag with their workspace (pane ids start with it).
+plughome="$tmp/plughome"
+mkdir -p "$plughome/bin"
+printf '#!/bin/sh\nshift 2\nprintf "%%s " "$@" > "%s"\n' "$tmp/zsh-args" > "$plughome/bin/zsh"
+chmod +x "$plughome/bin/zsh"
+HOME=$plughome HERDR_PLUGIN_EVENT=pane.agent_detected HERDR_PLUGIN_EVENT_JSON='{"pane_id":"w7:p2","agent":"claude"}' \
+    sh "$root/herdr/plugins/task/run.sh" retag
+check "plugin: agent event retags its workspace" "herdr-task retag --workspace w7 " "$(cat "$tmp/zsh-args")"
+HOME=$plughome HERDR_PLUGIN_EVENT=worktree.opened HERDR_PLUGIN_EVENT_JSON='{"data":{"workspace":{"workspace_id":"w5"}}}' \
+    sh "$root/herdr/plugins/task/run.sh" retag
+check "plugin: worktree event retags its workspace" "herdr-task retag --workspace w5 " "$(cat "$tmp/zsh-args")"
+HOME=$plughome HERDR_PLUGIN_EVENT=startup sh "$root/herdr/plugins/task/run.sh" retag
+check "plugin: startup retags everything" "herdr-task retag --startup " "$(cat "$tmp/zsh-args")"
+HOME=$plughome HERDR_PLUGIN_CLICKED_URL=https://linear.app/acme/issue/ABC-2/login sh "$root/herdr/plugins/task/run.sh" open-ticket
+check "plugin: Linear click goes to open-ticket" "herdr-task open-ticket https://linear.app/acme/issue/ABC-2/login " "$(cat "$tmp/zsh-args")"
+
+# --- start and tag save the ticket on its branch for retag ---
+git -C "$tmp/repo" worktree add -q -b abc-5-new-thing "$tmp/wt5" main 2>/dev/null
+: > "$FAKE_LOG"
+FAKE_WT="$tmp/wt5" HERDR_SOCKET_PATH=x bash "$task" start https://linear.app/acme/issue/ABC-5/new-thing \
+    --project "$tmp/repo" --title "New thing" --no-agent >/dev/null 2>&1
+check "start saves the ticket on the branch" "ABC-5|https://linear.app/acme/issue/ABC-5/new-thing|New thing" \
+    "$(git -C "$tmp/repo" config branch.abc-5-new-thing.linear-id)|$(git -C "$tmp/repo" config branch.abc-5-new-thing.linear-url)|$(git -C "$tmp/repo" config branch.abc-5-new-thing.linear-title)"
+git -C "$tmp/repo" worktree add -q -b late-idea "$tmp/wt6" main 2>/dev/null
+(cd "$tmp/wt6" && HERDR_WORKSPACE_ID=w6 bash "$task" tag ABC-6 -t "Late idea" >/dev/null 2>&1)
+check "tag renames the unpushed branch and saves the ticket there" \
+    "abc-6|ABC-6|https://linear.app/acme/issue/ABC-6|Late idea" \
+    "$(git -C "$tmp/wt6" branch --show-current)|$(git -C "$tmp/repo" config branch.abc-6.linear-id)|$(git -C "$tmp/repo" config branch.abc-6.linear-url)|$(git -C "$tmp/repo" config branch.abc-6.linear-title)"
+
+# --- open-ticket: Ctrl-click on a Linear link ---
+: > "$FAKE_LOG"; : > "$tmp/opened"
+HERDR_TASK_OPEN="$tmp/bin/record-open" bash "$task" open-ticket https://linear.app/acme/issue/ABC-3/other >/dev/null 2>&1
+check "open-ticket: focuses the task by its branch" "workspace focus w3" "$(grep '^workspace focus' "$FAKE_LOG")"
+check "open-ticket: no browser when the task is open" "" "$(cat "$tmp/opened")"
+FAKE_WORKSPACES='{"result":{"workspaces":[{"workspace_id":"w9","tokens":{"linear_id":"ABC-3"}},{"workspace_id":"w3","worktree":{"checkout_path":"'"$tmp/wt3"'"}}]}}' \
+    HERDR_TASK_OPEN="$tmp/bin/record-open" bash "$task" open-ticket https://linear.app/acme/issue/ABC-3 >/dev/null 2>&1
+check "open-ticket: the tagged workspace wins" "workspace focus w9" "$(grep '^workspace focus' "$FAKE_LOG" | tail -n1)"
+: > "$FAKE_LOG"
+HERDR_TASK_OPEN="$tmp/bin/record-open" bash "$task" open-ticket https://linear.app/acme/issue/ABC-99/nope >/dev/null 2>&1
+check "open-ticket: no task opens the browser" "https://linear.app/acme/issue/ABC-99/nope" "$(cat "$tmp/opened")"
+check "open-ticket: no task, no focus" 0 "$(grep -c '^workspace focus' "$FAKE_LOG")"
+unset FAKE_WORKSPACES FAKE_PANES FAKE_AGENTS
 
 printf '\n%d failure(s)\n' "$failures"
 [[ $failures -eq 0 ]]

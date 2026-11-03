@@ -51,13 +51,19 @@ for integration in claude codex devin pi; do
     fi
 done
 
-# Sidebar plugin: agent logos, state spinners and the workspace > tab > agent tree.
-# Its own setup step is never run; the rows are hand-merged in config.toml.
-# A list of one, so another marketplace plugin is a one-word change.
-# shellcheck disable=SC2043
-for plugin in testy-cool/herdr-sidebar-config; do
-    if ! herdr plugin list 2>/dev/null | grep -qi "${plugin##*/}"; then
-        herdr plugin install --yes "$plugin"
+# Marketplace plugins, owner/repo[@ref]; a ref pins a reviewed release.
+# - Sidebar: agent logos, state spinners and the workspace > tab > agent tree. Its own setup
+#   step is never run; the rows are hand-merged in config.toml.
+# - herdr-github: prefix+m PR popup and the $prs sidebar token. Builds with Go, else downloads
+#   the release binary checked against its SHA-256 sums; uses gh's sign-in.
+for plugin in testy-cool/herdr-sidebar-config mrolafsson/herdr-github@v0.8.5; do
+    repo=${plugin%@*}
+    if ! herdr plugin list 2>/dev/null | grep -qi "${repo##*/}"; then
+        if [[ "$plugin" == *@* ]]; then
+            herdr plugin install --yes "$repo" --ref "${plugin##*@}"
+        else
+            herdr plugin install --yes "$repo"
+        fi
     fi
 done
 
@@ -66,8 +72,9 @@ if ! herdr plugin list 2>/dev/null | grep -q 'dotfiles.worktree-cleanup'; then
     herdr plugin link "$herdr_root/plugins/worktree-cleanup"
 fi
 
-# Task plugin: review/ship actions (prefix+y, prefix+u) and Ctrl-click handlers for Linear and
-# GitHub issue links and file:// links.
+# Task plugin: review/ship actions (prefix+y, prefix+u), Ctrl-click handlers for Linear and
+# file:// links, and the startup/worktree/agent hooks that put task tags back after a server
+# restart. Herdr rereads a linked manifest from disk when the server starts.
 if ! herdr plugin list 2>/dev/null | grep -q 'dotfiles.task'; then
     herdr plugin link "$herdr_root/plugins/task"
 fi
