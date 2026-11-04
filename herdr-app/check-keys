@@ -1,0 +1,110 @@
+#!/usr/bin/env python3
+"""Keep the Herdr app's keys (herdr-app/keys.json) the same as the TUI's (config.toml).
+
+Fails when:
+  - a TUI prefix key has no `ctrl-b <key>` in keys.json and is not in TUI_ONLY below
+  - a `ctrl-b` key in keys.json is neither a TUI key nor one of Herdr's TUI defaults
+  - an action names an app command, a mod or a send that does not exist
+Run by ./test config.
+"""
+import json
+import pathlib
+import re
+import sys
+import tomllib
+
+root = pathlib.Path(__file__).resolve().parent.parent
+tui = tomllib.loads((root / "herdr/.config/herdr/config.toml").read_text())["keys"]
+gui = json.loads((root / "herdr-app/keys.json").read_text())
+
+# TUI keys the app cannot do yet, and why. Shrink this as herdr-task learns the app.
+TUI_ONLY = {
+    "t": "herdr-task start (prefix+t) drives the TUI server",
+    "f": "herdr-sessionizer opens TUI workspaces",
+    "o": "herdr-task open reads TUI pane tokens; in the app the status bar's ticket/PR/CI are links",
+    "m": "herdr-github is a TUI plugin",
+    "y": "herdr-task review drives TUI panes",
+    "u": "herdr-task ship drives TUI agents",
+    "alt-t": "herdr-task prune works on TUI worktree workspaces",
+    "r": "the app reloads its files by itself",
+    "shift-o": "no notification target command in the app",
+    "shift-r": "no resize mode in the app (drag the dividers)",
+    "[": "no copy mode in the app (select with the mouse, Cmd-F to search)",
+    "e": "no scrollback-in-editor command in the app",
+    "alt-1..9": "the app exposes no sidebar agent order to mods; prefix+a / shift+a step through agents",
+}
+# Herdr TUI defaults the user did not rebind, mirrored in the app too.
+TUI_DEFAULTS = {"shift-n", "shift-w", "n", "p", "b", "shift-h", "shift-j", "shift-k", "shift-l", "ctrl-b"}
+# App commands (herdr-app commands); mods are folders in herdr-app/mods or shipped ones.
+COMMANDS = set("""
+space.new space.close space.rename space.move tab.new tab.close tab.rename tab.move pane.split pane.close
+terminal.open terminal.keep terminal.park terminal.right_click terminal.pin terminal.kill space.select
+space.next space.prev tab.select tab.settle tab.unsettle tab.next tab.prev pane.zoom pane.focus pane.go
+pane.swap terminal.peek terminal.show terminal.copy terminal.scroll terminal.paste terminal.paste_image
+terminal.search agent.focus agent.next agent.prev layout.switch layout.clone mod.clone layout.set
+layout.toggle layout.show layout.hide layout.resize layout.select layout.reset mod.open overlay.close
+app.help app.welcome app.whats_new app.feedback app.palette app.settings app.check_updates app.update_core
+app.reset app.theme app.zoom_in app.zoom_out app.zoom_reset app.update app.quit app.hide app.hide_others
+app.show_all window.close window.minimize window.maximize
+""".split())
+SHIPPED_MODS = {"picker", "worktree", "files", "changes"}
+OUR_MODS = {p.name for p in (root / "herdr-app/mods").iterdir() if p.is_dir()}
+
+
+def tui_keys():
+    """Every prefix key config.toml binds, in the app's notation (shift-q, -, alt-x)."""
+    keys = []
+    for action, value in tui.items():
+        if action in ("prefix", "command"):
+            continue
+        keys += value if isinstance(value, list) else [value]
+    keys += [entry["key"] for entry in tui.get("command", [])]
+    out = set()
+    for key in keys:
+        if not key.startswith("prefix+"):
+            continue
+        key = key[len("prefix+"):].replace("+", "-").replace("minus", "-")
+        out.add(key)
+    return out
+
+
+def expand(key):
+    """1..9 ranges, as config.toml writes them."""
+    m = re.fullmatch(r"(.*?)(\d)\.\.(\d)", key)
+    return [f"{m[1]}{i}" for i in range(int(m[2]), int(m[3]) + 1)] if m else [key]
+
+
+errors = []
+gui_prefix = {}
+for section, bindings in gui.items():
+    for keys, action in bindings.items():
+        if keys.startswith("ctrl-b "):
+            gui_prefix[keys[len("ctrl-b "):]] = action
+        name = action.get("command") if isinstance(action, dict) else action
+        if name.startswith("send:") or name == "terminal":
+            continue
+        base = name.split(":", 1)[0]
+        if base in COMMANDS:
+            if base == "mod.open" and ":" in name and name.split(":", 1)[1] not in SHIPPED_MODS | OUR_MODS:
+                errors.append(f"{section} {keys}: mod.open of an unknown mod {name}")
+            continue
+        mod = base.split(".", 1)[0]
+        if "." in base and mod in OUR_MODS:
+            continue
+        errors.append(f"{section} {keys}: unknown action {name!r}")
+
+for key in sorted(tui_keys()):
+    if key in TUI_ONLY:
+        continue
+    for k in expand(key):
+        if k not in gui_prefix:
+            errors.append(f"TUI prefix+{k} has no ctrl-b {k} in herdr-app/keys.json (add it, or to TUI_ONLY with why)")
+
+known = {k for key in tui_keys() for k in expand(key)} | TUI_DEFAULTS
+for key in sorted(gui_prefix):
+    if key not in known:
+        errors.append(f"herdr-app/keys.json ctrl-b {key} is not a TUI key")
+
+for error in errors:
+    print(f"check-keys: {error}", file=sys.stderr)
+sys.exit(1 if errors else 0)

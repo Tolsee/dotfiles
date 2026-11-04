@@ -28,6 +28,12 @@ reload_config = "prefix+r"
 # prefix+o is the herdr-task open popup below; move Herdr's notification-target opener off it.
 open_notification_target = "prefix+shift+o"
 workspace_picker = "prefix+w"
+# Workspace navigation (prefix+w): Herdr's defaults move workspaces with the arrows and panes
+# with h/j/k/l. Vim keys move workspaces instead; panes keep h/l, and ctrl+j/ctrl+k move down/up.
+navigate_workspace_up = ["k", "up"]
+navigate_workspace_down = ["j", "down"]
+navigate_pane_up = "ctrl+k"
+navigate_pane_down = "ctrl+j"
 goto = "prefix+g"
 close_workspace = "prefix+shift+q"
 new_tab = "prefix+c"

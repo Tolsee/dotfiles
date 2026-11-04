@@ -35,6 +35,11 @@ Shared by all coding agents (Claude Code, Codex, Antigravity/Gemini). Source of 
 - When design or behavior changes mid-PR, update the PR description in the same push; a stale description makes reviewers flag the new code as contradicting the stated model.
 - Write PR bodies with a quoted heredoc (`<<'EOF'`); never backslash-escape backticks (they render literally on GitHub).
 
+## Voice input
+
+- I often dictate prompts with Hex, so expect misheard words: "Harder" or "herder" is herdr, "TWUI" is TUI, "hex" can be Hex (the dictation app) or `hc`. Read for intent, and ask when a misheard word changes what I'm asking for.
+- `hex mcp` reads my meeting transcripts; use it when I refer to a meeting or call.
+
 ## Terminal
 
 - The multiplexer is Herdr, not tmux. Never run tmux commands, never check `$TMUX`, and never suggest tmux keybindings.
@@ -55,7 +60,7 @@ Shared by all coding agents (Claude Code, Codex, Antigravity/Gemini). Source of 
 | `prefix+shift+o` | Jump to the latest notification | |
 | `prefix+;` | Last pane (task agent and reviewer) | |
 | `prefix+(` / `prefix+)` | Previous / next workspace | |
-| `prefix+g` / `prefix+w` | Search everything / workspace picker | |
+| `prefix+g` / `prefix+w` | Search everything / workspace navigation (j/k workspaces, h/l and ctrl+j/k panes) | |
 | `prefix+shift+g` / `prefix+alt+x` | New / remove worktree | Ask first |
 | `prefix+[` / `prefix+e` | Copy mode / scrollback in the editor | |
 | `prefix+?` | Show every binding | |
@@ -65,6 +70,7 @@ Shared by all coding agents (Claude Code, Codex, Antigravity/Gemini). Source of 
 - Ticket and PR labels in the sidebar come back by themselves after a Herdr restart (`herdr-task retag` runs at startup); if one is missing, run `herdr-task retag` rather than reporting metadata by hand.
 - Ask first before creating workspaces, tabs or worktrees outside `herdr-task start`, starting another agent, sending input to a pane you did not create, or closing anything. Herdr owns notifications: do not add bell, sound or notify hooks.
 - This table is checked against `herdr/.config/herdr/config.toml` by `herdr/check-keymap`: change both together.
+- In the Herdr desktop app (`HC_TERMINAL_ID` is set), you run in herdr-core, not the TUI: the `herdr` CLI, `herdr-task` and the table's "you run instead" commands do not apply there. Use `hc` (`hc --skill`) for terminals and agents, and `herdr-app --skill` for the window. Its keys are the same Ctrl+B keys (`herdr-app/keys.json`, checked by `herdr-app/check-keys`).
 
 ## Git
 

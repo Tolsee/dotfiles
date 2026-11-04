@@ -42,6 +42,20 @@ then
 	./herdr/install
 fi
 
+# Install the Herdr desktop app (with herdr-core) and its Tasks layout and keys
+if [ -f "$PWD/herdr-app/install" ]
+then
+	echo "Installing the Herdr app..."
+	./herdr-app/install
+fi
+
+# Install Hex (voice dictation) and wire it up for agents
+if [ -f "$PWD/ai/hex/install" ]
+then
+	echo "Installing Hex..."
+	./ai/hex/install
+fi
+
 # Install Antigravity CLI (agy) if not already installed
 if ! command -v agy &> /dev/null
 then

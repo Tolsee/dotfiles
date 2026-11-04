@@ -2,11 +2,12 @@
 # Repo checks. ./test runs all of them; ./test lint config ... runs some.
 #
 #   lint    shellcheck on every shell script (legacy scripts only at error level), zsh -n
-#   config  TOML and JSON files parse; the herdr keymap docs match config.toml
+#   config  TOML and JSON files parse; the herdr keymap docs match config.toml; the app's keys match the TUI's
 #   herdr   herdr-task and herdr-status against a fake herdr (herdr/tests)
 #   fzf     the vim-mode fzf defaults, driven through a pseudo-terminal (fzf/test_fzfrc.py)
 #   aws     ai/aws unit tests
 #   mcps    ai/mcps installer tests
+#   app     the Herdr app's task-status mod against stand-in app modules (herdr-app/tests)
 #   claude  agent files pin a model and can't spawn; jev-model-router policy (ai/claude/tests)
 #
 # A check whose tool is missing (fzf, node, tomlkit, ...) is skipped; TEST_STRICT=1 (CI) makes
@@ -77,7 +78,7 @@ for f in files:
             bad = 1
 sys.exit(bad)
 PY
-    ./herdr/check-keymap
+    ./herdr/check-keymap && ./herdr-app/check-keys
 }
 
 check_herdr() {
@@ -105,6 +106,11 @@ check_mcps() {
     node --test ai/mcps/install.test.cjs
 }
 
+check_app() {
+    command -v node >/dev/null || { skip app "node not installed"; return 0; }
+    node --test herdr-app/tests/task-status.test.mjs
+}
+
 check_claude() {
     command -v node >/dev/null || { skip claude "node not installed"; return 0; }
     # Node 22.6+ runs .ts by stripping types (the mod's policy.ts is plain TypeScript).
@@ -112,7 +118,7 @@ check_claude() {
     node --test --experimental-strip-types --disable-warning=ExperimentalWarning ai/claude/tests/*.test.ts
 }
 
-all=(lint config herdr fzf aws mcps claude)
+all=(lint config herdr fzf aws mcps app claude)
 selected=("$@")
 [[ ${#selected[@]} -gt 0 ]] || selected=("${all[@]}")
 for name in "${selected[@]}"; do

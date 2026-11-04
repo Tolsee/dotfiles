@@ -42,7 +42,7 @@ page, i or / go back to typing, q or Esc quit. The `prefix+t` prompt edits with 
 | `prefix+;` | Last pane (task agent and reviewer) |
 | `prefix+(` / `prefix+)` | Previous / next workspace |
 | `prefix+g` | Search across workspaces, tabs, and panes |
-| `prefix+w` | Pick a workspace |
+| `prefix+w` | Workspace navigation: j/k (or ↑/↓) move between workspaces, h/l and ctrl+j/ctrl+k between panes, Enter opens, Esc leaves |
 | `prefix+shift+g` / `prefix+alt+x` | New / remove worktree |
 | `prefix+shift+t` / `prefix+shift+x` | Rename / close tab (Herdr defaults) |
 | `prefix+r` | Reload configuration in the attached client/server |
@@ -122,6 +122,36 @@ Marketplace plugins, installed (pinned) by the installer:
 
 Plugin output: `herdr plugin log list --plugin <id>`. Tests for `herdr-task` and
 `herdr-status` (fake herdr, no server): `bash herdr/tests/herdr-task.test.sh`.
+
+## Herdr app (GUI)
+
+`./setup` also runs `herdr-app/install`. It installs the [Herdr desktop app](https://github.com/herdrdev/herdr-app)
+and herdr-core (`hc`) with the official installer (once; the app updates itself), then links this
+repo's files into `~/.config/herdr-app`. Anything there before is kept once as `<name>.backup`.
+
+The app is a separate program on a new core: it does not see the TUI's workspaces or agents,
+and the TUI keeps working as before. Pick the **Tasks** layout (Settings, or
+`herdr-app do layout.switch --name tasks`). It mirrors the TUI:
+
+| TUI | Tasks layout |
+| --- | --- |
+| Sidebar: spaces, then agents | Same two lists (the app's `spaces` and `agents`) |
+| Tab row, `herdr-status` and the time on its right | Tab row, the `task-status` mod on its right: blocked agents, Linear ticket, PR, review, CI, time. Ticket, PR and CI are clickable |
+| TokyoNight Moon, `#82aaff` accent, flat bordered panes, no gaps | `themes/tokyo-night-moon.json`, the same colors, 1px borders, no gaps, JetBrains Mono 14 like Ghostty |
+
+**Keys:** `herdr-app/keys.json` keeps the app's own Cmd shortcuts and adds the TUI keys as
+`Ctrl+B` sequences: `ctrl-b c` new tab, `ctrl-b h/j/k/l` move between panes, `ctrl-b v`/`-` split,
+`ctrl-b z` zoom, `ctrl-b w` picker, `ctrl-b a` next agent, `ctrl-b ( )` spaces, and the rest.
+`ctrl-b ctrl-b` sends Ctrl+B to the program. Press the second key within a second (the app's
+limit for key sequences). `herdr-app/check-keys` (in `./test config`) fails when the two keymaps
+drift apart. The keys that run herdr-task or herdr-github (`t`, `f`, `o`, `m`, `y`, `u`,
+`alt+t`) stay TUI-only until herdr-task learns the app, and so do a few with no app
+equivalent; its `TUI_ONLY` list says which and why.
+
+Agents in the app run in herdr-core. Claude Code and Codex report working, blocked and done to
+it themselves (OSC 7501), so no hooks are needed. `herdr-app check ~/.config/herdr-app/mods/task-status`
+checks the mod on the Mac. `node --test herdr-app/tests/task-status.test.mjs` runs its logic
+here against stand-in app modules.
 
 ## Versions
 

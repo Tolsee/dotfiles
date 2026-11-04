@@ -13,6 +13,8 @@ MATTPOCOCK_SKILLS=(
 )
 
 HERDR_SKILLS=(herdr)
+# Configures Hex dictation transformations (~/.config/hex/hex.config.ts).
+HEX_SKILLS=(hex-personal-commands)
 # Claude Code gets this from the typesafe@typesafe-ai plugin instead.
 TYPESAFE_SKILLS=(typesafe-ai)
-UPSTREAM_SKILLS=("${MATTPOCOCK_SKILLS[@]}" "${HERDR_SKILLS[@]}" "${TYPESAFE_SKILLS[@]}")
+UPSTREAM_SKILLS=("${MATTPOCOCK_SKILLS[@]}" "${HERDR_SKILLS[@]}" "${HEX_SKILLS[@]}" "${TYPESAFE_SKILLS[@]}")

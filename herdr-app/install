@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# The Herdr desktop app (herdr-app, running on herdr-core `hc`) and this repo's look for it:
+# the Tasks layout (the TUI's layout and colors), the TokyoNight Moon theme, keys.json with
+# the TUI's Ctrl+B keys, and the task-status mod. Only those are linked into the app's home;
+# everything else there stays the app's. The TUI (herdr/install) is not touched.
+set -euo pipefail
+
+root=$(cd "$(dirname "$0")" && pwd)
+app_home="${HERDR_APP_HOME:-$HOME/.config/herdr-app}"
+
+if [[ "$(uname -s)" == Darwin ]]; then
+    if [[ ! -d "$HOME/Applications/Herdr.app" && ! -d /Applications/Herdr.app ]] && ! command -v herdr-app >/dev/null 2>&1; then
+        echo "Installing the Herdr app and herdr-core..."
+        # The official installer checks the download's SHA-256; the app updates itself after.
+        curl -fsSL https://releases.herdr.dev/app/install.sh | sh
+    fi
+fi
+
+# link <repo path> <path under the app home>: a regular file or folder already there is kept
+# once as <name>.backup; with a backup already taken it is left alone, never deleted.
+link() {
+    local src="$root/$1" dst="$app_home/$2"
+    mkdir -p "$(dirname "$dst")"
+    if [[ -L "$dst" ]]; then
+        rm "$dst"
+    elif [[ -e "$dst" ]]; then
+        if [[ -e "$dst.backup" ]]; then
+            printf 'herdr-app: %s exists and so does its backup; leaving it, not linking\n' "$dst" >&2
+            return 0
+        fi
+        mv "$dst" "$dst.backup"
+        printf 'herdr-app: kept the previous %s as %s.backup\n' "$2" "$2" >&2
+    fi
+    ln -s "$src" "$dst"
+}
+
+link keys.json keys.json
+link layouts/tasks.json layouts/tasks.json
+link themes/tokyo-night-moon.json themes/tokyo-night-moon.json
+link mods/task-status mods/task-status
+
+echo "Herdr app configuration installed. Pick the Tasks layout in Settings, or: herdr-app do layout.switch --name tasks"
