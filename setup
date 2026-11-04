@@ -34,6 +34,8 @@ ln -nsf $PWD/.zshrc $zshrc_config_file
 ln -nsf $PWD/zsh/functions $HOME/.config/zsh-functions
 mkdir -p $HOME/.config/fzf
 ln -nsf $PWD/fzf/fzfrc $HOME/.config/fzf/fzfrc
+mkdir -p $HOME/.config/rex
+ln -nsf $PWD/rex/.config/rex/init.lua $HOME/.config/rex/init.lua
 
 # Install Herdr and its agent integrations
 if [ -f "$PWD/herdr/install" ]
