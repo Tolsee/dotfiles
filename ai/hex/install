@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# Hex (anomalyco/hex): local voice dictation. Hold the shortcut, speak, let go: it pastes into
+# the focused prompt (Claude Code, Codex, the Herdr app or TUI). For agents:
+# - `hex` on PATH (~/.local/bin), the control CLI agents drive with --json;
+# - `hex mcp`, read-only meeting transcripts, registered for every agent by ai/mcps;
+# - the words dictation gets wrong in agent prompts (vocabulary.tsv), taught to Hex.
+set -euo pipefail
+
+here=$(cd "$(dirname "$0")" && pwd)
+if [[ "$(uname -s)" != Darwin ]]; then
+    echo "Hex: this installer is for macOS; see https://github.com/anomalyco/hex#downloads"
+    exit 0
+fi
+
+app=""
+for dir in /Applications/Hex.app "$HOME/Applications/Hex.app"; do
+    [[ -d "$dir" ]] && app=$dir
+done
+if [[ -z "$app" ]]; then
+    command -v brew >/dev/null 2>&1 || { echo "Hex: Homebrew is required" >&2; exit 1; }
+    brew install --cask anomalyco/tap/hex
+    app=/Applications/Hex.app
+fi
+
+# The cask installs only the app; its CLI lives inside it.
+mkdir -p "$HOME/.local/bin"
+ln -nsf "$app/Contents/MacOS/hex" "$HOME/.local/bin/hex"
+hex="$HOME/.local/bin/hex"
+
+# The vocabulary is changed through the running Hex; adding a known term is a no-op.
+if "$hex" status --json >/dev/null 2>&1; then
+    while IFS=$'\t' read -r term sounds; do
+        [[ -z "$term" || "$term" == \#* ]] && continue
+        if [[ -n "${sounds:-}" ]]; then
+            "$hex" vocabulary add "$term" --sounds-like "$sounds" >/dev/null
+        else
+            "$hex" vocabulary add "$term" >/dev/null
+        fi
+    done < "$here/vocabulary.tsv"
+    echo "Hex vocabulary up to date."
+else
+    echo "Hex is not running: open it once (it downloads a speech model), then run ./ai/hex/install again for the vocabulary."
+fi

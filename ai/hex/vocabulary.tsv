@@ -1,0 +1,18 @@
+# Words dictation gets wrong in agent prompts. term<TAB>sounds-like spellings, comma separated.
+# Applied by ./ai/hex/install through the running Hex (hex vocabulary add).
+herdr	harder,herder,heard her
+herdr-task	harder task,herder task
+TUI	twui,tooey,T UI
+Ghostty	ghosty,ghost tea
+worktree	work tree
+dotfiles	dot files
+Buildkite	build kite
+Linktree	link tree
+GraphQL	graph QL,graph quell
+Codex	codecs
+Claude Code	cloud code,clawed code
+OpenCode	open code
+nvim	neo vim,n vim
+Fargate	far gate
+CDK	C D K
+Hive Gateway	hive gate way
