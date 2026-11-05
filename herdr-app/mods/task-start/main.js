@@ -92,18 +92,30 @@ export default class TaskStart extends View {
       }
       if (seq !== this.seq) return;
       const was = this.preview?.projects?.[this.at];
-      this.preview = preview;
+      this.preview = preview && { ...preview, ref };
       this.error = error;
       // Keep a project picked by hand while the text changes, else take the best guess.
       const keep = was && this.picked ? (preview?.projects ?? []).indexOf(was) : -1;
       this.at = keep >= 0 ? keep : 0;
+      // Enter pressed while this text was still being parsed: start now that its project is known.
+      if (this.waiting) {
+        this.waiting = false;
+        this.start(cx);
+      }
       cx.notify();
     });
   }
 
   start(cx) {
-    const ref = this.text(), project = this.preview?.projects?.[this.at];
+    const ref = this.text();
     if (this.busy || !ref) return;
+    // The project list belongs to the text it was parsed from; wait for the current text's.
+    // A parse error stays on screen instead.
+    if (this.preview?.ref !== ref) {
+      this.waiting = !this.error;
+      return;
+    }
+    const project = this.preview?.projects?.[this.at];
     if (!project) {
       this.error = "No project to start it in. Set HERDR_TASK_PROJECT_ROOTS in ~/.secrets.zshrc.";
       cx.notify();

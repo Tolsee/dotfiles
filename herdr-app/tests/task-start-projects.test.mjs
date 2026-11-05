@@ -128,3 +128,23 @@ test("projects: open goes to the space working there, else a new one, and rememb
   assert.deepEqual(runs(), [["space.select", { id: "s1" }], ["space.new", { name: "api", folder: "/r/api", machine: "" }]]);
   assert.deepEqual(state.shared["task-projects.recent"], ["/r/api", "/r/dotfiles"]);
 });
+
+test("start popup: Enter before the new text is parsed waits for its project", async () => {
+  reset();
+  const pending = [];
+  state.exec = (_c, args) => new Promise((resolve) => pending.push({ args: args.slice(3), resolve }));
+  const tasks = [];
+  const cx = { notify() {}, spawn(f) { tasks.push(f(cx)); }, timer: { after() {} }, read_from_clipboard: () => "ABC-1" };
+  const m = new start.default();
+  m.init({}, cx);
+  const answer = (projects) => pending.shift().resolve({ code: 0, stdout: JSON.stringify({ kind: "ticket", branch: "x", projects }), stderr: "" });
+  answer(["/r/api"]);
+  await Promise.all(tasks);
+  m.input.set_value("XYZ-9");
+  m.parse(cx);
+  m.start(cx); // XYZ-9 not parsed yet: no prepare with ABC-1's project
+  assert.deepEqual(pending.map((p) => p.args[0]), ["parse"]);
+  answer(["/r/web"]);
+  while (!pending.length) await new Promise((r) => setImmediate(r));
+  assert.deepEqual(pending[0].args, ["prepare", "XYZ-9", "--project", "/r/web"]);
+});

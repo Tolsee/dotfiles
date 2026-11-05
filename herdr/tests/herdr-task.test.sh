@@ -291,6 +291,10 @@ check "prepare: keeps the saved link" "https://linear.app/acme/issue/ABC-7/fix-l
 check "parse: team repo remembered" "$ptmp/repo" "$("${app_env[@]}" bash "$task" parse ABC-8 | jq -r '.projects[0]')"
 out=$("${app_env[@]}" bash "$task" prepare "fix flaky test" --project "$ptmp/repo" --agent none 2>/dev/null)
 check "prepare: task title, no agent" "fix flaky test|null|" "$(jq -r '"\(.label)|\(.agent)|\(.prompt)"' <<<"$out")"
+git -C "$ptmp/repo" push -q origin abc-1-fix:remote-only 2>/dev/null
+"${app_env[@]}" bash "$task" prepare remote-only --project "$ptmp/repo" --agent none >/dev/null 2>&1
+check "prepare: a branch only on origin keeps its commits" "$(git -C "$ptmp/repo" rev-parse abc-1-fix)" \
+    "$(git -C "$ptmp/appwt/repo/remote-only" rev-parse HEAD 2>/dev/null)"
 check "projects: from the worktree, its repo first" "$ptmp/repo" \
     "$("${app_env[@]}" bash "$task" projects --cwd "$ptmp/appwt/repo/abc-7-fix-login" | jq -r '.projects[0]')"
 
