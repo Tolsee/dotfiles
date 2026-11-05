@@ -2,18 +2,20 @@
 // app's version of the TUI's `herdr-task open`. The ticket herdr-task saved on the branch
 // (branch.<b>.linear-*), the branch's PR with its review and CI, failing checks first, then
 // checks, changed files and the branch on GitHub. Uncommitted work opens the app's own
-// changes view in a split instead of a browser.
+// changes view as a popup: it reads the focused pane's folder live, and a popup leaves focus
+// on the source terminal where a split would take it (and fall back to the space folder).
 //
 // Keys: j/k or ↑/↓ move, 1-9 pick, Enter opens, y copies the link, d opens the diff
-// (uncommitted changes) beside the pane, r reloads, Esc closes.
+// (uncommitted changes), r reloads, Esc closes.
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { focused, spaces, theme, run, exec, props, closeOverlay, notify, window } from "herdr";
+import { focused, spaces, theme, exec, props, closeOverlay, openOverlay, notify, window } from "herdr";
 
 const LINEAR = "#7a88cf"; // the TUI sidebar's ticket color
 const FAILED = ["FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE"];
 const PASSED = ["SUCCESS", "NEUTRAL", "SKIPPED", "COMPLETED"];
+const VISIBLE = 9; // rows shown at once; the window follows the selection
 const icon = (name) => svg(`mods/workspace-chrome/${name}.svg`).size(13).flex_none();
 
 const checkState = (c) => String(c.conclusion || c.state || c.status || "").toUpperCase();
@@ -123,7 +125,7 @@ export default class TaskLinks extends View {
 
   diff() {
     this.close();
-    run("pane.split", { direction: "right", mod: "changes" });
+    openOverlay({ mod: "changes", kind: "popup", width: 0.85, height: 0.85 });
   }
 
   copy(link, cx) {
@@ -146,6 +148,14 @@ export default class TaskLinks extends View {
     else if (k === "r") this.reload(cx);
     else return false;
     return true;
+  }
+
+  // First row of the shown window: scrolls only as far as it takes to keep the selection in it.
+  first() {
+    const max = Math.max(0, this.links.length - VISIBLE);
+    this.top = Math.min(max, Math.max(this.top ?? 0, this.at - VISIBLE + 1));
+    if (this.at < this.top) this.top = this.at;
+    return this.top;
   }
 
   badges(t, link) {
@@ -223,7 +233,9 @@ export default class TaskLinks extends View {
       .child(v_flex().gap(2)
         .when(this.loading && !this.links.length, (el) => el.child(div().px(10).py(8).text_color(t.dim).child("Loading ticket, PR and checks…")))
         .when(!this.loading && this.error, (el) => el.child(div().px(10).py(8).text_color(t.dim).child(this.error)))
-        .children(this.links.map(row)))
+        .children(this.links.map(row).slice(this.first(), this.first() + VISIBLE))
+        .when(this.links.length > VISIBLE, (el) => el.child(div().px(10).text_size(11).text_color(t.dim)
+          .child(`${this.at + 1} of ${this.links.length}`))))
       .child(h_flex().pt(6).gap(14).border_t(1).border_color(t.border).text_size(11).text_color(t.dim)
         .child(hint("↵", "open")).child(hint("y", "copy")).child(hint("d", "diff")).child(hint("r", "reload")).child(hint("esc", "close")));
   }

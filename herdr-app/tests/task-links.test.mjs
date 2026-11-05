@@ -23,7 +23,7 @@ writeFileSync(join(dir, "herdr.mjs"), `
 export const state = { calls: [], focused: { space: "s1", cwd: "/repo" }, exec: async () => ({ code: 1, stdout: "" }) };
 export const focused = () => state.focused, spaces = () => [{ id: "s1", active: true, folder: "/repo", machine: null }];
 export const theme = () => new Proxy({}, { get: (_, k) => "#" + String(k) });
-export const run = (...a) => state.calls.push(["run", ...a]);
+export const openOverlay = (o) => state.calls.push(["overlay", o]);
 export const exec = (...a) => { state.calls.push(["exec", ...a]); return state.exec(...a); };
 export const props = () => ({ overlay: "o1" }), closeOverlay = (id) => state.calls.push(["close", id]);
 export const notify = (n) => state.calls.push(["notify", n]), window = () => ({ platform: "macos" });
@@ -85,7 +85,7 @@ test("loads the saved ticket and the PR, skipping gh on the base branch", async 
   state.exec = async () => ({ code: 1, stdout: "" });
 });
 
-test("keys: j/k wrap, numbers open, d opens the changes split, y copies", () => {
+test("keys: j/k wrap, numbers open, d opens the changes popup, y copies", () => {
   const m = new TaskLinks();
   m.links = buildLinks({ branch: "feat", base: "main", slug: "o/r", dirty: 1 });
   const key = (k, mods = {}) => m.key({ key: k, modifiers: mods }, { write_to_clipboard: (t) => state.calls.push(["clip", t]) });
@@ -103,12 +103,27 @@ test("keys: j/k wrap, numbers open, d opens the changes split, y copies", () => 
 
   state.calls = [];
   key("2"); // uncommitted changes
-  assert.deepEqual(state.calls.map((c) => c[0] === "run" ? [c[1], c[2]] : c[0]),
-    ["close", ["pane.split", { direction: "right", mod: "changes" }]]);
+  assert.deepEqual(state.calls.map((c) => c[0] === "overlay" ? c[1].mod : c[0]), ["close", "changes"]);
 
   state.calls = [];
   m.at = 2;
   key("y");
   assert.deepEqual(state.calls.map((c) => c[0]), ["clip", "notify", "close"]);
   state.calls = [];
+});
+
+test("long lists show a window of rows that follows the selection", () => {
+  const checks = Array.from({ length: 14 }, (_, i) => ({ name: `c${i}`, conclusion: "FAILURE" }));
+  const m = new TaskLinks();
+  m.links = buildLinks({ branch: "b", base: "main", slug: "o/r", pr: { ...PR, statusCheckRollup: checks } });
+  m.at = 0;
+  assert.equal(m.first(), 0);
+  m.at = 12;
+  assert.equal(m.first(), 4);
+  m.at = 5;
+  assert.equal(m.first(), 4);
+  m.at = 2;
+  assert.equal(m.first(), 2);
+  m.at = m.links.length - 1;
+  assert.equal(m.first(), m.links.length - 9);
 });
