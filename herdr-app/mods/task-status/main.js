@@ -68,8 +68,10 @@ export default class TaskStatus extends View {
       }
     }
     // prefix+o (task-links) opens on this, then asks gh itself.
-    if (branch && top) {
-      const all = { ...(shared("task.prs") ?? {}) }, k = `${top}\t${branch}`;
+    // It runs git here, so it only speaks for spaces on this computer (machine "").
+    const local = (spaces().find((s) => s.active)?.machine ?? null) === null;
+    if (branch && top && local) {
+      const all = { ...(shared("task.prs") ?? {}) }, k = `\t${top}\t${branch}`; // task-links prKey(null, ...)
       if (JSON.stringify(all[k] ?? null) !== JSON.stringify(pr)) {
         if (pr) all[k] = pr; else delete all[k];
         setShared("task.prs", all);

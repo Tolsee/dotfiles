@@ -14,10 +14,10 @@ import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { focused, spaces, theme, exec, props, closeOverlay, openOverlay, notify, window, shared, setShared } from "herdr";
 
-// The last PR seen per "<repo>\t<branch>", shared with task-status (which refreshes it every
+// The last PR seen per "<machine>\t<repo>\t<branch>" (machine "" here), shared with task-status (which refreshes it every
 // 20 s), so the PR rows show at once and gh only confirms them.
 export const PR_CACHE = "task.prs";
-export const prKey = (top, branch) => `${top}\t${branch}`;
+export const prKey = (on, top, branch) => `${on ?? ""}\t${top}\t${branch}`;
 export function rememberPr(key, pr) {
   const all = { ...(shared(PR_CACHE) ?? {}) };
   if (pr) all[key] = pr; else delete all[key];
@@ -143,7 +143,7 @@ export default class TaskLinks extends View {
       const [id, url, title] = await Promise.all(["id", "url", "title"].map((k) => git("config", "--get", `branch.${branch}.linear-${k}`)));
       if (id) ticket = { id, url: url || `https://linear.app/issue/${id}`, title };
     }
-    const key = prKey(top, branch);
+    const key = prKey(on, top, branch);
     const pr = onBase ? null : ((shared(PR_CACHE) ?? {})[key] ?? null);
     return { cwd, on, key, branch: onBase ? null : branch, base, slug, ticket, pr, dirty };
   }

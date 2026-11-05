@@ -76,7 +76,7 @@ test("loads git facts and the cached PR without gh, then gh on its own", async (
   };
   const m = new TaskLinks();
   state.calls = [];
-  state.shared = { "task.prs": { "/repo\tabc-1-fix": { ...PR, number: 6 } } };
+  state.shared = { "task.prs": { "\t/repo\tabc-1-fix": { ...PR, number: 6 } } };
   const f = await m.load();
   assert.deepEqual([f.branch, f.base, f.slug, f.dirty, f.ticket, f.pr.number], ["abc-1-fix", "main", "o/r", 2, { id: "ABC-1", url: "https://l/ABC-1", title: "Fix" }, 6]);
   assert.ok(!state.calls.some((c) => c[1] === "gh"), "load never waits for gh");
@@ -154,7 +154,7 @@ test("rows show before gh answers, then the PR arrives and the cache updates", a
   await tasks[0];
   assert.deepEqual(m.links.map((l) => l.kind), ["pr", "failing", "checks", "files", "branch"]);
   assert.equal(m.loading, false);
-  assert.equal(state.shared["task.prs"]["/repo\tfeat"].number, 7);
+  assert.equal(state.shared["task.prs"]["\t/repo\tfeat"].number, 7);
   state.exec = async () => ({ code: 1, stdout: "" });
   state.shared = {};
 });

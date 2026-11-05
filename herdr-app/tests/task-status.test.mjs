@@ -93,7 +93,7 @@ test("loads the ticket saved on the branch and the branch's PR", async () => {
   assert.deepEqual(m.ticket, { id: "ABC-12", url: "https://l/ABC-12" });
   assert.equal(m.pr.number, 9);
   assert.ok(texts(m.render()).includes("#9 merged"));
-  assert.equal(state.shared["task.prs"]["/repo\tabc-12-fix"].number, 9, "shared with task-links");
+  assert.equal(state.shared["task.prs"]["\t/repo\tabc-12-fix"].number, 9, "shared with task-links");
   state.exec = async () => ({ code: 1, stdout: "" });
   state.calls = [];
 });
