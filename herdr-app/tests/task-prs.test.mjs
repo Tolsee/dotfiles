@@ -113,6 +113,7 @@ test("worktree: a fork PR fetches its head into pr-<n> first", async () => {
   state.spaces = [];
   state.exec = async (cmd, args, opts) => {
     if (cmd === "git" && args[0] === "fetch") return { code: 0, stdout: "", stderr: "" };
+    if (cmd === "git" && args[0] === "show-ref") return { code: state.havePr ? 0 : 1, stdout: "", stderr: "" };
     if (cmd === "git") return { code: 0, stdout: "git@github.com:o/r.git", stderr: "" };
     if (args[3] === "projects") return { code: 0, stdout: JSON.stringify({ projects: ["/r/work/r"] }), stderr: "" };
     return { code: 0, stdout: JSON.stringify({ path: "/wt/r/pr-5", branch: "pr-5" }), stderr: "" };
@@ -121,6 +122,16 @@ test("worktree: a fork PR fetches its head into pr-<n> first", async () => {
   m.worktree({ number: 5, title: "From a fork", branch: "main", repo: "o/r", fork: true }, cxFor(tasks));
   await flush(tasks);
   const ex = state.calls.filter((c) => c[0] === "exec");
-  assert.ok(ex.some((c) => c[1] === "git" && c[2].join(" ") === "fetch -q origin +pull/5/head:pr-5" && c[3].cwd === "/r/work/r"));
+  assert.ok(ex.some((c) => c[1] === "git" && c[2].join(" ") === "fetch -q origin pull/5/head:pr-5" && c[3].cwd === "/r/work/r"));
   assert.deepEqual(ex.find((c) => c[2][3] === "prepare")[2].slice(3, 6), ["prepare", "pr-5", "--project"]);
+
+  // Opened before: pr-5 exists (maybe checked out); no fetch, prepare reopens it.
+  state.havePr = true;
+  state.calls = [];
+  const t2 = [], m2 = new mod.default();
+  m2.worktree({ number: 5, title: "From a fork", branch: "main", repo: "o/r", fork: true }, cxFor(t2));
+  await flush(t2);
+  assert.ok(!state.calls.some((c) => c[0] === "exec" && c[2][0] === "fetch"));
+  assert.ok(state.calls.some((c) => c[0] === "exec" && c[2][3] === "prepare"));
+  state.havePr = false;
 });

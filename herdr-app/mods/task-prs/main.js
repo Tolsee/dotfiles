@@ -120,8 +120,13 @@ export default class TaskPrs extends View {
         let branch = pr.branch;
         if (pr.fork) {
           branch = `pr-${pr.number}`;
-          const f = await exec("git", ["fetch", "-q", "origin", `+pull/${pr.number}/head:${branch}`], { cwd: repo });
-          if (f.code !== 0) throw new Error(f.stderr.trim().split("\n").pop() || `git fetch pull/${pr.number}/head failed`);
+          // Once fetched, pr-<n> is kept as it is (it may be checked out, or hold review
+          // commits): prepare reopens it. Pull it there for newer commits.
+          const have = await exec("git", ["show-ref", "-q", "--verify", `refs/heads/${branch}`], { cwd: repo });
+          if (have.code !== 0) {
+            const f = await exec("git", ["fetch", "-q", "origin", `pull/${pr.number}/head:${branch}`], { cwd: repo });
+            if (f.code !== 0) throw new Error(f.stderr.trim().split("\n").pop() || `git fetch pull/${pr.number}/head failed`);
+          }
         }
         const r = await herdrTask(["prepare", branch, "--project", repo, "--title", pr.title, "--agent", "none"]);
         if (r.code !== 0) throw new Error(r.stderr.trim().split("\n").pop()?.replace(/^herdr-task: /, "") || "herdr-task prepare failed");
