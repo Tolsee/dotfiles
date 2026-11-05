@@ -65,6 +65,7 @@
     "ctrl-b o": "mod.open:task-links",
     "ctrl-b t": "mod.open:task-start",
     "ctrl-b f": "mod.open:task-projects",
+    "ctrl-b m": "mod.open:task-prs",
     "ctrl-b b": "layout.toggle:sidebar",
     "ctrl-b ?": "app.help",
     "ctrl-b shift-n": "space.new",
