@@ -42,7 +42,9 @@ test("checks the merged worktrees, toggles, and removes the checked ones after c
         { path: "/wt/app/a", branch: "a", verdict: "merged into main", remove: true },
         { path: "/wt/app/b", branch: "b", verdict: "PR merged", remove: true },
         { path: "/wt/app/c", branch: "c", verdict: "uncommitted changes", remove: false }] }), stderr: "" }
-    : { code: 0, stdout: JSON.stringify({ removed: ["/wt/app/a"], kept: [] }), stderr: "" };
+    : args.includes("--check")
+      ? { code: 0, stdout: JSON.stringify({ removable: ["/wt/app/a"], kept: [] }), stderr: "" }
+      : { code: 0, stdout: JSON.stringify({ removed: ["/wt/app/a"], kept: [] }), stderr: "" };
   const tasks = [], cx = cxFor(tasks);
   const m = new mod.default();
   m.init({}, cx);
@@ -53,7 +55,8 @@ test("checks the merged worktrees, toggles, and removes the checked ones after c
   m.key({ key: "enter", modifiers: {} }, cx);
   await flush(tasks);
   assert.deepEqual(state.calls.filter((c) => c[0] === "run").map((c) => [c[1], c[2]]), [["space.close", { id: "s1", confirmed: true }]]);
-  assert.deepEqual(state.calls.find((c) => c[0] === "exec" && c[2][3] === "prune-remove")[2].slice(3), ["prune-remove", "--cwd", "/r/app", "/wt/app/a"]);
+  const pr = state.calls.filter((c) => c[0] === "exec" && c[2][3] === "prune-remove").map((c) => c[2].slice(3));
+  assert.deepEqual(pr, [["prune-remove", "--cwd", "/r/app", "--check", "/wt/app/a"], ["prune-remove", "--cwd", "/r/app", "/wt/app/a"]]);
   assert.equal(state.calls.find((c) => c[0] === "notify")[1].title, "Removed 1 worktree");
 });
 
@@ -70,5 +73,34 @@ test("not in a repository says so", async () => {
   m.init({}, cxFor(tasks));
   await flush(tasks);
   assert.equal(m.error, "Focus a terminal in a repository first");
+  state.focused = { cwd: "/r/app" };
+});
+
+test("a worktree the check keeps keeps its space; nothing is removed", async () => {
+  state.calls = [];
+  state.spaces = [{ id: "s1", folder: "/wt/app/a", machine: null, tabs: [] }];
+  state.panes = [];
+  state.exec = async (_c, args) => args[3] === "prunable"
+    ? { code: 0, stdout: JSON.stringify({ repo: "/r/app", worktrees: [{ path: "/wt/app/a", branch: "a", verdict: "merged into main", remove: true }] }), stderr: "" }
+    : { code: 0, stdout: JSON.stringify({ removable: [], kept: [{ path: "/wt/app/a", why: "uncommitted changes" }] }), stderr: "" };
+  const tasks = [], cx = cxFor(tasks), m = new mod.default();
+  m.init({}, cx);
+  await flush(tasks);
+  m.key({ key: "enter", modifiers: {} }, cx);
+  await flush(tasks);
+  assert.equal(state.calls.filter((c) => c[0] === "run").length, 0, "no space closed");
+  assert.equal(state.calls.filter((c) => c[0] === "exec" && c[2][3] === "prune-remove").length, 1, "only the check ran");
+  assert.match(state.calls.find((c) => c[0] === "notify")[1].body, /kept a: uncommitted changes/);
+});
+
+test("a remote space is refused", async () => {
+  state.calls = [];
+  state.spaces = [{ id: "s9", machine: "vps", tabs: [] }];
+  state.focused = { space: "s9", cwd: "/srv/app" };
+  const tasks = [], m = new mod.default();
+  m.init({}, cxFor(tasks));
+  await flush(tasks);
+  assert.match(m.error, /not vps's/);
+  assert.equal(state.calls.filter((c) => c[0] === "exec").length, 0);
   state.focused = { cwd: "/r/app" };
 });

@@ -1,8 +1,9 @@
 // prefix+alt+t (keys.json "mod.open:task-prune"): the app's version of `herdr-task prune`.
 // Every worktree of the focused repository with prune's verdict (`herdr-task prunable`):
 // merged ones are checked, ones with uncommitted changes, an open PR or unmerged commits are
-// not. Enter closes the checked worktrees' spaces and removes them (`herdr-task prune-remove`,
-// which re-checks each for an open PR); branches are kept.
+// not. Enter re-checks the checked ones (`herdr-task prune-remove --check`: no changes, no
+// open PR), closes the spaces of those that pass, and removes them; branches are kept.
+// This computer's repositories only: a remote space's folder is on another machine.
 //
 // Keys: j/k or ↑/↓ move, space toggles, a toggles all, Enter removes the checked ones, Esc closes.
 
@@ -41,9 +42,12 @@ export default class TaskPrune extends View {
     this.loading = true;
     this.busy = false;
     this.error = null;
-    this.cwd = focused()?.cwd ?? null;
+    const f = focused();
+    this.cwd = f?.cwd ?? null;
+    this.remote = spaces().find((s) => s.id === f?.space)?.machine ?? null;
     cx.spawn(async (cx) => {
       try {
+        if (this.remote) throw new Error(`Prune works on this computer's repositories, not ${this.remote}'s`);
         if (!this.cwd) throw new Error("Focus a terminal in a repository first");
         const r = await herdrTask(["prunable", "--cwd", this.cwd]);
         if (r.code !== 0) throw new Error(why(r, "prunable"));
@@ -70,11 +74,19 @@ export default class TaskPrune extends View {
     this.error = null;
     cx.spawn(async (cx) => {
       try {
+        // Check first, so a worktree that is kept never loses its space and agents.
+        const c = await herdrTask(["prune-remove", "--cwd", this.repo, "--check", ...paths]);
+        if (c.code !== 0) throw new Error(why(c, "prune-remove --check"));
+        const plan = JSON.parse(c.stdout);
         // A worktree in use by a space would come back: close those spaces first.
-        for (const id of new Set(paths.flatMap(spacesIn))) run("space.close", { id, confirmed: true });
-        const r = await herdrTask(["prune-remove", "--cwd", this.repo, ...paths]);
-        if (r.code !== 0) throw new Error(why(r, "prune-remove"));
-        const out = JSON.parse(r.stdout);
+        for (const id of new Set(plan.removable.flatMap(spacesIn))) run("space.close", { id, confirmed: true });
+        let out = { removed: [], kept: [] };
+        if (plan.removable.length) {
+          const r = await herdrTask(["prune-remove", "--cwd", this.repo, ...plan.removable]);
+          if (r.code !== 0) throw new Error(why(r, "prune-remove"));
+          out = JSON.parse(r.stdout);
+        }
+        out.kept = [...plan.kept, ...out.kept];
         this.dismiss();
         const kept = out.kept.map((k) => `kept ${k.path.split("/").pop()}: ${k.why}`);
         notify({

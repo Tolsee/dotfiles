@@ -59,8 +59,9 @@
 #   herdr-task ship-prompt                what prefix+u tells the task's agent
 #   herdr-task ship-direct --cwd DIR      prefix+u in the app with no agent: push, draft PR
 #   herdr-task prunable --cwd DIR         prune's verdict for each worktree of DIR's repository
-#   herdr-task prune-remove --cwd DIR PATH...
-#                                         remove those worktrees (open PRs re-checked)
+#   herdr-task prune-remove --cwd DIR [--check] PATH...
+#                                         remove those worktrees (changes and open PRs checked
+#                                         first); --check only says which would go
 #   herdr-task open-file <url> [--pane P] open a file:// link in $EDITOR in a split beside the
 #                                         pane, at the line the link carries (#L12 or :12)
 #
@@ -1318,36 +1319,40 @@ cmd_prunable() {
         END { out() }') | jq -sc --arg repo "$repo_root" '{repo: $repo, worktrees: .}'
 }
 
-# prune-remove --cwd DIR PATH...: remove those worktrees of DIR's repository (branches kept),
-# each re-checked for an open PR first. The app closes their spaces before. {removed, kept}.
+# prune-remove --cwd DIR [--check] PATH...: remove those worktrees of DIR's repository
+# (branches kept), each checked first: not the main checkout, no uncommitted changes, no open
+# PR (a failed lookup counts as one). --check only answers which would go, so the app can
+# close their spaces first and leave the rest alone. {removed (or removable), kept}.
 cmd_prune_remove() {
-    [[ "${1:-}" == --cwd && -n "${2:-}" ]] || die "usage: herdr-task prune-remove --cwd DIR PATH..."
-    local repo_root wt b open_count removed=() kept=()
+    [[ "${1:-}" == --cwd && -n "${2:-}" ]] || die "usage: herdr-task prune-remove --cwd DIR [--check] PATH..."
+    local repo_root wt b open_count why check=false ok=() kept=()
     repo_root=$(repo_of "$2")
     [[ -n "$repo_root" ]] || die "$2 is not in a git repository"
     shift 2
+    [[ "${1:-}" == --check ]] && { check=true; shift; }
     for wt in "$@"; do
-        if [[ "$(cd "$wt" 2>/dev/null && pwd -P)" == "$(cd "$repo_root" && pwd -P)" ]]; then
-            kept+=("$(jq -nc --arg p "$wt" '{path: $p, why: "the main checkout"}')")
-            continue
-        fi
+        why=""
         b=$(git -C "$wt" symbolic-ref --short -q HEAD 2>/dev/null || true)
-        if [[ -n "$b" ]] && command -v gh >/dev/null 2>&1; then
+        if [[ "$(cd "$wt" 2>/dev/null && pwd -P)" == "$(cd "$repo_root" && pwd -P)" ]]; then
+            why="the main checkout"
+        elif [[ -d "$wt" && -n "$(git -C "$wt" status --porcelain 2>/dev/null)" ]]; then
+            why="uncommitted changes"
+        elif [[ -n "$b" ]] && command -v gh >/dev/null 2>&1; then
             open_count=$(cd "$repo_root" && gh pr list --head "$b" --state open --limit 1 --json number --jq 'length' 2>/dev/null) || open_count=""
-            if [[ "$open_count" != 0 ]]; then
-                kept+=("$(jq -nc --arg p "$wt" '{path: $p, why: "open PR or GitHub lookup failed"}')")
-                continue
-            fi
+            [[ "$open_count" == 0 ]] || why="open PR or GitHub lookup failed"
         fi
-        if [[ ! -d "$wt" ]] || git -C "$repo_root" worktree remove "$wt" 2>/dev/null; then
-            removed+=("$wt")
+        if [[ -z "$why" && "$check" == false && -d "$wt" ]] && ! git -C "$repo_root" worktree remove "$wt" 2>/dev/null; then
+            why="git worktree remove failed"
+        fi
+        if [[ -n "$why" ]]; then
+            kept+=("$(jq -nc --arg p "$wt" --arg why "$why" '{path: $p, why: $why}')")
         else
-            kept+=("$(jq -nc --arg p "$wt" '{path: $p, why: "git worktree remove failed (uncommitted changes?)"}')")
+            ok+=("$wt")
         fi
     done
-    git -C "$repo_root" worktree prune
+    [[ "$check" == true ]] || git -C "$repo_root" worktree prune
     # ${a[@]+...}: bash 3.2 calls an empty array unbound under set -u.
-    jq -nc --args '{removed: $ARGS.positional}' ${removed[@]+"${removed[@]}"} \
+    jq -nc --arg key "$([[ "$check" == true ]] && echo removable || echo removed)" '{($key): $ARGS.positional}' --args ${ok[@]+"${ok[@]}"} \
         | jq -c --argjson kept "[$(IFS=,; printf '%s' "${kept[*]+${kept[*]}}")]" '. + {kept: $kept}'
 }
 

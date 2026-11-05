@@ -315,6 +315,10 @@ check "prunable: merged worktrees go, unmerged stay" \
     "abc-7-fix-login true merged into main|fix-flaky-test true merged into main|remote-only false unmerged, no PR" \
     "$(jq -r '[.worktrees[] | select(.branch | test("^(abc-7-fix-login|fix-flaky-test|remote-only)$")) | "\(.branch) \(.remove) \(.verdict)"] | sort | join("|")' <<<"$out")"
 check "prunable: never the main checkout" 0 "$(jq --arg r "$ptmp/repo" '[.worktrees[] | select(.path == $r)] | length' <<<"$out")"
+echo dirty > "$ptmp/appwt/repo/fix-flaky-test/dirty.txt"
+out=$("${app_env[@]}" bash "$task" prune-remove --cwd "$ptmp/repo" --check "$ptmp/appwt/repo/abc-7-fix-login" "$ptmp/appwt/repo/fix-flaky-test" "$ptmp/repo" 2>/dev/null)
+check "prune-remove --check: only the clean one, nothing removed" "$ptmp/appwt/repo/abc-7-fix-login|uncommitted changes,the main checkout|yes" \
+    "$(jq -r '"\(.removable | join(","))|\([.kept[].why] | join(","))"' <<<"$out")|$([[ -d "$ptmp/appwt/repo/abc-7-fix-login" ]] && echo yes)"
 out=$("${app_env[@]}" bash "$task" prune-remove --cwd "$ptmp/repo" "$ptmp/appwt/repo/abc-7-fix-login" 2>/dev/null)
 check "prune-remove: removed" "$ptmp/appwt/repo/abc-7-fix-login|0" "$(jq -r '"\(.removed | join(","))|\(.kept | length)"' <<<"$out")"
 check "prune-remove: gone, branch kept" "no abc-7-fix-login" \
