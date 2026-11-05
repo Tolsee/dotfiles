@@ -1,0 +1,311 @@
+#!/usr/bin/env bash
+# Task workflow for Rex, the Rex counterpart of herdr-task. Same tickets, branches and
+# worktrees (the ticket is saved on the branch as git config branch.<b>.linear-*), so a
+# task started from either tool opens in the other.
+#
+#   rex-task                      interactive (ctrl+b>t): a Linear link or id, a branch name,
+#                                 or free text; suggested from the clipboard. Creates (or
+#                                 reopens) the worktree, opens a Rex session named
+#                                 "ABC-123 title" there and starts the agent with the ticket.
+#   rex-task start <ticket> [-p DIR] [-t TITLE] [-a claude|codex|none] [--prompt TEXT]
+#   rex-task open [DIR]           (ctrl+b>o) the ticket, PR, changed files, checks and branch for
+#                                 the checkout at DIR (default: the current directory); opens
+#                                 one, or picks between several with fzf
+#   rex-task project [DIR]        (ctrl+b>f) open or focus a session for a project under
+#                                 HERDR_TASK_PROJECT_ROOTS
+#
+# REX_TASK_WORKTREES is where worktrees go (default ~/.herdr/worktrees, Herdr's directory).
+# Switching the app to the new session needs Settings > Server > Client Info > Remote Control;
+# without it the session is created and ctrl+b>w lists it.
+
+set -euo pipefail
+
+die() { printf 'rex-task: %s\n' "$*" >&2; exit 1; }
+note() { printf 'rex-task: %s\n' "$*" >&2; }
+
+for dependency in git jq; do
+    command -v "$dependency" >/dev/null 2>&1 || die "$dependency is required"
+done
+rex_bin=$(command -v rex || true)
+[[ -n "$rex_bin" || -z "${REX_BIN_DIR:-}" ]] || rex_bin="$REX_BIN_DIR/rex"
+[[ -n "$rex_bin" ]] || die "rex is required"
+if [[ -z "${FZF_DEFAULT_OPTS_FILE:-}" && -f "$HOME/.config/fzf/fzfrc" ]]; then
+    export FZF_DEFAULT_OPTS_FILE="$HOME/.config/fzf/fzfrc"
+fi
+worktrees_dir="${REX_TASK_WORKTREES:-$HOME/.herdr/worktrees}"
+cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/herdr-task"   # shared with herdr-task
+default_agent="${HERDR_TASK_AGENT:-claude}"
+linear_glyph=$(printf '\356\206\260')  # U+E1B0, Linear logo from herdr/fonts/HerdrTaskIcons
+
+# OSC 8 hyperlink, clickable in Rex, Ghostty and Herdr.
+hyperlink() { printf '\033]8;;%s\033\\%s\033]8;;\033\\' "$1" "$2"; }
+
+slugify() {
+    printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//' | cut -c1-60
+}
+
+# Sets ticket_id, ticket_url, ticket_slug and branch from a link, an id, or a branch name.
+parse_ticket() {
+    local ref=$1
+    ticket_id="" ticket_url="" ticket_slug=""
+    if [[ "$ref" =~ ^https?://[^/]*linear\.app/[^/]+/issue/([A-Za-z][A-Za-z0-9]*-[0-9]+)(/([^/?#]*))? ]]; then
+        ticket_id=$(printf '%s' "${BASH_REMATCH[1]}" | tr '[:lower:]' '[:upper:]')
+        ticket_slug=${BASH_REMATCH[3]:-}
+        ticket_url=${ref%%[?#]*}
+    elif [[ "$ref" =~ ^([A-Za-z][A-Za-z0-9]*-[0-9]+)$ ]]; then
+        ticket_id=$(printf '%s' "${BASH_REMATCH[1]}" | tr '[:lower:]' '[:upper:]')
+        local org
+        org=$(cat "$cache_dir/linear-org" 2>/dev/null || true)
+        [[ -z "$org" ]] || ticket_url="https://linear.app/$org/issue/$ticket_id"
+    fi
+    if [[ -n "$ticket_id" ]]; then
+        branch=$(slugify "$ticket_id")
+        [[ -n "$ticket_slug" ]] && branch="$branch-$(slugify "$ticket_slug")"
+        branch=${branch:0:60}
+    elif git check-ref-format --branch "$ref" >/dev/null 2>&1; then
+        branch=$ref
+    else
+        branch=$(slugify "$ref")
+    fi
+    [[ -n "$branch" ]] || die "could not derive a branch name from '$ref'"
+}
+
+# The session for a label, if one exists.
+session_by_label() {
+    "$rex_bin" ls --json | jq -r --arg l "$1" --arg t "${2:-}" '
+        first((.sessions[] | select(.label == $l)), (.sessions[] | select($t != "" and (.label | startswith($t + " ") or . == $t))) | .session_id) // empty'
+}
+
+# Show a session in the app. Needs Remote Control; otherwise say where to find it.
+show_session() {
+    local session=$1 label=$2 client
+    client=$("$rex_bin" client ls --json | jq -r 'first(.clients[] | select(.info.kind == "app") | .client_id) // empty')
+    if [[ -n "$client" ]] && "$rex_bin" -C "$client" "do" session.select "session_id=$session" >/dev/null 2>&1; then
+        return 0
+    fi
+    note "session '$label' is ready: ctrl+b>w to switch (turn on Remote Control in Rex to switch automatically)"
+    sleep 2
+}
+
+# open_session <label> <dir> [command] [ticket]: focus the session with this label (or any
+# session named after the ticket), else create it in dir and type command into its shell.
+open_session() {
+    local label=$1 dir=$2 command=${3:-} ticket=${4:-} session created block
+    session=$(session_by_label "$label" "$ticket")
+    if [[ -z "$session" ]]; then
+        created=$("$rex_bin" new "$label" -c "$dir" --json)
+        session=$(jq -r '.session_id' <<<"$created")
+        block=$(jq -r '.initial_windows[0].block_ids[0]' <<<"$created")
+        if [[ -n "$command" ]]; then
+            sleep 0.5   # let the shell draw its prompt before typing into it
+            "$rex_bin" send -s "$session" -b "$block" "$command"$'\n' >/dev/null
+        fi
+        note "created session '$label' in $dir"
+    fi
+    show_session "$session" "$label"
+}
+
+project_roots() {
+    [[ -n "${HERDR_TASK_PROJECT_ROOTS:-}" ]] || return 0
+    local -a roots
+    IFS=: read -r -a roots <<<"$HERDR_TASK_PROJECT_ROOTS"
+    find "${roots[@]}" -mindepth 2 -maxdepth 2 -name .git 2>/dev/null | sed 's#/\.git$##' | sort
+}
+
+# pick_project [preferred]: the preferred repository first, then every one under the roots.
+pick_project() {
+    local list
+    list=$( { [[ -z "${1:-}" ]] || printf '%s\n' "$1"; project_roots; } | awk 'NF && !seen[$0]++')
+    [[ -n "$list" ]] || { git rev-parse --show-toplevel 2>/dev/null || die "set HERDR_TASK_PROJECT_ROOTS or pass --project"; return; }
+    command -v fzf >/dev/null 2>&1 || { head -n1 <<<"$list"; return; }
+    fzf --prompt='Project > ' <<<"$list"
+}
+
+cmd_start() {
+    local ref="" project="" title="" agent="$default_agent" prompt=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -p|--project) project=$2; shift 2 ;;
+            -t|--title) title=$2; shift 2 ;;
+            -a|--agent) agent=$2; shift 2 ;;
+            --prompt) prompt=$2; shift 2 ;;
+            -*) die "unknown option: $1" ;;
+            *) [[ -z "$ref" ]] || die "unexpected argument: $1"; ref=$1; shift ;;
+        esac
+    done
+    [[ -n "$ref" ]] || die "usage: rex-task start <ticket link | id | branch> [options]"
+    project=${project:-$(git rev-parse --show-toplevel 2>/dev/null || die "not inside a repository; pass --project")}
+    project=$(cd "$project" && pwd -P)
+
+    local ticket_id ticket_url ticket_slug branch label path
+    parse_ticket "$ref"
+    if [[ -n "$ticket_id" ]]; then
+        label="$ticket_id ${title:-${ticket_slug//-/ }}"
+    else
+        label="${title:-$branch}"
+    fi
+    label=${label% }
+    label=${label:0:48}
+
+    # Reuse the branch's worktree if it has one (a bare id also matches id-slug branches).
+    path=$(git -C "$project" worktree list --porcelain | awk -v b="refs/heads/$branch" -v p="refs/heads/$branch-" -v bare="$([[ -n "$ticket_id" && -z "$ticket_slug" ]] && echo 1)" '
+        /^worktree / { wt = substr($0, 10) }
+        /^branch / { r = substr($0, 8); if (r == b || (bare && index(r, p) == 1)) { print wt; exit } }')
+    if [[ -z "$path" ]]; then
+        path="$worktrees_dir/$(basename "$project")/$branch"
+        mkdir -p "$(dirname "$path")"
+        git -C "$project" fetch -q origin 2>/dev/null || true
+        if git -C "$project" show-ref -q --verify "refs/heads/$branch"; then
+            git -C "$project" worktree add -q "$path" "$branch"
+        else
+            local base
+            base=$(git -C "$project" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null || echo HEAD)
+            git -C "$project" worktree add -q -b "$branch" "$path" "$base"
+            git -C "$path" branch -q --unset-upstream 2>/dev/null || true
+        fi
+        # Gitignored env files the worktree needs that git does not carry over.
+        git -C "$project" ls-files --others --ignored --exclude-standard -- '.env' '.env.*' 'app/.env' 'app/.env.*' 2>/dev/null \
+            | while read -r f; do
+                [[ -f "$project/$f" && ! -e "$path/$f" ]] || continue
+                mkdir -p "$path/$(dirname "$f")" && cp "$project/$f" "$path/$f" && note "copied $f"
+            done
+        note "worktree $path"
+    else
+        note "branch $branch already has a worktree at $path, opening it"
+        # A bare id reopening an id-slug branch: name the session after the slug, as before.
+        local b_now
+        b_now=$(git -C "$path" symbolic-ref --short -q HEAD || true)
+        if [[ -n "$ticket_id" && -z "$title" && -z "$ticket_slug" && "$b_now" == "$branch"-* ]]; then
+            title=$(git -C "$project" config --get "branch.$b_now.linear-title" 2>/dev/null || true)
+            local rest=${b_now#"$branch"-}
+            label="$ticket_id ${title:-${rest//-/ }}"
+            label=${label:0:48}
+        fi
+    fi
+
+    if [[ -n "$ticket_id" ]]; then
+        local b
+        b=$(git -C "$path" symbolic-ref --short -q HEAD || printf '%s' "$branch")
+        git -C "$project" config "branch.$b.linear-id" "$ticket_id"
+        # Keep a saved link (it carries the slug) over one rebuilt from a bare id.
+        if [[ -n "$ticket_slug" ]] || ! git -C "$project" config --get "branch.$b.linear-url" >/dev/null 2>&1; then
+            [[ -z "$ticket_url" ]] || git -C "$project" config "branch.$b.linear-url" "$ticket_url"
+        fi
+        ticket_url=$(git -C "$project" config --get "branch.$b.linear-url" 2>/dev/null || printf '%s' "$ticket_url")
+        [[ -z "$title" ]] || git -C "$project" config "branch.$b.linear-title" "$title"
+        mkdir -p "$cache_dir"
+        if [[ "$ticket_url" =~ ^https?://[^/]*linear\.app/([^/]+)/issue/ ]]; then
+            printf '%s\n' "${BASH_REMATCH[1]}" > "$cache_dir/linear-org"
+        fi
+        { [[ -f "$cache_dir/team-repos" ]] && awk -F'\t' -v t="${ticket_id%%-*}" '$1 != t' "$cache_dir/team-repos"
+          printf '%s\t%s\n' "${ticket_id%%-*}" "$project"; } > "$cache_dir/team-repos.tmp" && mv -f "$cache_dir/team-repos.tmp" "$cache_dir/team-repos"
+        printf '%s  %s\n' "$linear_glyph" "$(hyperlink "${ticket_url:-$ticket_id}" "$ticket_id")" >&2
+    fi
+
+    local command=""
+    if [[ "$agent" != none ]]; then
+        if [[ -z "$prompt" ]]; then
+            if [[ -n "$ticket_id" ]]; then
+                prompt="Work on ${ticket_url:-$ticket_id}. Groom it first (groom skill)."
+                [[ -n "$title" ]] || prompt="$prompt After reading it, name this Rex session after it: rex session rename \"\$REX_SESSION\" \"$ticket_id <ticket title>\"."
+            else
+                prompt="Task: ${title:-$branch}. Groom it first (groom skill)."
+            fi
+        fi
+        command="$agent $(printf '%q' "$prompt")"
+    fi
+    open_session "$label" "$path" "$command" "$ticket_id"
+}
+
+cmd_interactive() {
+    local ref suggestion clip ticket_id ticket_url ticket_slug branch project team_repo=""
+    clip=$(pbpaste 2>/dev/null | head -n1 | tr -d '[:space:]' || true)
+    suggestion=""
+    if [[ "$clip" =~ ^https?://[^/]*linear\.app/[^/]+/issue/ || "$clip" =~ ^[A-Za-z][A-Za-z0-9]*-[0-9]+$ ]]; then
+        suggestion=$clip
+    fi
+    set -o vi
+    read -e -r -p "Ticket link, id, branch, or task${suggestion:+ [$suggestion]}: " ref || exit 0
+    ref=${ref:-$suggestion}
+    [[ -n "$ref" ]] || exit 0
+    parse_ticket "$ref"
+    if [[ -n "$ticket_id" && -f "$cache_dir/team-repos" ]]; then
+        team_repo=$(awk -F'\t' -v t="${ticket_id%%-*}" '$1 == t { r = $2 } END { print r }' "$cache_dir/team-repos")
+    fi
+    project=$(pick_project "$team_repo") || exit 0
+    [[ -n "$project" ]] || exit 0
+    # Free text is a task: keep it as the title and first prompt, with the slug as the branch.
+    if [[ -z "$ticket_id" ]] && ! git check-ref-format --branch "$ref" >/dev/null 2>&1; then
+        cmd_start "$ref" --project "$project" --title "$ref"
+    else
+        cmd_start "$ref" --project "$project"
+    fi
+}
+
+cmd_open() {
+    local dir=${1:-$PWD} branch slug base pr_json="" links id url title choice
+    git -C "$dir" rev-parse --git-dir >/dev/null 2>&1 || die "$dir is not a git checkout"
+    branch=$(git -C "$dir" symbolic-ref --short -q HEAD || true)
+    slug=$(git -C "$dir" remote get-url origin 2>/dev/null | sed -E 's#\.git$##' | sed -nE 's#^.*github\.com[:/]([^/]+/[^/]+)$#\1#p' || true)
+    base=$(git -C "$dir" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##' || true)
+    [[ "$branch" != "${base:-main}" ]] || branch=""
+    if [[ -n "$branch" ]] && command -v gh >/dev/null 2>&1; then
+        pr_json=$(cd "$dir" && gh pr view --json number,url,title,statusCheckRollup 2>/dev/null) || pr_json=""
+    fi
+    id=$(git -C "$dir" config --get "branch.$branch.linear-id" 2>/dev/null || true)
+    url=$(git -C "$dir" config --get "branch.$branch.linear-url" 2>/dev/null || true)
+    title=$(git -C "$dir" config --get "branch.$branch.linear-title" 2>/dev/null || true)
+    if [[ -z "$id" && "${branch##*/}" =~ ^([A-Za-z][A-Za-z0-9]*)-([0-9]+)(-|$) ]]; then
+        local org
+        org=$(cat "$cache_dir/linear-org" 2>/dev/null || true)
+        id="$(printf '%s' "${BASH_REMATCH[1]}" | tr '[:lower:]' '[:upper:]')-${BASH_REMATCH[2]}"
+        [[ -z "$org" ]] || url="https://linear.app/$org/issue/$id"
+    fi
+
+    links=$( {
+        [[ -z "$url" ]] || printf '%s  %s  %s\t%s\n' "$linear_glyph" "$id" "$title" "$url"
+        if [[ -n "$pr_json" ]]; then
+            jq -r '.url as $u
+                | "PR  #\(.number)  \(.title)\t\($u)",
+                  "    changed files\t\($u)/files",
+                  "    checks\t\($u)/checks",
+                  (.statusCheckRollup[]?
+                    | select((if (.conclusion // "") != "" then .conclusion else (.state // "") end | ascii_upcase) as $c
+                        | ["FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE"] | index($c))
+                    | "    failing: \(.name // .context)\t\(.detailsUrl // .targetUrl // "")")' <<<"$pr_json"
+        elif [[ -n "$slug" && -n "$branch" ]]; then
+            printf 'compare %s\thttps://github.com/%s/compare/%s...%s\n' "$branch" "$slug" "${base:-main}" "$branch"
+        fi
+        [[ -z "$slug" || -z "$branch" ]] || printf 'branch %s\thttps://github.com/%s/tree/%s\n' "$branch" "$slug" "$branch"
+    } | awk -F'\t' 'NF == 2 && $2 != "" && !seen[$2]++')
+
+    [[ -n "$links" ]] || { note "no ticket, PR or GitHub branch for $dir"; sleep 2; exit 1; }
+    if [[ $(wc -l <<<"$links") -eq 1 ]] || ! command -v fzf >/dev/null 2>&1; then
+        choice=$(head -n1 <<<"$links")
+    else
+        choice=$(fzf --delimiter=$'\t' --with-nth=1 --prompt='Open > ' <<<"$links") || exit 0
+    fi
+    open "${choice#*$'\t'}"
+}
+
+cmd_project() {
+    local dir=${1:-}
+    if [[ -z "$dir" ]]; then
+        [[ -n "${HERDR_TASK_PROJECT_ROOTS:-}" ]] || die "set HERDR_TASK_PROJECT_ROOTS"
+        command -v fzf >/dev/null 2>&1 || die "fzf is required"
+        local -a roots
+        IFS=: read -r -a roots <<<"$HERDR_TASK_PROJECT_ROOTS"
+        dir=$(find "${roots[@]}" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort | fzf --prompt='Project > ') || exit 0
+    fi
+    dir=$(cd "$dir" && pwd -P)
+    open_session "$(basename "$dir")" "$dir"
+}
+
+case "${1:-}" in
+    "") cmd_interactive ;;
+    start) shift; cmd_start "$@" ;;
+    open) shift; cmd_open "$@" ;;
+    project) shift; cmd_project "$@" ;;
+    -h|--help) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//' ;;
+    *) die "unknown command: $1 (see rex-task --help)" ;;
+esac
