@@ -62,6 +62,7 @@
     "ctrl-b q": "app.hide",
     "ctrl-b w": "mod.open:picker",
     "ctrl-b g": "mod.open:picker",
+    "ctrl-b o": "mod.open:task-links",
     "ctrl-b b": "layout.toggle:sidebar",
     "ctrl-b ?": "app.help",
     "ctrl-b shift-n": "space.new",
