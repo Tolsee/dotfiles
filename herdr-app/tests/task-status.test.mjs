@@ -40,6 +40,7 @@ export const run = (...a) => state.calls.push(["run", ...a]);
 export const openOverlay = (o) => state.calls.push(["overlay", o]);
 export const exec = (...a) => { state.calls.push(["exec", ...a]); return state.exec(...a); };
 export const nextCommand = () => new Promise(() => {});
+export const shared = (k) => state.shared?.[k], setShared = (k, v) => { state.shared = { ...state.shared, [k]: v }; };
 `);
 const src = readFileSync(join(here, "../mods/task-status/main.js"), "utf8")
   .replace('from "gpui-kit"', 'from "./ui.mjs"').replace('from "gpui-base"', 'from "./ui.mjs"')
@@ -80,6 +81,7 @@ test("loads the ticket saved on the branch and the branch's PR", async () => {
   state.exec = async (cmd, args) => {
     const a = args.join(" ");
     if (cmd === "git" && a === "symbolic-ref --short -q HEAD") return { code: 0, stdout: "abc-12-fix\n" };
+    if (cmd === "git" && a === "rev-parse --show-toplevel") return { code: 0, stdout: "/repo\n" };
     if (cmd === "git" && a === "config --get branch.abc-12-fix.linear-id") return { code: 0, stdout: "ABC-12\n" };
     if (cmd === "git" && a === "config --get branch.abc-12-fix.linear-url") return { code: 0, stdout: "https://l/ABC-12\n" };
     if (cmd === "gh") return { code: 0, stdout: '{"number":9,"url":"u","state":"MERGED","statusCheckRollup":[]}' };
@@ -91,6 +93,7 @@ test("loads the ticket saved on the branch and the branch's PR", async () => {
   assert.deepEqual(m.ticket, { id: "ABC-12", url: "https://l/ABC-12" });
   assert.equal(m.pr.number, 9);
   assert.ok(texts(m.render()).includes("#9 merged"));
+  assert.equal(state.shared["task.prs"]["/repo\tabc-12-fix"].number, 9, "shared with task-links");
   state.exec = async () => ({ code: 1, stdout: "" });
   state.calls = [];
 });

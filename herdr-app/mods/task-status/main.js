@@ -6,7 +6,7 @@
 
 import { View, div, svg } from "gpui-kit";
 import { h_flex } from "gpui-base";
-import { spaces, agents, panes, focused, theme, run, exec, openOverlay, nextCommand, window } from "herdr";
+import { spaces, agents, panes, focused, theme, run, exec, openOverlay, nextCommand, window, shared, setShared } from "herdr";
 
 const LINEAR = "#7a88cf"; // the TUI sidebar's ticket color
 const REFRESH = 20000; // herdr-status interval
@@ -56,15 +56,23 @@ export default class TaskStatus extends View {
       return;
     }
     const git = (...args) => exec("git", args, { cwd }).then((r) => (r.code === 0 ? r.stdout.trim() : ""), () => "");
-    const branch = await git("symbolic-ref", "--short", "-q", "HEAD");
+    const [branch, top] = await Promise.all([git("symbolic-ref", "--short", "-q", "HEAD"), git("rev-parse", "--show-toplevel")]);
     let ticket = null, pr = null;
     if (branch) {
       const id = await git("config", "--get", `branch.${branch}.linear-id`);
       if (id) ticket = { id, url: await git("config", "--get", `branch.${branch}.linear-url`) };
-      const r = await exec("gh", ["pr", "view", "--json", "number,url,state,isDraft,reviewDecision,statusCheckRollup"], { cwd })
+      const r = await exec("gh", ["pr", "view", "--json", "number,url,title,state,isDraft,reviewDecision,statusCheckRollup"], { cwd })
         .catch(() => null);
       if (r?.code === 0) {
         try { pr = JSON.parse(r.stdout); } catch { pr = null; }
+      }
+    }
+    // prefix+o (task-links) opens on this, then asks gh itself.
+    if (branch && top) {
+      const all = { ...(shared("task.prs") ?? {}) }, k = `${top}\t${branch}`;
+      if (JSON.stringify(all[k] ?? null) !== JSON.stringify(pr)) {
+        if (pr) all[k] = pr; else delete all[k];
+        setShared("task.prs", all);
       }
     }
     if (key !== this.key) return; // the focus moved on while this ran

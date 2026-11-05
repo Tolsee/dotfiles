@@ -5,12 +5,26 @@
 // changes view as a popup: it reads the focused pane's folder live, and a popup leaves focus
 // on the source terminal where a split would take it (and fall back to the space folder).
 //
+// Opens on what git knows (tens of ms) and the cached PR, then fills in gh's answer (~1 s).
+//
 // Keys: j/k or ↑/↓ move, 1-9 pick, Enter opens, y copies the link, d opens the diff
 // (uncommitted changes), r reloads, Esc closes.
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { focused, spaces, theme, exec, props, closeOverlay, openOverlay, notify, window } from "herdr";
+import { focused, spaces, theme, exec, props, closeOverlay, openOverlay, notify, window, shared, setShared } from "herdr";
+
+// The last PR seen per "<repo>\t<branch>", shared with task-status (which refreshes it every
+// 20 s), so the PR rows show at once and gh only confirms them.
+export const PR_CACHE = "task.prs";
+export const prKey = (top, branch) => `${top}\t${branch}`;
+export function rememberPr(key, pr) {
+  const all = { ...(shared(PR_CACHE) ?? {}) };
+  if (pr) all[key] = pr; else delete all[key];
+  const keys = Object.keys(all);
+  for (const k of keys.slice(0, Math.max(0, keys.length - 40))) delete all[k];
+  setShared(PR_CACHE, all);
+}
 
 const LINEAR = "#7a88cf"; // the TUI sidebar's ticket color
 const FAILED = ["FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE"];
@@ -69,22 +83,45 @@ export default class TaskLinks extends View {
     return { cwd: f?.cwd || space?.folder || null, on: space?.machine ?? null };
   }
 
+  show(facts) {
+    this.facts = facts;
+    // Keep the selection on the same link while rows arrive above it.
+    const was = this.links[this.at]?.url ?? this.links[this.at]?.kind;
+    this.links = buildLinks(facts);
+    const i = this.links.findIndex((l) => (l.url ?? l.kind) === was);
+    this.at = i >= 0 ? i : Math.min(this.at, Math.max(0, this.links.length - 1));
+  }
+
   reload(cx) {
     this.loading = true;
+    this.error = null;
     cx.spawn(async (cx) => {
       try {
-        this.facts = await this.load();
-        this.links = buildLinks(this.facts);
-        this.error = this.links.length ? null : "No ticket, PR or GitHub branch here. Start the task with prefix+t.";
+        const facts = await this.load();
+        this.show(facts);
+        cx.notify();
+        if (facts.branch) {
+          const pr = await this.loadPr(facts);
+          rememberPr(facts.key, pr);
+          this.show({ ...facts, pr });
+        }
       } catch (e) {
         this.error = String(e?.message ?? e);
       }
       this.loading = false;
-      this.at = Math.min(this.at, Math.max(0, this.links.length - 1));
+      if (!this.error && !this.links.length) this.error = "No ticket, PR or GitHub branch here. Start the task with prefix+t.";
       cx.notify();
     });
   }
 
+  async loadPr({ cwd, on }) {
+    const r = await exec("gh", ["pr", "view", "--json", "number,url,title,state,isDraft,reviewDecision,statusCheckRollup"], { cwd, on })
+      .catch(() => null);
+    if (r?.code !== 0) return null;
+    try { return JSON.parse(r.stdout); } catch { return null; }
+  }
+
+  // What git knows, plus the PR cached for this branch; gh comes after (loadPr).
   async load() {
     const { cwd, on } = this.where();
     if (!cwd) return {};
@@ -101,19 +138,14 @@ export default class TaskLinks extends View {
     const base = head.replace(/^origin\//, "") || "main";
     const dirty = status ? status.split("\n").length : 0;
     const onBase = !branch || branch === base;
-    let ticket = null, pr = null;
+    let ticket = null;
     if (branch) {
       const [id, url, title] = await Promise.all(["id", "url", "title"].map((k) => git("config", "--get", `branch.${branch}.linear-${k}`)));
       if (id) ticket = { id, url: url || `https://linear.app/issue/${id}`, title };
     }
-    if (!onBase) {
-      const r = await exec("gh", ["pr", "view", "--json", "number,url,title,state,isDraft,reviewDecision,statusCheckRollup"], { cwd, on })
-        .catch(() => null);
-      if (r?.code === 0) {
-        try { pr = JSON.parse(r.stdout); } catch { pr = null; }
-      }
-    }
-    return { cwd, on, branch: onBase ? null : branch, base, slug, ticket, pr, dirty };
+    const key = prKey(top, branch);
+    const pr = onBase ? null : ((shared(PR_CACHE) ?? {})[key] ?? null);
+    return { cwd, on, key, branch: onBase ? null : branch, base, slug, ticket, pr, dirty };
   }
 
   open(link) {
