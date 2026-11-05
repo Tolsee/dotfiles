@@ -70,10 +70,28 @@ parse_ticket() {
     [[ -n "$branch" ]] || die "could not derive a branch name from '$ref'"
 }
 
-# The session for a label, if one exists.
-session_by_label() {
-    "$rex_bin" ls --json | jq -r --arg l "$1" --arg t "${2:-}" '
-        first((.sessions[] | select(.label == $l)), (.sessions[] | select($t != "" and (.label | startswith($t + " ") or . == $t))) | .session_id) // empty'
+# session_dir <session>: the working directory of the session's first pane.
+session_dir() {
+    local block
+    block=$("$rex_bin" block ls -s "$1" --json 2>/dev/null | jq -r 'first(.blocks[] | select(.creator_name == "com.superlogical.terminal") | .block_id) // empty')
+    [[ -n "$block" ]] || return 0
+    "$rex_bin" block call -s "$1" -b "$block" process 2>/dev/null | jq -r '.foreground.cwd // .child.cwd // empty'
+}
+
+# session_for <label> <dir> [ticket]: a session with this label, or named after the ticket,
+# whose pane sits in dir (or below it), so the same branch in two repos never shares one.
+session_for() {
+    local label=$1 dir=$2 ticket=${3:-} id cwd
+    while read -r id; do
+        [[ -n "$id" ]] || continue
+        cwd=$(session_dir "$id")
+        cwd=$(cd "$cwd" 2>/dev/null && pwd -P || printf '%s' "$cwd")
+        if [[ "$cwd" == "$dir" || "$cwd" == "$dir"/* ]]; then
+            printf '%s\n' "$id"
+            return
+        fi
+    done < <("$rex_bin" ls --json | jq -r --arg l "$label" --arg t "$ticket" '
+        .sessions[] | select(.label == $l or ($t != "" and (.label == $t or (.label | startswith($t + " "))))) | .session_id')
 }
 
 # Show a session in the app. Needs Remote Control; otherwise say where to find it.
@@ -87,11 +105,12 @@ show_session() {
     sleep 2
 }
 
-# open_session <label> <dir> [command] [ticket]: focus the session with this label (or any
-# session named after the ticket), else create it in dir and type command into its shell.
+# open_session <label> <dir> [command] [ticket]: focus this checkout's session (by label or
+# ticket), else create it in dir and type command into its shell.
 open_session() {
     local label=$1 dir=$2 command=${3:-} ticket=${4:-} session created block
-    session=$(session_by_label "$label" "$ticket")
+    dir=$(cd "$dir" && pwd -P)
+    session=$(session_for "$label" "$dir" "$ticket")
     if [[ -z "$session" ]]; then
         created=$("$rex_bin" new "$label" -c "$dir" --json)
         session=$(jq -r '.session_id' <<<"$created")
