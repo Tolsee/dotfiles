@@ -19,8 +19,6 @@ gui = json.loads((root / "herdr-app/keys.json").read_text())
 
 # TUI keys the app cannot do yet, and why. Shrink this as herdr-task learns the app.
 TUI_ONLY = {
-    "t": "herdr-task start (prefix+t) drives the TUI server",
-    "f": "herdr-sessionizer opens TUI workspaces",
     "m": "herdr-github is a TUI plugin",
     "y": "herdr-task review drives TUI panes",
     "u": "herdr-task ship drives TUI agents",

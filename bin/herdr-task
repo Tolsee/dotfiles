@@ -47,6 +47,13 @@
 #   herdr-task ship [--pane PANE]         (prefix+u) ask the task's agent to ship (review, push,
 #                                         open the PR, babysit); with no agent in the workspace,
 #                                         push the branch and open a draft PR directly
+#   herdr-task projects [--cwd DIR]       Herdr app (task mods), JSON, no herdr server: the
+#                                         repositories under the roots, the focused one first
+#   herdr-task parse <ref> [--cwd DIR]    what <ref> would start: kind, ticket, branch, title,
+#                                         projects with the best guess first (prefix+t preview)
+#   herdr-task prepare <ref> --project DIR [--title T] [--agent KIND]
+#                                         the worktree and saved ticket for <ref>; prints the
+#                                         path, space label and agent prompt for the mod
 #   herdr-task open-file <url> [--pane P] open a file:// link in $EDITOR in a split beside the
 #                                         pane, at the line the link carries (#L12 or :12)
 #
@@ -76,6 +83,8 @@ if [[ -z "${FZF_DEFAULT_OPTS_FILE:-}" && -f "$HOME/.config/fzf/fzfrc" ]]; then
 fi
 project_roots="${HERDR_TASK_PROJECT_ROOTS:-}"
 default_agent="${HERDR_TASK_AGENT:-claude}"
+# Where prepare puts worktrees: the TUI's [worktrees] directory and the app's worktree mod.
+worktrees_dir="${HERDR_TASK_WORKTREES:-$HOME/.herdr/worktrees}"
 
 # detach <cmd...>: run a command in its own session so it survives the popup pane
 # closing. A closing pane kills its process group, which nohup alone does not escape;
@@ -123,7 +132,8 @@ for dependency in jq git; do
     command -v "$dependency" >/dev/null 2>&1 || die "$dependency is required"
 done
 herdr_bin="${HERDR_BIN_PATH:-$(command -v herdr || true)}"
-[[ -n "$herdr_bin" ]] || die "herdr is required"
+# The Herdr app's task mods call projects, parse and prepare, which need no herdr TUI.
+case "${1:-}" in projects | parse | prepare) ;; *) [[ -n "$herdr_bin" ]] || die "herdr is required" ;; esac
 
 server_running() {
     "$herdr_bin" status server --json | jq -e '.running == true' >/dev/null
@@ -1071,6 +1081,153 @@ ticket_workspace() {
     done < <(jq -r '.result.workspaces[]? | [.workspace_id, (.worktree.checkout_path // "")] | @tsv' <<<"$list" 2>/dev/null)
 }
 
+# --- The Herdr app's task mods (herdr-app/mods/task-start, task-projects) -------------------
+# JSON on stdout, notes on stderr; no herdr server. The mod opens the space itself.
+
+# The main checkout behind a folder (a worktree's repository), else nothing.
+repo_of() {
+    local common
+    common=$(git -C "$1" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 0
+    if [[ "$common" == */.git ]]; then
+        printf '%s\n' "${common%/.git}"
+    else
+        git -C "$1" rev-parse --show-toplevel 2>/dev/null || true
+    fi
+}
+
+# json_projects [preferred...]: the preferred repositories, then every one under the roots.
+json_projects() {
+    local -a roots=()
+    {
+        printf '%s\n' "$@"
+        if [[ -n "$project_roots" ]]; then
+            IFS=: read -r -a roots <<<"$project_roots"
+            find "${roots[@]}" -mindepth 2 -maxdepth 2 -name .git 2>/dev/null | sed 's#/\.git$##' | sort
+        fi
+    } | grep -v '^$' | awk '!seen[$0]++' | jq -R . | jq -sc .
+}
+
+# projects [--cwd DIR]: {"projects": [...]}, the focused repository first.
+cmd_projects() {
+    local cwd="" here=""
+    [[ "${1:-}" == --cwd ]] && cwd=${2:-}
+    [[ -n "$cwd" ]] && here=$(repo_of "$cwd")
+    jq -nc --argjson p "$(json_projects "$here")" '{projects: $p}'
+}
+
+# parse <ref> [--cwd DIR]: what prefix+t would start, for the popup's preview: kind (ticket,
+# branch or task), ticket id and link, branch, title (free text), and the projects with the
+# best guess first (this ticket's team's last repository, then the focused one).
+cmd_parse() {
+    local ref=${1:?ticket link, id, branch or task} cwd="" kind title="" team="" here=""
+    local ticket_id ticket_url ticket_slug branch
+    [[ "${2:-}" == --cwd ]] && cwd=${3:-}
+    parse_ticket "$ref"
+    if [[ -n "$ticket_id" ]]; then
+        kind=ticket
+        team=$(team_repo "${ticket_id%%-*}")
+    elif git check-ref-format --branch "$ref" >/dev/null 2>&1; then
+        kind=branch
+    else
+        kind=task title=$ref
+    fi
+    [[ -n "$cwd" ]] && here=$(repo_of "$cwd")
+    jq -nc --arg kind "$kind" --arg id "$ticket_id" --arg url "$ticket_url" --arg branch "$branch" \
+        --arg title "$title" --argjson projects "$(json_projects "$team" "$here")" \
+        '{kind: $kind, ticket_id: $id, ticket_url: $url, branch: $branch, title: $title, projects: $projects}'
+}
+
+# prepare <ref> --project DIR [--title T] [--agent KIND]: the worktree for a ticket, branch or
+# task (the branch's own worktree if it has one), the ticket saved on its branch as start
+# does, env files copied. Prints {path, branch, label, existing, agent, prompt, ticket_id,
+# ticket_url}; the mod opens or focuses the space and starts the agent.
+cmd_prepare() {
+    local ref="" project="" title="" agent="$default_agent" ticket_id ticket_url ticket_slug branch
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -p|--project) project=$2; shift 2 ;;
+            -t|--title) title=$2; shift 2 ;;
+            -a|--agent) agent=$2; shift 2 ;;
+            -*) die "unknown option: $1" ;;
+            *) [[ -z "$ref" ]] || die "unexpected argument: $1"; ref=$1; shift ;;
+        esac
+    done
+    [[ -n "$ref" && -n "$project" ]] || die "usage: herdr-task prepare <ticket | branch | task> --project DIR"
+    project=$(repo_of "$project")
+    [[ -n "$project" ]] || die "not a git repository"
+    parse_ticket "$ref"
+    # Free text is the title and the first prompt; its slug is the branch.
+    if [[ -z "$ticket_id" ]] && ! git check-ref-format --branch "$ref" >/dev/null 2>&1; then
+        title=${title:-$ref}
+    fi
+
+    local path existing=false bare=""
+    [[ -n "$ticket_id" && -z "$ticket_slug" ]] && bare=1
+    # The branch's worktree, or for a bare id one on an id-slug branch.
+    path=$(git -C "$project" worktree list --porcelain | awk -v b="refs/heads/$branch" -v p="refs/heads/$branch-" -v bare="$bare" '
+        /^worktree / { wt = substr($0, 10) }
+        /^branch / { r = substr($0, 8); if (r == b || (bare && index(r, p) == 1)) { print wt; exit } }')
+    if [[ -n "$path" ]]; then
+        existing=true
+        note "branch $branch already has a worktree at $path, opening it"
+    else
+        path="$worktrees_dir/$(basename "$project")/${branch//\//-}"
+        mkdir -p "$(dirname "$path")"
+        git -C "$project" fetch -q origin 2>/dev/null || true
+        if git -C "$project" show-ref -q --verify "refs/heads/$branch"; then
+            git -C "$project" worktree add -q "$path" "$branch" >&2 || die "git worktree add failed"
+        else
+            local base
+            base=$(git -C "$project" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null || echo HEAD)
+            git -C "$project" worktree add -q -b "$branch" "$path" "$base" >&2 || die "git worktree add failed"
+            git -C "$path" branch -q --unset-upstream 2>/dev/null || true
+        fi
+        copy_env_files "$project" "$path" >&2
+    fi
+
+    local b label rest
+    b=$(git -C "$path" symbolic-ref --short -q HEAD || printf '%s' "$branch")
+    if [[ -n "$ticket_id" ]]; then
+        save_ticket "$project" "$b" "$ticket_id" "$ticket_url" "$title"
+        remember_team_repo "${ticket_id%%-*}" "$project"
+        remember_linear_org "$ticket_url"
+        # A saved link carries the slug; keep it over one rebuilt from a bare id.
+        ticket_url=$(git -C "$project" config --get "branch.$b.linear-url" 2>/dev/null || true)
+        if [[ -z "$title" ]]; then
+            title=$(git -C "$project" config --get "branch.$b.linear-title" 2>/dev/null || true)
+        fi
+        if [[ -z "$ticket_url" && -s "$linear_org_file" ]]; then
+            ticket_url="https://linear.app/$(cat "$linear_org_file")/issue/$ticket_id"
+            save_ticket "$project" "$b" "$ticket_id" "$ticket_url" ""
+        fi
+        # The app has no sidebar ticket token, so the space name carries the id.
+        rest=${b#"$(slugify "$ticket_id")"}
+        rest=${rest#-}
+        label="$ticket_id ${title:-${rest//-/ }}"
+    else
+        label=${title:-$b}
+    fi
+    label=${label% }
+    label=${label:0:48}
+
+    local prompt=""
+    if [[ "$agent" != none ]]; then
+        if [[ -n "$ticket_id" ]]; then
+            prompt="Work on ${ticket_url:-$ticket_id}. Groom it first (groom skill)."
+            if [[ -z "$title" ]]; then
+                # shellcheck disable=SC2016
+                prompt+=' After reading it, name this Herdr space after it: herdr-app do space.rename --id "$(herdr-app ls | jq -r --arg t "$HC_TERMINAL_ID" '\''.spaces[] | select(any(.tabs[].terminals[]; .terminal == $t)) | .id'\'')" --name "'"$ticket_id"' <ticket title>".'
+            fi
+        else
+            prompt="Task: ${title:-$b}. Groom it first (groom skill)."
+        fi
+    fi
+    jq -nc --arg path "$path" --arg branch "$b" --arg label "$label" --argjson existing "$existing" \
+        --arg agent "$agent" --arg prompt "$prompt" --arg id "$ticket_id" --arg url "$ticket_url" \
+        '{path: $path, branch: $branch, label: $label, existing: $existing,
+          agent: (if $agent == "none" then null else $agent end), prompt: $prompt, ticket_id: $id, ticket_url: $url}'
+}
+
 # Sourced for tests: define the functions and stop.
 if [[ -n "${HERDR_TASK_SOURCE_ONLY:-}" ]]; then
     # shellcheck disable=SC2317
@@ -1091,6 +1248,9 @@ case "${1:-}" in
     retag) shift; cmd_retag "$@" ;;
     prune) cmd_prune "${2:-}" ;;
     prune-worktree) cmd_prune_worktree "${2:?worktree path}" ;;
+    projects) shift; cmd_projects "$@" ;;
+    parse) shift; cmd_parse "$@" ;;
+    prepare) shift; cmd_prepare "$@" ;;
     -h|--help) awk 'NR > 1 && !/^#/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "$0" ;;
     *) die "unknown command: $1 (start, tag, open, review, ship, open-file, open-ticket, retag, prune, prune-worktree, branch)" ;;
 esac

@@ -39,5 +39,7 @@ link layouts/tasks.json layouts/tasks.json
 link themes/tokyo-night-moon.json themes/tokyo-night-moon.json
 link mods/task-status mods/task-status
 link mods/task-links mods/task-links
+link mods/task-start mods/task-start
+link mods/task-projects mods/task-projects
 
 echo "Herdr app configuration installed. Pick the Tasks layout in Settings, or: herdr-app do layout.switch --name tasks"
