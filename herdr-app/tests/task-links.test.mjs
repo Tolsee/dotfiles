@@ -27,6 +27,7 @@ export const openOverlay = (o) => state.calls.push(["overlay", o]);
 export const exec = (...a) => { state.calls.push(["exec", ...a]); return state.exec(...a); };
 export const props = () => ({ overlay: "o1" }), closeOverlay = (id) => state.calls.push(["close", id]);
 export const notify = (n) => state.calls.push(["notify", n]), window = () => ({ platform: "macos" });
+export const shared = (k) => state.shared?.[k], setShared = (k, v) => { state.shared = { ...state.shared, [k]: v }; };
 `);
 const src = readFileSync(join(here, "../mods/task-links/main.js"), "utf8")
   .replace('from "gpui-kit"', 'from "./ui.mjs"').replace('from "gpui-base"', 'from "./ui.mjs"')
@@ -61,7 +62,7 @@ test("no PR yet: compare against the base instead", () => {
   assert.equal(links[0].url, "https://github.com/o/r/compare/main...feat");
 });
 
-test("loads the saved ticket and the PR, skipping gh on the base branch", async () => {
+test("loads git facts and the cached PR without gh, then gh on its own", async () => {
   const replies = {
     "rev-parse --show-toplevel": "/repo", "symbolic-ref --short -q HEAD": "abc-1-fix",
     "remote get-url origin": "git@github.com:o/r.git", "symbolic-ref --short refs/remotes/origin/HEAD": "origin/main",
@@ -74,14 +75,18 @@ test("loads the saved ticket and the PR, skipping gh on the base branch", async 
     return out === undefined ? { code: 1, stdout: "" } : { code: 0, stdout: out + "\n" };
   };
   const m = new TaskLinks();
+  state.calls = [];
+  state.shared = { "task.prs": { "\t/repo\tabc-1-fix": { ...PR, number: 6 } } };
   const f = await m.load();
-  assert.deepEqual([f.branch, f.base, f.slug, f.dirty, f.ticket, f.pr.number], ["abc-1-fix", "main", "o/r", 2, { id: "ABC-1", url: "https://l/ABC-1", title: "Fix" }, 7]);
+  assert.deepEqual([f.branch, f.base, f.slug, f.dirty, f.ticket, f.pr.number], ["abc-1-fix", "main", "o/r", 2, { id: "ABC-1", url: "https://l/ABC-1", title: "Fix" }, 6]);
+  assert.ok(!state.calls.some((c) => c[1] === "gh"), "load never waits for gh");
+  assert.equal((await m.loadPr(f)).number, 7);
 
   replies["symbolic-ref --short -q HEAD"] = "main";
-  state.calls = [];
   const g = await m.load();
   assert.equal(g.branch, null);
-  assert.ok(!state.calls.some((c) => c[1] === "gh"));
+  assert.equal(g.pr, null);
+  state.shared = {};
   state.exec = async () => ({ code: 1, stdout: "" });
 });
 
@@ -126,4 +131,30 @@ test("long lists show a window of rows that follows the selection", () => {
   assert.equal(m.first(), 2);
   m.at = m.links.length - 1;
   assert.equal(m.first(), m.links.length - 9);
+});
+
+test("rows show before gh answers, then the PR arrives and the cache updates", async () => {
+  let answer;
+  state.exec = async (cmd, args) => {
+    if (cmd === "gh") return new Promise((r) => { answer = r; });
+    const out = { "rev-parse --show-toplevel": "/repo", "symbolic-ref --short -q HEAD": "feat",
+      "remote get-url origin": "https://github.com/o/r", "symbolic-ref --short refs/remotes/origin/HEAD": "origin/main" }[args.join(" ")];
+    return out === undefined ? { code: 1, stdout: "" } : { code: 0, stdout: out };
+  };
+  const tasks = [];
+  const cx = { notify() {}, spawn(f) { tasks.push(f(cx)); } };
+  const m = new TaskLinks();
+  m.links = [];
+  m.at = 0;
+  m.reload(cx);
+  while (!answer) await new Promise((r) => setImmediate(r));
+  assert.deepEqual(m.links.map((l) => l.kind), ["compare", "branch"], "shown while gh is still running");
+  assert.equal(m.loading, true);
+  answer({ code: 0, stdout: JSON.stringify(PR) });
+  await tasks[0];
+  assert.deepEqual(m.links.map((l) => l.kind), ["pr", "failing", "checks", "files", "branch"]);
+  assert.equal(m.loading, false);
+  assert.equal(state.shared["task.prs"]["\t/repo\tfeat"].number, 7);
+  state.exec = async () => ({ code: 1, stdout: "" });
+  state.shared = {};
 });
