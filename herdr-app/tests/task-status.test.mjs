@@ -138,6 +138,7 @@ test("prefix+y: Claude right of the task, Codex review below it, focus back on t
   state.calls.push = origRun;
   const runs = state.calls.filter((c) => c[0] === "run").map((c) => [c[1], c[2]]);
   assert.deepEqual(runs, [
+    ["pane.focus", { pane: "p1" }],
     ["terminal.open", { argv: ["claude", "Review it"], folder: "/wt/r/abc-1", place: "right" }],
     ["terminal.open", { argv: ["zsh", "-lc", "~/.codex-review/codex-review --wait; exec zsh"], folder: "/wt/r/abc-1", place: "down" }],
     ["pane.focus", { pane: "p1" }],
@@ -189,4 +190,21 @@ test("prefix+shift+o and alt+N focus agents; nothing waiting says so", () => {
   assert.equal(state.calls[0][0], "notify");
   state.agents = [];
   state.calls = [];
+});
+
+test("review and ship refuse remote spaces; review stops if the task pane closed", async () => {
+  state.spaces = [{ id: "s1", active: true, machine: "vps" }];
+  state.focused = { pane: "p1", cwd: "/srv/r" };
+  state.agents = [];
+  const m = fresh();
+  await assert.rejects(m.review(cx), /not vps's/);
+  await assert.rejects(m.ship(), /not vps's/);
+  state.spaces = [{ id: "s1", active: true }];
+  state.panes = [];
+  state.shared = {};
+  state.exec = async () => ({ code: 0, stdout: JSON.stringify({ repo: "/r", branch: "b", base: "main", prompt: "p", codex: null }), stderr: "" });
+  state.calls = [];
+  await assert.rejects(m.review(cx), /pane closed/);
+  assert.equal(state.calls.filter((c) => c[0] === "run").length, 0);
+  state.focused = null; state.calls = [];
 });

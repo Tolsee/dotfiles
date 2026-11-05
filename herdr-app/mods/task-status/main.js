@@ -165,7 +165,8 @@ export default class TaskStatus extends View {
   // when installed), both on the branch diff; focus stays on the task.
   async review(cx) {
     const space = spaces().find((s) => s.active), f = focused();
-    if (!space || !f?.cwd) throw new Error("No focused terminal to review");
+    if (!space || !f?.cwd || !f.pane) throw new Error("No focused terminal to review");
+    if (space.machine) throw new Error(`Review works on this computer's spaces, not ${space.machine}'s`);
     if (this.reviewers(space.id).length) {
       tell("Review", "Reviewers for this space are still open; close them (prefix+x) for a fresh review", "warning");
       return;
@@ -173,6 +174,9 @@ export default class TaskStatus extends View {
     const r = await herdrTask(["review-plan", "--cwd", f.cwd]);
     if (r.code !== 0) throw new Error(why(r, "review-plan"));
     const plan = JSON.parse(r.stdout);
+    // review-plan fetched for a while; split beside the task, wherever focus went meanwhile.
+    if (!panes().some((p) => p.pane === f.pane)) throw new Error("The task's pane closed before the reviewers could open");
+    run("pane.focus", { pane: f.pane });
     const claude = await this.openTerminal(cx, { argv: ["claude", plan.prompt], folder: plan.repo, place: "right" });
     const codex = await this.openTerminal(cx, {
       argv: plan.codex ? ["zsh", "-lc", `${plan.codex}; exec zsh`] : ["codex", plan.prompt], folder: plan.repo, place: "down",
@@ -203,6 +207,7 @@ export default class TaskStatus extends View {
       return;
     }
     if (!f?.cwd) throw new Error("No agent and no focused folder to ship");
+    if (space.machine) throw new Error(`No agent to ship, and pushing works on this computer's spaces, not ${space.machine}'s`);
     const r = await herdrTask(["ship-direct", "--cwd", f.cwd]);
     if (r.code !== 0) throw new Error(why(r, "ship-direct"));
     const out = JSON.parse(r.stdout);
