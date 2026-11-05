@@ -66,6 +66,7 @@
     "ctrl-b t": "mod.open:task-start",
     "ctrl-b f": "mod.open:task-projects",
     "ctrl-b m": "mod.open:task-prs",
+    "ctrl-b alt-t": "mod.open:task-prune",
     "ctrl-b b": "layout.toggle:sidebar",
     "ctrl-b ?": "app.help",
     "ctrl-b shift-n": "space.new",
@@ -119,6 +120,19 @@
   "layout:tasks": {
     "ctrl-b shift-g": "task-status.new-worktree",
     "ctrl-b alt-x": "task-status.remove-worktree",
-    "ctrl-b ;": "task-status.last-pane"
+    "ctrl-b ;": "task-status.last-pane",
+    "ctrl-b y": "task-status.review",
+    "ctrl-b u": "task-status.ship",
+    "ctrl-b shift-o": "task-status.attention",
+    "ctrl-b e": "task-status.scrollback",
+    "ctrl-b alt-1": "task-status.agent-1",
+    "ctrl-b alt-2": "task-status.agent-2",
+    "ctrl-b alt-3": "task-status.agent-3",
+    "ctrl-b alt-4": "task-status.agent-4",
+    "ctrl-b alt-5": "task-status.agent-5",
+    "ctrl-b alt-6": "task-status.agent-6",
+    "ctrl-b alt-7": "task-status.agent-7",
+    "ctrl-b alt-8": "task-status.agent-8",
+    "ctrl-b alt-9": "task-status.agent-9"
   }
 }

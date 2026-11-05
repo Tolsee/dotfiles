@@ -42,5 +42,6 @@ link mods/task-links mods/task-links
 link mods/task-start mods/task-start
 link mods/task-projects mods/task-projects
 link mods/task-prs mods/task-prs
+link mods/task-prune mods/task-prune
 
 echo "Herdr app configuration installed. Pick the Tasks layout in Settings, or: herdr-app do layout.switch --name tasks"

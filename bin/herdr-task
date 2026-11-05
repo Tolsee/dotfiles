@@ -54,6 +54,13 @@
 #   herdr-task prepare <ref> --project DIR [--title T] [--agent KIND]
 #                                         the worktree and saved ticket for <ref>; prints the
 #                                         path, space label and agent prompt for the mod
+#   herdr-task review-plan --cwd DIR      prefix+y in the app: the task's repo, branch, base,
+#                                         reviewer prompt and Codex review command
+#   herdr-task ship-prompt                what prefix+u tells the task's agent
+#   herdr-task ship-direct --cwd DIR      prefix+u in the app with no agent: push, draft PR
+#   herdr-task prunable --cwd DIR         prune's verdict for each worktree of DIR's repository
+#   herdr-task prune-remove --cwd DIR PATH...
+#                                         remove those worktrees (open PRs re-checked)
 #   herdr-task open-file <url> [--pane P] open a file:// link in $EDITOR in a split beside the
 #                                         pane, at the line the link carries (#L12 or :12)
 #
@@ -133,7 +140,7 @@ for dependency in jq git; do
 done
 herdr_bin="${HERDR_BIN_PATH:-$(command -v herdr || true)}"
 # The Herdr app's task mods call projects, parse and prepare, which need no herdr TUI.
-case "${1:-}" in projects | parse | prepare) ;; *) [[ -n "$herdr_bin" ]] || die "herdr is required" ;; esac
+case "${1:-}" in projects | parse | prepare | review-plan | ship-prompt | ship-direct | prunable | prune-remove) ;; *) [[ -n "$herdr_bin" ]] || die "herdr is required" ;; esac
 
 server_running() {
     "$herdr_bin" status server --json | jq -e '.running == true' >/dev/null
@@ -805,6 +812,14 @@ live_reviewers() {
     return 0
 }
 
+# review_prompt <branch> <base> [ticket url]: what reviewer agents are told (TUI and app).
+review_prompt() {
+    printf '%s' "Review branch $1 against origin/$2 as a reviewer, not its author: read git diff origin/$2...HEAD and any uncommitted changes${3:+, and check them against $3}. Do not edit, commit or push anything. Report findings ranked by severity (bugs and regressions, risky behavior changes, missing tests, then nits), each with file:line, and end with one line: ready to ship or not."
+}
+
+# The message that tells a task's agent to ship (TUI and app).
+ship_prompt="Ship this task now: follow the Pull Requests rules in AGENTS.md (local Codex review unless this PR already had one for the current logic, push, open or update the PR with the ticket id, then babysit it to merge-ready). If anything is unfinished or failing, stop and tell me instead."
+
 cmd_review() {
     local with=${HERDR_TASK_REVIEWERS:-both} base="" pane=""
     while [[ $# -gt 0 ]]; do
@@ -832,7 +847,7 @@ cmd_review() {
 
     local ticket prompt first claude_pane="" codex_pane="" suffix
     ticket=$(workspace_ticket_url "$pane_ws")
-    prompt="Review branch $branch against origin/$base as a reviewer, not its author: read git diff origin/$base...HEAD and any uncommitted changes${ticket:+, and check them against $ticket}. Do not edit, commit or push anything. Report findings ranked by severity (bugs and regressions, risky behavior changes, missing tests, then nits), each with file:line, and end with one line: ready to ship or not."
+    prompt=$(review_prompt "$branch" "$base" "$ticket")
     first=$(split_pane "$pane" right "$repo") || fail "could not split pane $pane"
     case $with in
         claude) claude_pane=$first ;;
@@ -879,6 +894,30 @@ task_agent() {
     done
 }
 
+# ship_direct <ticket url> <ticket id>: with no agent to ship, push $branch of $repo and open a
+# draft PR against $base (or report the open one); sets pr. TUI and app.
+ship_direct() {
+    local ticket=$1 ticket_id=$2 title body
+    [[ -z "$(git -C "$repo" status --porcelain)" ]] || fail "uncommitted changes in $branch; commit them first"
+    git -C "$repo" push --quiet -u origin HEAD 2>/dev/null || fail "git push failed for $branch"
+    command -v gh >/dev/null 2>&1 || fail "pushed $branch; gh is required to open the PR"
+    if pr=$(cd "$repo" && gh pr view "$branch" --json url --jq .url 2>/dev/null) && [[ -n "$pr" ]]; then
+        say "pushed $branch to $pr"
+        return 0
+    fi
+    title=$(git -C "$repo" log --reverse --format=%s "origin/$base..HEAD" | head -n1)
+    title=${title:-$branch}
+    [[ -n "$ticket_id" && "$title" != *"$ticket_id"* ]] && title="$ticket_id: $title"
+    body="${ticket:+$ticket
+
+}## Changes
+
+$(git -C "$repo" log --reverse --format='- %s' "origin/$base..HEAD")"
+    pr=$(cd "$repo" && gh pr create --draft --base "$base" --head "$branch" --title "$title" --body "$body" 2>/dev/null | tail -n1) \
+        || fail "pushed $branch; gh pr create failed"
+    say "opened draft PR $pr"
+}
+
 cmd_ship() {
     local pane=""
     while [[ $# -gt 0 ]]; do
@@ -895,7 +934,7 @@ cmd_ship() {
     agent=$(task_agent "$pane" "$pane_ws")
     if [[ -n "$agent" ]]; then
         # The agent already knows how (AGENTS.md, Pull Requests); this only says "now".
-        if err=$("$herdr_bin" agent prompt "$agent" "Ship this task now: follow the Pull Requests rules in AGENTS.md (local Codex review unless this PR already had one for the current logic, push, open or update the PR with the ticket id, then babysit it to merge-ready). If anything is unfinished or failing, stop and tell me instead." 2>&1 >/dev/null); then
+        if err=$("$herdr_bin" agent prompt "$agent" "$ship_prompt" 2>&1 >/dev/null); then
             say "asked the task agent to ship $branch"
         elif [[ "$err" == *agent_blocked* ]]; then
             fail "the task agent is waiting for you; answer it, then ship again"
@@ -906,27 +945,9 @@ cmd_ship() {
     fi
 
     # No agent here: do the mechanical part only, as a draft for a human to finish.
-    [[ -z "$(git -C "$repo" status --porcelain)" ]] || fail "uncommitted changes in $branch; commit them first"
-    git -C "$repo" push --quiet -u origin HEAD 2>/dev/null || fail "git push failed for $branch"
-    command -v gh >/dev/null 2>&1 || fail "pushed $branch; gh is required to open the PR"
-    local pr ticket ticket_id title body
-    if pr=$(cd "$repo" && gh pr view "$branch" --json url --jq .url 2>/dev/null) && [[ -n "$pr" ]]; then
-        say "pushed $branch to $pr"
-    else
-        ticket=$(workspace_ticket_url "$pane_ws")
-        ticket_id=$("$herdr_bin" workspace get "$pane_ws" 2>/dev/null | jq -r '.result.workspace.tokens.linear_id // empty' 2>/dev/null || true)
-        title=$(git -C "$repo" log --reverse --format=%s "origin/$base..HEAD" | head -n1)
-        title=${title:-$branch}
-        [[ -n "$ticket_id" && "$title" != *"$ticket_id"* ]] && title="$ticket_id: $title"
-        body="${ticket:+$ticket
-
-}## Changes
-
-$(git -C "$repo" log --reverse --format='- %s' "origin/$base..HEAD")"
-        pr=$(cd "$repo" && gh pr create --draft --base "$base" --head "$branch" --title "$title" --body "$body" 2>/dev/null | tail -n1) \
-            || fail "pushed $branch; gh pr create failed"
-        say "opened draft PR $pr"
-    fi
+    local pr
+    ship_direct "$(workspace_ticket_url "$pane_ws")" \
+        "$("$herdr_bin" workspace get "$pane_ws" 2>/dev/null | jq -r '.result.workspace.tokens.linear_id // empty' 2>/dev/null || true)"
     # Only feeds the prefix+o picker. The sidebar's PR badge is herdr-github's ($prs), and pane
     # tokens are one map shared by every source, so `pr` (herdr-github's) is neither set nor
     # cleared here.
@@ -1231,6 +1252,105 @@ cmd_prepare() {
           agent: (if $agent == "none" then null else $agent end), prompt: $prompt, ticket_id: $id, ticket_url: $url}'
 }
 
+# task_at <dir>: the task branch checked out in dir: sets repo, branch, base (as load_task) and
+# ticket_id, ticket_url, ticket_title (branch_ticket).
+task_at() {
+    repo=$(git -C "$1" rev-parse --show-toplevel 2>/dev/null) || fail "$1 is not in a git repository"
+    branch=$(git -C "$repo" symbolic-ref --short -q HEAD) || fail "detached HEAD in $repo; check out the task branch"
+    base=$(git -C "$repo" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##' || true)
+    base=${base:-main}
+    [[ "$branch" != "$base" ]] || fail "$(basename "$repo") is on $base; run this from a task branch"
+    branch_ticket "$repo" "$branch"
+}
+
+# review-plan --cwd DIR: what prefix+y needs to open reviewers beside the pane: {repo, branch,
+# base, prompt, codex} (codex: the local Codex review command, or null for a Codex agent).
+cmd_review_plan() {
+    [[ "${1:-}" == --cwd && -n "${2:-}" ]] || die "usage: herdr-task review-plan --cwd DIR"
+    local repo branch base ticket_id ticket_url ticket_title codex=""
+    task_at "$2"
+    git -C "$repo" fetch --quiet origin "$base" 2>/dev/null || note "fetch failed, reviewing against the local origin/$base"
+    if git -C "$repo" diff --quiet "origin/$base...HEAD" 2>/dev/null && [[ -z "$(git -C "$repo" status --porcelain)" ]]; then
+        fail "$branch has no changes against origin/$base"
+    fi
+    # shellcheck disable=SC2088
+    [[ -x "$HOME/.codex-review/codex-review" ]] && codex="~/.codex-review/codex-review --wait --base $(printf %q "origin/$base") --scope branch"
+    jq -nc --arg repo "$repo" --arg branch "$branch" --arg base "$base" --arg codex "$codex" \
+        --arg prompt "$(review_prompt "$branch" "$base" "$ticket_url")" \
+        '{repo: $repo, branch: $branch, base: $base, prompt: $prompt, codex: (if $codex == "" then null else $codex end)}'
+}
+
+# ship-direct --cwd DIR: prefix+u with no agent in the space: push and open a draft PR. {pr}.
+cmd_ship_direct() {
+    [[ "${1:-}" == --cwd && -n "${2:-}" ]] || die "usage: herdr-task ship-direct --cwd DIR"
+    local repo branch base ticket_id ticket_url ticket_title pr=""
+    task_at "$2"
+    ship_direct "$ticket_url" "$ticket_id"
+    jq -nc --arg pr "$pr" --arg branch "$branch" '{pr: $pr, branch: $branch}'
+}
+
+# prunable --cwd DIR: every linked worktree of DIR's repository with prune's verdict:
+# {repo, worktrees: [{path, branch, verdict, remove}]}.
+cmd_prunable() {
+    [[ "${1:-}" == --cwd && -n "${2:-}" ]] || die "usage: herdr-task prunable --cwd DIR"
+    local repo_root default_branch merged_heads="" open_heads="" wt_path wt_branch prunable verdict
+    repo_root=$(repo_of "$2")
+    [[ -n "$repo_root" ]] || die "$2 is not in a git repository"
+    git -C "$repo_root" fetch --prune --quiet origin 2>/dev/null || note "fetch failed, using local refs"
+    default_branch=$(git -C "$repo_root" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##' || true)
+    default_branch=${default_branch:-main}
+    if command -v gh >/dev/null 2>&1; then
+        merged_heads=$(cd "$repo_root" && gh pr list --state merged --limit 300 --json headRefName,headRefOid --jq '.[] | "\(.headRefName)\t\(.headRefOid)"' 2>/dev/null || true)
+        open_heads=$(cd "$repo_root" && gh pr list --state open --limit 300 --json headRefName,number --jq '.[] | "\(.headRefName)\t#\(.number)"' 2>/dev/null || true)
+    fi
+    # "-" stands in for empty fields: read collapses consecutive tabs otherwise. The first
+    # entry is the main checkout.
+    while IFS=$'\t' read -r wt_path wt_branch prunable; do
+        [[ "$wt_branch" == "-" ]] && wt_branch=""
+        prune_verdict "$wt_path" "$wt_branch" "$prunable"
+        jq -nc --arg path "$wt_path" --arg branch "$wt_branch" --arg verdict "$verdict" \
+            '{path: $path, branch: $branch, verdict: ($verdict | sub("^(remove|keep): "; "")), remove: ($verdict | startswith("remove"))}'
+    done < <(git -C "$repo_root" worktree list --porcelain | awk '
+        function out() { if (path != "" && seen++) printf "%s\t%s\t%s\n", path, (b == "" ? "-" : b), (gone ? "true" : "false") }
+        /^worktree / { out(); path = substr($0, 10); b = ""; gone = 0 }
+        /^branch / { b = substr($0, 8); sub(/^refs\/heads\//, "", b) }
+        /^prunable/ { gone = 1 }
+        END { out() }') | jq -sc --arg repo "$repo_root" '{repo: $repo, worktrees: .}'
+}
+
+# prune-remove --cwd DIR PATH...: remove those worktrees of DIR's repository (branches kept),
+# each re-checked for an open PR first. The app closes their spaces before. {removed, kept}.
+cmd_prune_remove() {
+    [[ "${1:-}" == --cwd && -n "${2:-}" ]] || die "usage: herdr-task prune-remove --cwd DIR PATH..."
+    local repo_root wt b open_count removed=() kept=()
+    repo_root=$(repo_of "$2")
+    [[ -n "$repo_root" ]] || die "$2 is not in a git repository"
+    shift 2
+    for wt in "$@"; do
+        if [[ "$(cd "$wt" 2>/dev/null && pwd -P)" == "$(cd "$repo_root" && pwd -P)" ]]; then
+            kept+=("$(jq -nc --arg p "$wt" '{path: $p, why: "the main checkout"}')")
+            continue
+        fi
+        b=$(git -C "$wt" symbolic-ref --short -q HEAD 2>/dev/null || true)
+        if [[ -n "$b" ]] && command -v gh >/dev/null 2>&1; then
+            open_count=$(cd "$repo_root" && gh pr list --head "$b" --state open --limit 1 --json number --jq 'length' 2>/dev/null) || open_count=""
+            if [[ "$open_count" != 0 ]]; then
+                kept+=("$(jq -nc --arg p "$wt" '{path: $p, why: "open PR or GitHub lookup failed"}')")
+                continue
+            fi
+        fi
+        if [[ ! -d "$wt" ]] || git -C "$repo_root" worktree remove "$wt" 2>/dev/null; then
+            removed+=("$wt")
+        else
+            kept+=("$(jq -nc --arg p "$wt" '{path: $p, why: "git worktree remove failed (uncommitted changes?)"}')")
+        fi
+    done
+    git -C "$repo_root" worktree prune
+    # ${a[@]+...}: bash 3.2 calls an empty array unbound under set -u.
+    jq -nc --args '{removed: $ARGS.positional}' ${removed[@]+"${removed[@]}"} \
+        | jq -c --argjson kept "[$(IFS=,; printf '%s' "${kept[*]+${kept[*]}}")]" '. + {kept: $kept}'
+}
+
 # Sourced for tests: define the functions and stop.
 if [[ -n "${HERDR_TASK_SOURCE_ONLY:-}" ]]; then
     # shellcheck disable=SC2317
@@ -1254,6 +1374,11 @@ case "${1:-}" in
     projects) shift; cmd_projects "$@" ;;
     parse) shift; cmd_parse "$@" ;;
     prepare) shift; cmd_prepare "$@" ;;
+    review-plan) shift; cmd_review_plan "$@" ;;
+    ship-prompt) printf '%s\n' "$ship_prompt" ;;
+    ship-direct) shift; cmd_ship_direct "$@" ;;
+    prunable) shift; cmd_prunable "$@" ;;
+    prune-remove) shift; cmd_prune_remove "$@" ;;
     -h|--help) awk 'NR > 1 && !/^#/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "$0" ;;
     *) die "unknown command: $1 (start, tag, open, review, ship, open-file, open-ticket, retag, prune, prune-worktree, branch)" ;;
 esac
