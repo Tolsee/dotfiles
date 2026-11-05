@@ -13,6 +13,20 @@
 #                                 one, or picks between several with fzf
 #   rex-task project [DIR]        (ctrl+b>f) open or focus a session for a project under
 #                                 HERDR_TASK_PROJECT_ROOTS
+#   rex-task review SESSION BLOCK (ctrl+b>y) Claude reviewer right of BLOCK, Codex below it, both on
+#                                 the branch diff; focus stays on BLOCK
+#   rex-task ship SESSION BLOCK   (ctrl+b>u) tell the task's agent (BLOCK's if it is one, else the
+#                                 session's first) to ship; with no agent, push and open a draft PR
+#   rex-task prs [DIR]            (ctrl+b>m) pull requests in fzf: alt-1 mine, alt-2 review requested,
+#                                 alt-3 DIR's repo. enter opens, ctrl-y copies the link, ctrl-w opens
+#                                 the branch as a worktree session
+#   rex-task prune [DIR]          (ctrl+b>alt+t) merged worktrees of DIR's repo: y/N, closes their
+#                                 sessions, removes them (branches are kept)
+#   rex-task agent next|prev|N [SESSION BLOCK]
+#                                 (ctrl+b>a, shift+a, alt+1..9) go to the next, previous or Nth Claude
+#                                 or Codex terminal across sessions, relative to BLOCK
+#   rex-task scrollback SESSION BLOCK
+#                                 (ctrl+b>e) BLOCK's screen and scrollback in $EDITOR at the end
 #
 # REX_TASK_WORKTREES is where worktrees go (default ~/.herdr/worktrees, Herdr's directory).
 # Switching the app to the new session needs Settings > Server > Client Info > Remote Control;
@@ -20,7 +34,8 @@
 
 set -euo pipefail
 
-die() { printf 'rex-task: %s\n' "$*" >&2; exit 1; }
+error_mode=""   # tty or layer: see notice
+die() { printf 'rex-task: %s\n' "$*" >&2; [[ -z "$error_mode" ]] || notice "$*"; exit 1; }
 note() { printf 'rex-task: %s\n' "$*" >&2; }
 
 for dependency in git jq; do
@@ -28,6 +43,12 @@ for dependency in git jq; do
 done
 rex_bin=$(command -v rex || true)
 [[ -n "$rex_bin" || -z "${REX_BIN_DIR:-}" ]] || rex_bin="$REX_BIN_DIR/rex"
+# Started from Rex's config (no Rex PATH), look inside the app.
+if [[ -z "$rex_bin" ]]; then
+    for app in "/Applications/Rex Beta.app" "/Applications/Rex.app" "$HOME/Applications/Rex.app"; do
+        [[ -x "$app/Contents/Helpers/Rex Server.rex/Contents/MacOS/rex" ]] && { rex_bin="$app/Contents/Helpers/Rex Server.rex/Contents/MacOS/rex"; break; }
+    done
+fi
 [[ -n "$rex_bin" ]] || die "rex is required"
 if [[ -z "${FZF_DEFAULT_OPTS_FILE:-}" && -f "$HOME/.config/fzf/fzfrc" ]]; then
     export FZF_DEFAULT_OPTS_FILE="$HOME/.config/fzf/fzfrc"
@@ -320,11 +341,352 @@ cmd_project() {
     open_session "$(basename "$dir")" "$dir"
 }
 
+# ---- review, ship, prs, prune, agent, scrollback ------------------------------------------
+
+# Where errors go (error_mode, set per command). Popups (prs, prune, scrollback) run in a
+# terminal: wait for a key so the message can be read. review, ship and agent run from Rex's
+# config with no terminal: the message opens in a small floating pane of error_session.
+error_session=""
+
+# notice <text>: show a message the user must be able to read, per error_mode.
+notice() {
+    local text=$1 cmd lua
+    case "$error_mode" in
+        tty) printf 'Press a key to close ' >&2; read -r -n1 -s _ </dev/tty || true ;;
+        layer)
+            [[ -n "$error_session" ]] || return 0
+            cmd="printf '%s\\n\\nPress a key to close.' $(printf '%q' "$text"); read -rsk1"
+            lua=$(jq -rn --arg c "$cmd" '"rex.session.new_layer{ bounds = { 0.15, 0.4, 0.7, 0.2 }, focus = true, layout = rex.layout.block{ flavor = \"com.superlogical.terminal.shell\", options = { command = { \"zsh\", \"-c\", " + ($c | @json) + " } } } }"')
+            "$rex_bin" "do" -s "$error_session" -e "$lua" >/dev/null 2>&1 || true ;;
+    esac
+}
+
+# herdr-task with the private shell config (HERDR_TASK_PROJECT_ROOTS), as the popups run it.
+herdr_task() {
+    zsh -c 'source ~/.secrets.zshrc 2>/dev/null; exec ~/bin/herdr-task "$@"' herdr-task "$@"
+}
+# task_json <args>: herdr-task's stdout; on failure die with its last stderr line.
+task_json() {
+    local out err why
+    err=$(mktemp)
+    if out=$(herdr_task "$@" 2>"$err"); then
+        rm -f "$err"
+        printf '%s' "$out"
+        return 0
+    fi
+    why=$(tail -n1 "$err" | sed 's/^herdr-task: //')
+    rm -f "$err"
+    die "${why:-herdr-task $1 failed}"
+}
+
+# block_cwd <session> <block>: the block's foreground working directory.
+block_cwd() {
+    "$rex_bin" block call -s "$1" -b "$2" process 2>/dev/null | jq -r '.foreground.cwd // .child.cwd // empty'
+}
+
+# is_agent <session> <block>: the block's foreground process is Claude or Codex.
+is_agent() {
+    "$rex_bin" block call -s "$1" -b "$2" process 2>/dev/null | jq -e '
+        (.foreground // .child // {}) as $p
+        | [$p.name, $p.argv0, $p.invoked_path, $p.path] | map((. // "") | split("/") | last)
+        | any(. == "claude" or . == "codex")' >/dev/null 2>&1
+}
+
+# terminal_blocks <session>: "block<TAB>label" for each terminal block, in layout order.
+terminal_blocks() {
+    "$rex_bin" block ls -s "$1" --json 2>/dev/null | jq -r '.blocks[] | select(.creator_name == "com.superlogical.terminal") | [.block_id, (.label // "")] | @tsv'
+}
+
+# focused_block <session>: the focused block of the session's active window.
+focused_block() {
+    "$rex_bin" session inspect ${1:+"$1"} --json 2>/dev/null | jq -r '.active_window_id as $w | first(.windows[] | select(.window_id == $w) | .focused_block_id) // empty'
+}
+
+cmd_review() {
+    local session=${1:-} block=${2:-} cwd plan repo prompt codex created second
+    [[ -n "$session" && -n "$block" ]] || die "usage: rex-task review SESSION BLOCK"
+    error_mode="layer" error_session=$session
+    cwd=$(block_cwd "$session" "$block")
+    [[ -n "$cwd" ]] || die "no working directory for the focused pane"
+    if terminal_blocks "$session" | cut -f2 | grep -qx reviewer; then
+        die "reviewers for this session are still open; close them (ctrl+b>x) for a fresh review"
+    fi
+    plan=$(task_json review-plan --cwd "$cwd")
+    repo=$(jq -r '.repo' <<<"$plan")
+    prompt=$(jq -r '.prompt' <<<"$plan")
+    codex=$(jq -r '.codex // empty' <<<"$plan")
+    "$rex_bin" block ls -s "$session" --json 2>/dev/null | jq -e --arg b "$block" 'any(.blocks[]; .block_id == $b)' >/dev/null \
+        || die "the task's pane closed before the reviewers could open"
+    created=$("$rex_bin" split -s "$session" -b "$block" --split=right --focus=false -c "$repo" --label reviewer --json -- claude "$prompt") \
+        || die "could not open the Claude reviewer"
+    second=$(jq -r '.block_ids[0] // empty' <<<"$created")
+    [[ -n "$second" ]] || die "split did not report the new block"
+    if [[ -n "$codex" ]]; then
+        "$rex_bin" split -s "$session" -b "$second" --split=below --focus=false -c "$repo" --label reviewer -- zsh -lc "$codex; exec zsh" >/dev/null
+    else
+        "$rex_bin" split -s "$session" -b "$second" --split=below --focus=false -c "$repo" --label reviewer -- codex "$prompt" >/dev/null
+    fi || die "could not open the Codex reviewer"
+    "$rex_bin" focus -s "$session" "$block" >/dev/null 2>&1 || true
+    note "reviewing $(jq -r '.branch' <<<"$plan") against $(jq -r '.base' <<<"$plan")"
+}
+
+cmd_ship() {
+    local session=${1:-} block=${2:-} agent="" id label cwd out prompt
+    [[ -n "$session" && -n "$block" ]] || die "usage: rex-task ship SESSION BLOCK"
+    error_mode="layer" error_session=$session
+    if is_agent "$session" "$block"; then
+        agent=$block
+    else
+        while IFS=$'\t' read -r id label; do
+            [[ -n "$id" && "$label" != reviewer ]] || continue
+            if is_agent "$session" "$id"; then agent=$id; break; fi
+        done < <(terminal_blocks "$session")
+    fi
+    if [[ -n "$agent" ]]; then
+        prompt=$(task_json ship-prompt)
+        "$rex_bin" send -s "$session" -b "$agent" "$prompt" >/dev/null || die "could not send to the agent"
+        "$rex_bin" send-key -s "$session" -b "$agent" enter >/dev/null || die "could not press enter in the agent"
+        note "asked the agent to ship"
+        return 0
+    fi
+    cwd=$(block_cwd "$session" "$block")
+    [[ -n "$cwd" ]] || die "no agent and no working directory to ship"
+    out=$(task_json ship-direct --cwd "$cwd")
+    note "shipped $(jq -r '.branch' <<<"$out")"
+    # No terminal to print to when run from the config: show the PR link in a floating pane.
+    error_mode="layer"
+    notice "Shipped $(jq -r '.branch' <<<"$out"): $(jq -r '.pr // "pushed"' <<<"$out")"
+}
+
+# ---- prs ----
+
+# The GitHub search behind each list, flattened to TSV: display, url, repo, number, branch,
+# fork (true/false), title. Mirrors herdr-app/mods/task-prs.
+pr_rows() {
+    local kind=$1 slug=${2:-} search
+    case "$kind" in
+        mine) search='is:pr is:open author:@me archived:false sort:updated-desc' ;;
+        review) search='is:pr is:open review-requested:@me archived:false sort:updated-desc' ;;
+        repo) [[ -n "$slug" && "$slug" != none ]] || return 0; search="is:pr is:open repo:$slug sort:updated-desc" ;;
+        *) return 1 ;;
+    esac
+    # shellcheck disable=SC2016  # GraphQL and jq programs, not shell
+    gh api graphql -f query='query($q: String!) { s: search(query: $q, type: ISSUE, first: 25) { nodes { ... on PullRequest {
+        number title url isDraft headRefName isCrossRepository author { login } reviewDecision repository { nameWithOwner }
+        commits(last: 1) { nodes { commit { statusCheckRollup { state } } } } } } } }' -f q="$search" --jq '
+        .data.s.nodes[] | select(.url) | . as $n
+        | ($n.commits.nodes[0].commit.statusCheckRollup.state // "") as $ci
+        | (if $ci == "SUCCESS" then "ok  " elif $ci == "FAILURE" or $ci == "ERROR" then "fail" elif $ci != "" then "... " else "    " end) as $c
+        | ([ (if $n.isDraft then "draft" else empty end),
+             ({APPROVED: "approved", CHANGES_REQUESTED: "changes"}[$n.reviewDecision // ""] // empty) ] | join(" ")) as $tags
+        | ($n.title | gsub("[\t\n]"; " ")) as $title
+        | [ "\($c) #\($n.number)  \($title)  [\($n.repository.nameWithOwner)] \($n.author.login // "")  \($tags)",
+            $n.url, $n.repository.nameWithOwner, ($n.number | tostring), $n.headRefName, ($n.isCrossRepository | tostring), $title ] | @tsv'
+}
+
+repo_slug() {
+    git -C "${1:-.}" remote get-url origin 2>/dev/null | sed -E 's#\.git$##' | sed -nE 's#^.*github\.com[:/]([^/]+/[^/]+)$#\1#p' || true
+}
+
+# local_repo <owner/name>: the checkout among the project roots whose origin is that repo.
+local_repo() {
+    local want name p projects
+    want=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
+    name=${want##*/}
+    projects=$(task_json projects | jq -r '.projects[]')
+    while IFS= read -r p; do
+        [[ -n "$p" ]] || continue
+        [[ $(basename "$p" | tr '[:upper:]' '[:lower:]') == "$name" ]] || continue
+        if [[ $(repo_slug "$p" | tr '[:upper:]' '[:lower:]') == "$want" ]]; then
+            printf '%s\n' "$p"
+            return 0
+        fi
+    done <<<"$projects"
+    return 1
+}
+
+pr_worktree() {
+    local repo=$1 number=$2 branch=$3 fork=$4 title=$5 checkout prepared path
+    checkout=$(local_repo "$repo") || die "no checkout of $repo under the project roots"
+    if [[ "$fork" == true ]]; then
+        # A fork's branch is not on origin. Once fetched, pr-<n> is kept as it is (it may be
+        # checked out or hold review commits): prepare reopens it.
+        branch="pr-$number"
+        if ! git -C "$checkout" show-ref -q --verify "refs/heads/$branch"; then
+            git -C "$checkout" fetch -q origin "pull/$number/head:$branch" || die "git fetch pull/$number/head failed"
+        fi
+    fi
+    prepared=$(task_json prepare "$branch" --project "$checkout" --title "$title" --agent none)
+    path=$(jq -r '.path' <<<"$prepared")
+    open_session "$(printf '#%s %s' "$number" "$title" | cut -c1-48)" "$path"
+}
+
+cmd_prs() {
+    local dir=${1:-$PWD} slug self selection key row url repo number branch fork title dependency
+    error_mode="tty"
+    for dependency in gh fzf; do command -v "$dependency" >/dev/null 2>&1 || die "$dependency is required"; done
+    slug=$(repo_slug "$dir")
+    self=$(printf '%q' "$0")
+    selection=$(pr_rows mine | fzf --delimiter=$'\t' --with-nth=1 --prompt='Mine > ' --expect=ctrl-y,ctrl-w \
+        --header='alt-1 mine  alt-2 review  alt-3 this repo   enter open  ctrl-y copy  ctrl-w worktree' \
+        --bind "alt-1:reload($self prs-list mine)+change-prompt(Mine > )" \
+        --bind "alt-2:reload($self prs-list review)+change-prompt(Review > )" \
+        --bind "alt-3:reload($self prs-list repo ${slug:-none})+change-prompt(${slug##*/} > )") || exit 0
+    key=$(sed -n 1p <<<"$selection")
+    row=$(sed -n 2p <<<"$selection")
+    [[ -n "$row" ]] || exit 0
+    IFS=$'\t' read -r _ url repo number branch fork title <<<"$row"
+    case "$key" in
+        ctrl-y) printf '%s' "$url" | pbcopy; note "copied $url"; sleep 1 ;;
+        ctrl-w) pr_worktree "$repo" "$number" "$branch" "$fork" "$title" ;;
+        *) open "$url" ;;
+    esac
+}
+
+# ---- prune ----
+
+cmd_prune() {
+    local dir=${1:-$PWD} plan repo count answer check result id d killed=0 own="" path removed_json='[]' kept_json
+    local -a paths=() removable=() real_removable=()
+    local tilde='~'
+    error_mode="tty"
+    plan=$(task_json prunable --cwd "$dir")
+    repo=$(jq -r '.repo' <<<"$plan")
+    count=$(jq '[.worktrees[] | select(.remove)] | length' <<<"$plan")
+    printf 'Worktrees of %s\n\n' "${repo/#"$HOME"/$tilde}"
+    jq -r '.worktrees[] | "\(if .remove then "remove" else "keep  " end)  \(.branch // "(detached)")  \(.verdict)\n        \(.path)"' <<<"$plan"
+    if [[ "$count" -eq 0 ]]; then
+        printf '\nNothing to remove. Press a key to close '
+        read -r -n1 -s _ </dev/tty || true
+        return 0
+    fi
+    printf '\nRemove %s worktree(s)? Branches are kept. [y/N] ' "$count"
+    read -r answer </dev/tty || answer=""
+    [[ "$answer" == [yY] ]] || { note "aborted"; sleep 1; return 0; }
+    while IFS= read -r path; do paths+=("$path"); done < <(jq -r '.worktrees[] | select(.remove) | .path' <<<"$plan")
+    # Check first, so a worktree that is kept never loses its session.
+    check=$(task_json prune-remove --cwd "$repo" --check "${paths[@]}")
+    kept_json=$(jq -c '.kept // []' <<<"$check")
+    while IFS= read -r path; do
+        [[ -n "$path" ]] || continue
+        removable+=("$path")
+        real_removable+=("$(cd "$path" 2>/dev/null && pwd -P || printf '%s' "$path")")
+    done < <(jq -r '.removable[]?' <<<"$check")
+    if [[ ${#removable[@]} -gt 0 ]]; then
+        # A session working in a removable worktree would come back: kill those, this one last.
+        while read -r id; do
+            [[ -n "$id" ]] || continue
+            d=$(session_dir "$id")
+            d=$(cd "$d" 2>/dev/null && pwd -P || printf '%s' "$d")
+            for path in "${real_removable[@]}"; do
+                if [[ "$d" == "$path" || "$d" == "$path"/* ]]; then
+                    if [[ "$id" == "${REX_SESSION:-}" ]]; then
+                        own=$id
+                    elif "$rex_bin" kill "$id" >/dev/null 2>&1; then
+                        killed=$((killed + 1))
+                    fi
+                    break
+                fi
+            done
+        done < <("$rex_bin" ls --json | jq -r '.sessions[].session_id')
+        result=$(task_json prune-remove --cwd "$repo" "${removable[@]}")
+        removed_json=$(jq -c '.removed // []' <<<"$result")
+        kept_json=$(jq -c --argjson k "$kept_json" '$k + (.kept // [])' <<<"$result")
+    fi
+    printf '\nRemoved %s worktree(s), closed %s session(s)\n' "$(jq 'length' <<<"$removed_json")" "$((killed + (${#own} > 0 ? 1 : 0)))"
+    jq -r '.[] | "  removed \(.)"' <<<"$removed_json"
+    jq -r '.[] | "  kept \(.path): \(.why)"' <<<"$kept_json"
+    printf '\nPress a key to close '
+    read -r -n1 -s _ </dev/tty || true
+    [[ -z "$own" ]] || "$rex_bin" kill "$own" >/dev/null 2>&1 || true
+}
+
+# ---- agent ----
+
+# agent_pick next|prev|N <session> <block>: prints "session<TAB>block" of the agent to go to.
+# next and prev start from the given block (default: the focused block of the session) and
+# wrap around across all sessions, in session and layout order.
+agent_pick() {
+    local target=$1 cur_session=${2:-} cur_block=${3:-} sid id label idx count pos cur=-1 step=1 i
+    local -a rows=() flags=()
+    [[ -n "$cur_session" ]] || cur_session=$("$rex_bin" ls --json | jq -r '.sessions[0].session_id // empty')
+    [[ -n "$cur_block" ]] || cur_block=$(focused_block "$cur_session")
+    while read -r sid; do
+        [[ -n "$sid" ]] || continue
+        while IFS=$'\t' read -r id label; do
+            [[ -n "$id" ]] || continue
+            rows+=("$sid"$'\t'"$id")
+            if is_agent "$sid" "$id"; then flags+=(1); else flags+=(0); fi
+        done < <(terminal_blocks "$sid")
+    done < <("$rex_bin" ls --json | jq -r '.sessions[].session_id')
+    count=${#rows[@]}
+    [[ $count -gt 0 ]] || return 1
+    if [[ "$target" =~ ^[0-9]+$ ]]; then
+        pos=0
+        for ((idx = 0; idx < count; idx++)); do
+            [[ "${flags[$idx]}" == 1 ]] || continue
+            pos=$((pos + 1))
+            if [[ $pos -eq $target ]]; then printf '%s\n' "${rows[$idx]}"; return 0; fi
+        done
+        return 1
+    fi
+    for ((idx = 0; idx < count; idx++)); do
+        if [[ "${rows[$idx]}" == "$cur_session"$'\t'"$cur_block" ]]; then cur=$idx; break; fi
+    done
+    [[ "$target" == prev ]] && step=-1
+    if [[ $cur -lt 0 ]]; then   # unknown focus: start before the first (next) or after the last (prev)
+        if [[ "$target" == prev ]]; then cur=0; else cur=$((count - 1)); fi
+    fi
+    i=$cur
+    for ((idx = 0; idx < count; idx++)); do
+        i=$(( (i + step + count) % count ))
+        if [[ "${flags[$i]}" == 1 ]]; then printf '%s\n' "${rows[$i]}"; return 0; fi
+    done
+    return 1
+}
+
+# REX_TASK_DRY=1 prints the pick instead of going there.
+cmd_agent() {
+    local target=${1:-} picked session block
+    [[ "$target" == next || "$target" == prev || "$target" =~ ^[1-9][0-9]*$ ]] || die "usage: rex-task agent next|prev|N [SESSION BLOCK]"
+    error_mode="layer" error_session=${2:-${REX_SESSION:-}}
+    picked=$(agent_pick "$target" "${2:-${REX_SESSION:-}}" "${3:-${REX_BLOCK:-}}") || picked=""
+    [[ -n "$picked" ]] || die "no matching agent terminal (Claude or Codex)"
+    session=${picked%%$'\t'*}
+    block=${picked#*$'\t'}
+    if [[ "${REX_TASK_DRY:-}" == 1 ]]; then
+        printf '%s\t%s\n' "$session" "$block"
+        return 0
+    fi
+    show_session "$session" "$session"
+    "$rex_bin" focus -s "$session" "$block" >/dev/null 2>&1 || die "could not focus the agent"
+}
+
+# ---- scrollback ----
+
+cmd_scrollback() {
+    local session=${1:-} block=${2:-} file
+    [[ -n "$session" && -n "$block" ]] || die "usage: rex-task scrollback SESSION BLOCK"
+    error_mode="tty"
+    file=$(mktemp "${TMPDIR:-/tmp}/rex-scrollback.XXXXXX")
+    trap 'rm -f "$file"' EXIT
+    "$rex_bin" capture -s "$session" -b "$block" >"$file" || die "could not capture the pane"
+    # shellcheck disable=SC2086  # EDITOR may carry arguments, e.g. "code -w"
+    ${EDITOR:-nvim} + "$file"
+}
+
 case "${1:-}" in
     "") cmd_interactive ;;
     start) shift; cmd_start "$@" ;;
     open) shift; cmd_open "$@" ;;
     project) shift; cmd_project "$@" ;;
-    -h|--help) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//' ;;
+    review) shift; cmd_review "$@" ;;
+    ship) shift; cmd_ship "$@" ;;
+    prs) shift; cmd_prs "$@" ;;
+    prs-list) shift; pr_rows "$@" ;;   # fzf's reload command
+    prune) shift; cmd_prune "$@" ;;
+    agent) shift; cmd_agent "$@" ;;
+    scrollback) shift; cmd_scrollback "$@" ;;
+    -h|--help) awk 'NR > 1 { if (!/^#/) exit; sub(/^# ?/, ""); print }' "$0" ;;
     *) die "unknown command: $1 (see rex-task --help)" ;;
 esac
