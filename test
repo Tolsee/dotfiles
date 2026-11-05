@@ -7,7 +7,7 @@
 #   fzf     the vim-mode fzf defaults, driven through a pseudo-terminal (fzf/test_fzfrc.py)
 #   aws     ai/aws unit tests
 #   mcps    ai/mcps installer tests
-#   app     the Herdr app's task-status mod against stand-in app modules (herdr-app/tests)
+#   app     the Herdr app's task-status and task-links mods against stand-in app modules (herdr-app/tests)
 #   claude  agent files pin a model and can't spawn; jev-model-router policy (ai/claude/tests)
 #
 # A check whose tool is missing (fzf, node, tomlkit, ...) is skipped; TEST_STRICT=1 (CI) makes
@@ -108,7 +108,7 @@ check_mcps() {
 
 check_app() {
     command -v node >/dev/null || { skip app "node not installed"; return 0; }
-    node --test herdr-app/tests/task-status.test.mjs
+    node --test herdr-app/tests/*.test.mjs
 }
 
 check_claude() {
