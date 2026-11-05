@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# Rex keeps its look (theme, font, padding, cursor, selection) in the app's macOS preferences,
+# not in init.lua. This saves those keys to rex/settings.plist and puts them back.
+#
+#   rex/settings save    copy the keys below from Rex into rex/settings.plist (commit it)
+#   rex/settings apply   write rex/settings.plist back into Rex (quit Rex first)
+set -euo pipefail
+
+domain=com.superlogical.rex
+here=$(cd "$(dirname "$0")" && pwd)
+file="$here/settings.plist"
+
+# Appearance keys only: window state, sessions and server routing stay out.
+keys=(
+  Workspace.appearance
+  Workspace.customThemes
+  Workspace.darkThemeID
+  Workspace.lightThemeID
+  Workspace.terminalFontName
+  Workspace.terminalFontStyle
+  Workspace.terminalFontWeight
+  Workspace.terminalFontPointSize
+  Workspace.terminalFontSmoothing
+  Workspace.terminalCellHeightPercent
+  Workspace.terminalFallbackFontNames
+  Workspace.terminalPaddingX
+  Workspace.terminalPaddingY
+  Workspace.terminalPaddingColor
+  Workspace.terminalCursorStyle
+  Workspace.terminalCursorStyleForced
+  Workspace.terminalCursorBlinkIntervalMilliseconds
+  Workspace.terminalCursorBlinkUsesCustomInterval
+  Workspace.terminalCopyOnSelect
+  Workspace.terminalSelectionRoundedCorners
+  Workspace.tabStyle
+  Workspace.sidebarPosition
+  Workspace.inactivePaneFadeMode
+)
+
+case "${1:-}" in
+  save)
+    defaults export "$domain" - | python3 -I -c '
+import plistlib, sys
+keys = sys.argv[1:]
+prefs = plistlib.loads(sys.stdin.buffer.read())
+out = {k: prefs[k] for k in keys if k in prefs}
+missing = [k for k in keys if k not in prefs]
+plistlib.dump(out, sys.stdout.buffer, sort_keys=True)
+if missing:
+    print("not set in Rex yet (left out): " + ", ".join(missing), file=sys.stderr)
+' "${keys[@]}" > "$file"
+    echo "saved $(grep -c '<key>' "$file") settings to $file"
+    ;;
+  apply)
+    [[ -f "$file" ]] || { echo "no $file; run: $0 save" >&2; exit 1; }
+    if pgrep -xq "Rex"; then echo "quit Rex first: it rewrites its preferences on exit" >&2; exit 1; fi
+    python3 -I - "$domain" "$file" <<'PY'
+import plistlib, subprocess, sys
+domain, path = sys.argv[1], sys.argv[2]
+current = plistlib.loads(subprocess.run(["defaults", "export", domain, "-"], check=True, capture_output=True).stdout)
+with open(path, "rb") as f:
+    current.update(plistlib.load(f))
+subprocess.run(["defaults", "import", domain, "-"], input=plistlib.dumps(current), check=True)
+PY
+    echo "applied $file to $domain"
+    ;;
+  *)
+    sed -n '2,7p' "$0" | sed 's/^# \{0,1\}//'
+    exit 1
+    ;;
+esac

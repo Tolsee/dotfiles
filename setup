@@ -36,6 +36,10 @@ mkdir -p $HOME/.config/fzf
 ln -nsf $PWD/fzf/fzfrc $HOME/.config/fzf/fzfrc
 mkdir -p $HOME/.config/rex
 ln -nsf $PWD/rex/.config/rex/init.lua $HOME/.config/rex/init.lua
+mkdir -p $HOME/bin
+ln -nsf $PWD/bin/rex-task $HOME/bin/rex-task
+# Rex's look (theme, font, padding, cursor) is app preferences, not init.lua; skipped while Rex runs.
+./rex/settings apply || echo "Rex settings not applied: quit Rex and run ./rex/settings apply"
 
 # Install Herdr and its agent integrations
 if [ -f "$PWD/herdr/install" ]
