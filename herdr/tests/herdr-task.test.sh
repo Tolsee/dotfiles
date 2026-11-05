@@ -265,5 +265,38 @@ check "open-ticket: no task opens the browser" "https://linear.app/acme/issue/AB
 check "open-ticket: no task, no focus" 0 "$(grep -c '^workspace focus' "$FAKE_LOG")"
 unset FAKE_WORKSPACES FAKE_PANES FAKE_AGENTS
 
+# --- Herdr app: projects, parse, prepare (JSON, no herdr server) ---
+# git answers with physical paths (/private/var on macOS).
+ptmp=$(cd "$tmp" && pwd -P)
+app_env=(env -u HERDR_BIN_PATH HERDR_BIN_PATH= PATH="$tmp/nobin:/usr/bin:/bin:/opt/homebrew/bin" XDG_CACHE_HOME="$tmp/appcache"
+    HERDR_TASK_WORKTREES="$ptmp/appwt" HERDR_TASK_PROJECT_ROOTS="$ptmp")
+mkdir -p "$tmp/nobin"
+git -C "$ptmp/repo" checkout -q main
+out=$("${app_env[@]}" bash "$task" parse https://linear.app/acme/issue/ABC-7/fix-login --cwd "$ptmp/repo")
+check "parse: ticket link" "ticket ABC-7 abc-7-fix-login" "$(jq -r '"\(.kind) \(.ticket_id) \(.branch)"' <<<"$out")"
+check "parse: focused repo first" "$ptmp/repo" "$(jq -r '.projects[0]' <<<"$out")"
+check "parse: free text is a task" "task fix-flaky-test|fix flaky test" \
+    "$("${app_env[@]}" bash "$task" parse "fix flaky test" | jq -r '"\(.kind) \(.branch)|\(.title)"')"
+check "parse: a branch name" "branch" "$("${app_env[@]}" bash "$task" parse feat/x | jq -r .kind)"
+
+out=$("${app_env[@]}" bash "$task" prepare https://linear.app/acme/issue/ABC-7/fix-login --project "$ptmp/repo" 2>/dev/null)
+check "prepare: new worktree" "$ptmp/appwt/repo/abc-7-fix-login false abc-7-fix-login" "$(jq -r '"\(.path) \(.existing) \(.branch)"' <<<"$out")"
+check "prepare: worktree exists" "abc-7-fix-login" "$(git -C "$ptmp/appwt/repo/abc-7-fix-login" symbolic-ref --short HEAD 2>/dev/null)"
+check "prepare: label has the id" "ABC-7 fix login" "$(jq -r .label <<<"$out")"
+check "prepare: ticket saved on the branch" "ABC-7" "$(git -C "$ptmp/repo" config --get branch.abc-7-fix-login.linear-id)"
+check "prepare: prompt asks to rename the space" 1 "$(jq -r .prompt <<<"$out" | grep -c 'herdr-app do space.rename')"
+out=$("${app_env[@]}" bash "$task" prepare ABC-7 --project "$ptmp/appwt/repo/abc-7-fix-login" 2>/dev/null)
+check "prepare: a bare id reopens the slug worktree" "true $ptmp/appwt/repo/abc-7-fix-login" "$(jq -r '"\(.existing) \(.path)"' <<<"$out")"
+check "prepare: keeps the saved link" "https://linear.app/acme/issue/ABC-7/fix-login" "$(jq -r .ticket_url <<<"$out")"
+check "parse: team repo remembered" "$ptmp/repo" "$("${app_env[@]}" bash "$task" parse ABC-8 | jq -r '.projects[0]')"
+out=$("${app_env[@]}" bash "$task" prepare "fix flaky test" --project "$ptmp/repo" --agent none 2>/dev/null)
+check "prepare: task title, no agent" "fix flaky test|null|" "$(jq -r '"\(.label)|\(.agent)|\(.prompt)"' <<<"$out")"
+git -C "$ptmp/repo" push -q origin abc-1-fix:remote-only 2>/dev/null
+"${app_env[@]}" bash "$task" prepare remote-only --project "$ptmp/repo" --agent none >/dev/null 2>&1
+check "prepare: a branch only on origin keeps its commits" "$(git -C "$ptmp/repo" rev-parse abc-1-fix)" \
+    "$(git -C "$ptmp/appwt/repo/remote-only" rev-parse HEAD 2>/dev/null)"
+check "projects: from the worktree, its repo first" "$ptmp/repo" \
+    "$("${app_env[@]}" bash "$task" projects --cwd "$ptmp/appwt/repo/abc-7-fix-login" | jq -r '.projects[0]')"
+
 printf '\n%d failure(s)\n' "$failures"
 [[ $failures -eq 0 ]]
