@@ -669,7 +669,8 @@ cmd_scrollback() {
     [[ -n "$session" && -n "$block" ]] || die "usage: rex-task scrollback SESSION BLOCK"
     error_mode="tty"
     file=$(mktemp "${TMPDIR:-/tmp}/rex-scrollback.XXXXXX")
-    trap 'rm -f "$file"' EXIT
+    # shellcheck disable=SC2064  # expand now: file is local and gone when the EXIT trap runs
+    trap "rm -f $(printf '%q' "$file")" EXIT
     "$rex_bin" capture -s "$session" -b "$block" >"$file" || die "could not capture the pane"
     # shellcheck disable=SC2086  # EDITOR may carry arguments, e.g. "code -w"
     ${EDITOR:-nvim} + "$file"
