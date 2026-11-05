@@ -47,7 +47,7 @@ test("search rows: CI, review, draft, repo and branch", async () => {
   state.exec = gh({ mine: [node(1, { isDraft: true, reviewDecision: "APPROVED" }), {}] });
   const rows = await mod.search(mod.QUERIES.mine);
   assert.deepEqual(rows, [{ number: 1, title: "PR 1", url: "https://github.com/o/r/pull/1", draft: true, branch: "b1", author: "me",
-    review: "APPROVED", repo: "o/r", ci: "SUCCESS" }]);
+    review: "APPROVED", repo: "o/r", ci: "SUCCESS", fork: false }]);
 });
 
 test("opens on the cached lists, refreshes them, and drops another repo's cached list", async () => {
@@ -106,4 +106,21 @@ test("worktree: no checkout of the repo says so", async () => {
   m.worktree({ number: 1, branch: "b", repo: "o/zzz" }, cxFor(tasks));
   await flush(tasks);
   assert.equal(m.error, "No checkout of o/zzz under the project roots");
+});
+
+test("worktree: a fork PR fetches its head into pr-<n> first", async () => {
+  state.calls = [];
+  state.spaces = [];
+  state.exec = async (cmd, args, opts) => {
+    if (cmd === "git" && args[0] === "fetch") return { code: 0, stdout: "", stderr: "" };
+    if (cmd === "git") return { code: 0, stdout: "git@github.com:o/r.git", stderr: "" };
+    if (args[3] === "projects") return { code: 0, stdout: JSON.stringify({ projects: ["/r/work/r"] }), stderr: "" };
+    return { code: 0, stdout: JSON.stringify({ path: "/wt/r/pr-5", branch: "pr-5" }), stderr: "" };
+  };
+  const tasks = [], m = new mod.default();
+  m.worktree({ number: 5, title: "From a fork", branch: "main", repo: "o/r", fork: true }, cxFor(tasks));
+  await flush(tasks);
+  const ex = state.calls.filter((c) => c[0] === "exec");
+  assert.ok(ex.some((c) => c[1] === "git" && c[2].join(" ") === "fetch -q origin +pull/5/head:pr-5" && c[3].cwd === "/r/work/r"));
+  assert.deepEqual(ex.find((c) => c[2][3] === "prepare")[2].slice(3, 6), ["prepare", "pr-5", "--project"]);
 });

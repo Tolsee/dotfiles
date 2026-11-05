@@ -16,7 +16,7 @@ const VISIBLE = 10;
 const LISTS = [["mine", "Mine"], ["review", "Review"], ["repo", "This repo"]];
 const icon = (name) => svg(`mods/workspace-chrome/${name}.svg`).size(13).flex_none();
 
-const FIELDS = `number title url isDraft updatedAt headRefName author { login } reviewDecision
+const FIELDS = `number title url isDraft updatedAt headRefName isCrossRepository author { login } reviewDecision
   repository { nameWithOwner } commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }`;
 export const QUERIES = {
   mine: "is:pr is:open author:@me archived:false sort:updated-desc",
@@ -31,7 +31,7 @@ export async function search(query) {
     "-f", `q=${query}`]);
   if (r.code !== 0) throw new Error(r.stderr.trim().split("\n").pop() || "gh api graphql failed");
   return (JSON.parse(r.stdout).data?.s?.nodes ?? []).filter((n) => n?.url).map((n) => ({
-    number: n.number, title: n.title, url: n.url, draft: n.isDraft, branch: n.headRefName,
+    number: n.number, title: n.title, url: n.url, draft: n.isDraft, branch: n.headRefName, fork: Boolean(n.isCrossRepository),
     author: n.author?.login ?? "", review: n.reviewDecision, repo: n.repository?.nameWithOwner ?? "",
     ci: n.commits?.nodes?.[0]?.commit?.statusCheckRollup?.state ?? null,
   }));
@@ -82,8 +82,9 @@ export default class TaskPrs extends View {
     this.loading = true;
     this.error = null;
     cx.spawn(async (cx) => {
-      const cwd = focused()?.cwd;
-      const slug = cwd ? slugOf((await exec("git", ["remote", "get-url", "origin"], { cwd }).catch(() => null))?.stdout) : null;
+      const f = focused();
+      const on = spaces().find((s) => s.id === f?.space)?.machine ?? null; // a remote space's folder is there
+      const slug = f?.cwd ? slugOf((await exec("git", ["remote", "get-url", "origin"], { cwd: f.cwd, on }).catch(() => null))?.stdout) : null;
       if (slug !== this.slug) this.lists.repo = slug ? null : []; // the cached list was another repo's
       this.slug = slug;
       cx.notify();
@@ -114,7 +115,15 @@ export default class TaskPrs extends View {
         const listed = await herdrTask(["projects"]);
         const repo = await localRepo(pr.repo, listed.code === 0 ? JSON.parse(listed.stdout).projects : []);
         if (!repo) throw new Error(`No checkout of ${pr.repo} under the project roots`);
-        const r = await herdrTask(["prepare", pr.branch, "--project", repo, "--title", pr.title, "--agent", "none"]);
+        // A fork's branch is not on origin: take the PR's head into its own local branch.
+        // Same-repo branches come from origin in prepare, which fetches and tracks them.
+        let branch = pr.branch;
+        if (pr.fork) {
+          branch = `pr-${pr.number}`;
+          const f = await exec("git", ["fetch", "-q", "origin", `+pull/${pr.number}/head:${branch}`], { cwd: repo });
+          if (f.code !== 0) throw new Error(f.stderr.trim().split("\n").pop() || `git fetch pull/${pr.number}/head failed`);
+        }
+        const r = await herdrTask(["prepare", branch, "--project", repo, "--title", pr.title, "--agent", "none"]);
         if (r.code !== 0) throw new Error(r.stderr.trim().split("\n").pop()?.replace(/^herdr-task: /, "") || "herdr-task prepare failed");
         const p = JSON.parse(r.stdout);
         const local = spaces().filter((s) => (s.machine ?? null) === null);
