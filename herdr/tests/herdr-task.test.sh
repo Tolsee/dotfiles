@@ -295,8 +295,36 @@ git -C "$ptmp/repo" push -q origin abc-1-fix:remote-only 2>/dev/null
 "${app_env[@]}" bash "$task" prepare remote-only --project "$ptmp/repo" --agent none >/dev/null 2>&1
 check "prepare: a branch only on origin keeps its commits" "$(git -C "$ptmp/repo" rev-parse abc-1-fix)" \
     "$(git -C "$ptmp/appwt/repo/remote-only" rev-parse HEAD 2>/dev/null)"
+# No GitHub here: gh fails, except that a branch's open PR count is 0.
+printf '#!/bin/sh\ncase "$*" in *"pr list --head"*"--state open"*) echo 0 ;; *) exit 1 ;; esac\n' > "$tmp/nobin/gh" && chmod +x "$tmp/nobin/gh"
+git -C "$ptmp/repo" checkout -q abc-1-fix
+out=$("${app_env[@]}" bash "$task" review-plan --cwd "$ptmp/repo" 2>/dev/null)
+check "review-plan: branch and base" "abc-1-fix main" "$(jq -r '"\(.branch) \(.base)"' <<<"$out")"
+check "review-plan: reviewer prompt" 1 "$(jq -r .prompt <<<"$out" | grep -c '^Review branch abc-1-fix against origin/main')"
+check "ship-prompt" 1 "$("${app_env[@]}" bash "$task" ship-prompt | grep -c '^Ship this task now')"
+check "review-plan: refuses the base branch" 1 \
+    "$("${app_env[@]}" bash "$task" review-plan --cwd "$ptmp/appwt/repo/fix-flaky-test" 2>&1 | grep -c 'no changes against origin/main')"
+out=$("${app_env[@]}" bash "$task" ship-direct --cwd "$ptmp/repo" 2>&1)
+check "ship-direct: pushes the branch" "$(git -C "$ptmp/repo" rev-parse HEAD)" "$(git -C "$tmp/origin.git" rev-parse abc-1-fix 2>/dev/null)"
+check "ship-direct: says when gh fails" 1 "$(grep -c 'gh pr create failed' <<<"$out")"
+git -C "$ptmp/repo" checkout -q main
+
+out=$("${app_env[@]}" bash "$task" prunable --cwd "$ptmp/appwt/repo/abc-7-fix-login" 2>/dev/null)
+check "prunable: the repo" "$ptmp/repo" "$(jq -r .repo <<<"$out")"
+check "prunable: merged worktrees go, unmerged stay" \
+    "abc-7-fix-login true merged into main|fix-flaky-test true merged into main|remote-only false unmerged, no PR" \
+    "$(jq -r '[.worktrees[] | select(.branch | test("^(abc-7-fix-login|fix-flaky-test|remote-only)$")) | "\(.branch) \(.remove) \(.verdict)"] | sort | join("|")' <<<"$out")"
+check "prunable: never the main checkout" 0 "$(jq --arg r "$ptmp/repo" '[.worktrees[] | select(.path == $r)] | length' <<<"$out")"
+echo dirty > "$ptmp/appwt/repo/fix-flaky-test/dirty.txt"
+out=$("${app_env[@]}" bash "$task" prune-remove --cwd "$ptmp/repo" --check "$ptmp/appwt/repo/abc-7-fix-login" "$ptmp/appwt/repo/fix-flaky-test" "$ptmp/repo" 2>/dev/null)
+check "prune-remove --check: only the clean one, nothing removed" "$ptmp/appwt/repo/abc-7-fix-login|uncommitted changes,the main checkout|yes" \
+    "$(jq -r '"\(.removable | join(","))|\([.kept[].why] | join(","))"' <<<"$out")|$([[ -d "$ptmp/appwt/repo/abc-7-fix-login" ]] && echo yes)"
+out=$("${app_env[@]}" bash "$task" prune-remove --cwd "$ptmp/repo" "$ptmp/appwt/repo/abc-7-fix-login" 2>/dev/null)
+check "prune-remove: removed" "$ptmp/appwt/repo/abc-7-fix-login|0" "$(jq -r '"\(.removed | join(","))|\(.kept | length)"' <<<"$out")"
+check "prune-remove: gone, branch kept" "no abc-7-fix-login" \
+    "$([[ -d "$ptmp/appwt/repo/abc-7-fix-login" ]] && echo yes || echo no) $(git -C "$ptmp/repo" branch --list abc-7-fix-login | tr -d ' ')"
 check "projects: from the worktree, its repo first" "$ptmp/repo" \
-    "$("${app_env[@]}" bash "$task" projects --cwd "$ptmp/appwt/repo/abc-7-fix-login" | jq -r '.projects[0]')"
+    "$("${app_env[@]}" bash "$task" projects --cwd "$ptmp/appwt/repo/remote-only" | jq -r '.projects[0]')"
 
 printf '\n%d failure(s)\n' "$failures"
 [[ $failures -eq 0 ]]

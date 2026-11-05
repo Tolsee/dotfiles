@@ -19,15 +19,9 @@ gui = json.loads((root / "herdr-app/keys.json").read_text())
 
 # TUI keys the app cannot do yet, and why. Shrink this as herdr-task learns the app.
 TUI_ONLY = {
-    "y": "herdr-task review drives TUI panes",
-    "u": "herdr-task ship drives TUI agents",
-    "alt-t": "herdr-task prune works on TUI worktree workspaces",
     "r": "the app reloads its files by itself",
-    "shift-o": "no notification target command in the app",
     "shift-r": "no resize mode in the app (drag the dividers)",
     "[": "no copy mode in the app (select with the mouse, Cmd-F to search)",
-    "e": "no scrollback-in-editor command in the app",
-    "alt-1..9": "the app exposes no sidebar agent order to mods; prefix+a / shift+a step through agents",
 }
 # Herdr TUI defaults the user did not rebind, mirrored in the app too.
 TUI_DEFAULTS = {"shift-n", "shift-w", "n", "p", "b", "shift-h", "shift-j", "shift-k", "shift-l", "ctrl-b"}

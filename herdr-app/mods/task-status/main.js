@@ -2,15 +2,26 @@
 // (bin/herdr-status): agents waiting for you, then the focused space's Linear
 // ticket (saved on its branch by herdr-task), its PR with review and CI, and the
 // time. Ticket, PR and CI are links. It also takes the Ctrl+B keys that need a
-// mod: new/remove worktree and last pane (keys.json, "layout:tasks").
+// mod (keys.json, "layout:tasks"): new/remove worktree, last pane, and the TUI's
+// task keys: prefix+y review (Claude and Codex reviewers in splits beside the task)
+// and prefix+u ship (tell the task's agent to ship; with no agent, push and open a
+// draft PR). The git and GitHub work is herdr-task's, shared with the TUI.
 
 import { View, div, svg } from "gpui-kit";
 import { h_flex } from "gpui-base";
-import { spaces, agents, panes, focused, theme, run, exec, openOverlay, nextCommand, window, shared, setShared } from "herdr";
+import { spaces, agents, panes, focused, theme, run, exec, hc, notify, openOverlay, nextCommand, window, shared, setShared } from "herdr";
 
 const LINEAR = "#7a88cf"; // the TUI sidebar's ticket color
 const REFRESH = 20000; // herdr-status interval
+const REVIEWERS = "task.reviewers"; // space id -> the reviewer terminals prefix+y opened there
 const icon = (name) => svg(`mods/workspace-chrome/${name}.svg`).size(13);
+
+// herdr-task with the private shell config, as the TUI popups run it.
+export function herdrTask(args) {
+  return exec("zsh", ["-c", 'source ~/.secrets.zshrc 2>/dev/null; exec ~/bin/herdr-task "$@"', "herdr-task", ...args]);
+}
+const why = (r, what) => r.stderr.trim().split("\n").pop()?.replace(/^herdr-task: /, "") || `herdr-task ${what} failed`;
+const tell = (title, body, level = "info") => notify({ title, body, level, timeout: level === "info" ? 4 : 8 });
 
 export default class TaskStatus extends View {
   init(_props, cx) {
@@ -25,7 +36,14 @@ export default class TaskStatus extends View {
     cx.spawn(async (cx) => {
       for (;;) {
         const c = await nextCommand();
-        this.command(typeof c === "string" ? c : (c?.name ?? c?.command ?? ""));
+        // One bad command must not end the loop: every later key would go nowhere.
+        // Editing this file hot-reloads the copy but its old loop takes the next command and
+        // stops; switch layouts away and back (or restart) before trying keys after an edit.
+        try {
+          this.command(typeof c === "string" ? c : (c?.name ?? c?.command ?? ""), cx);
+        } catch (e) {
+          tell("task-status", String(e?.message ?? e), "error");
+        }
         cx.notify();
       }
     });
@@ -83,9 +101,37 @@ export default class TaskStatus extends View {
     this.pr = pr;
   }
 
-  command(name) {
+  command(name, cx) {
     const space = spaces().find((s) => s.active);
-    if (name === "new-worktree" || name === "remove-worktree") {
+    if (name === "review" || name === "ship") {
+      cx.spawn(async (cx) => {
+        try {
+          await this[name](cx);
+        } catch (e) {
+          tell(name === "review" ? "Review" : "Ship", String(e?.message ?? e), "error");
+        }
+      });
+    } else if (name === "attention") {
+      // prefix+shift+o: the agent that most recently needs you (blocked first, then done).
+      const wants = agents().filter((a) => a.status === "blocked" || a.status === "done")
+        .sort((a, b) => (b.status === "blocked") - (a.status === "blocked") || b.seq - a.seq);
+      if (wants[0]) run("agent.focus", { terminal: wants[0].address });
+      else tell("Nothing waiting", "No agent needs you");
+    } else if (/^agent-[1-9]$/.test(name)) {
+      // prefix+alt+1..9: agent N in space, tab, pane order (the TUI's sidebar order).
+      const a = agents()[Number(name.slice(6)) - 1];
+      if (a) run("agent.focus", { terminal: a.address });
+    } else if (name === "scrollback") {
+      // prefix+e: the focused terminal's screen and history in $EDITOR, in a split beside it.
+      const t = focused()?.terminal;
+      if (!t) return;
+      cx.spawn(async () => {
+        const file = `/tmp/herdr-scrollback-${t.replace(/\W/g, "_")}.txt`;
+        const r = await exec("sh", ["-c", 'hc read --lines 100000 "$1" > "$2"', "sh", t, file]);
+        if (r.code !== 0) return tell("Scrollback", r.stderr.trim() || "hc read failed", "error");
+        run("terminal.open", { argv: ["zsh", "-lc", `exec \${EDITOR:-nvim} + ${file}`], place: "right" });
+      });
+    } else if (name === "new-worktree" || name === "remove-worktree") {
       if (!space) return;
       const action = name === "new-worktree" ? "new" : "remove";
       openOverlay({ mod: "worktree", kind: "dialog", width: 440, height: 260, props: { space: space.id, action } });
@@ -95,6 +141,77 @@ export default class TaskStatus extends View {
       this.pane = target;
       run("pane.focus", { pane: target });
     }
+  }
+
+  // The reviewer terminals prefix+y opened in this space that are still there.
+  reviewers(spaceId) {
+    const live = new Set(panes().map((p) => p.terminal).filter(Boolean));
+    return ((shared(REVIEWERS) ?? {})[spaceId] ?? []).filter((t) => live.has(t));
+  }
+
+  // terminal.open focuses the new pane; its terminal is the one that was not there before.
+  async openTerminal(cx, args) {
+    const before = new Set(panes().map((p) => p.terminal));
+    run("terminal.open", args);
+    for (let i = 0; i < 30; i++) {
+      const t = panes().find((p) => p.terminal && !before.has(p.terminal))?.terminal;
+      if (t) return t;
+      await new Promise((done) => cx.timer.after(100, done));
+    }
+    return null;
+  }
+
+  // prefix+y: a Claude reviewer right of the task, Codex below it (the local Codex review
+  // when installed), both on the branch diff; focus stays on the task.
+  async review(cx) {
+    const space = spaces().find((s) => s.active), f = focused();
+    if (!space || !f?.cwd || !f.pane) throw new Error("No focused terminal to review");
+    if (space.machine) throw new Error(`Review works on this computer's spaces, not ${space.machine}'s`);
+    if (this.reviewers(space.id).length) {
+      tell("Review", "Reviewers for this space are still open; close them (prefix+x) for a fresh review", "warning");
+      return;
+    }
+    const r = await herdrTask(["review-plan", "--cwd", f.cwd]);
+    if (r.code !== 0) throw new Error(why(r, "review-plan"));
+    const plan = JSON.parse(r.stdout);
+    // review-plan fetched for a while; split beside the task, wherever focus went meanwhile.
+    if (!panes().some((p) => p.pane === f.pane)) throw new Error("The task's pane closed before the reviewers could open");
+    run("pane.focus", { pane: f.pane });
+    const claude = await this.openTerminal(cx, { argv: ["claude", plan.prompt], folder: plan.repo, place: "right" });
+    const codex = await this.openTerminal(cx, {
+      argv: plan.codex ? ["zsh", "-lc", `${plan.codex}; exec zsh`] : ["codex", plan.prompt], folder: plan.repo, place: "down",
+    });
+    setShared(REVIEWERS, { ...(shared(REVIEWERS) ?? {}), [space.id]: [claude, codex].filter(Boolean) });
+    if (f.pane) run("pane.focus", { pane: f.pane });
+    tell(`Review of ${plan.branch}`, `Claude and ${plan.codex ? "the Codex review" : "Codex"} are reviewing against ${plan.base}`);
+  }
+
+  // prefix+u: the task's agent (the focused one, else the space's first that is not a
+  // reviewer) is told to ship; it knows how from AGENTS.md. No agent: push and draft PR.
+  async ship() {
+    const space = spaces().find((s) => s.active), f = focused();
+    if (!space) throw new Error("No space");
+    const skip = new Set(this.reviewers(space.id));
+    const mine = agents().filter((a) => a.space === space.id && !skip.has(a.address));
+    const agent = mine.find((a) => a.focused) ?? mine.find((a) => a.pane === f?.pane) ?? mine[0];
+    if (agent) {
+      if (agent.status === "blocked") {
+        tell("Ship", "The task agent is waiting for you; answer it, then ship again", "warning");
+        return;
+      }
+      const p = await herdrTask(["ship-prompt"]);
+      if (p.code !== 0) throw new Error(why(p, "ship-prompt"));
+      const s = await hc(["send", agent.address, p.stdout.trim()]);
+      if (s.code !== 0) throw new Error(s.stderr.trim() || "hc send failed");
+      tell("Ship", `Asked ${agent.program?.name ?? "the agent"} in ${agent.tab_name || "this tab"} to ship`);
+      return;
+    }
+    if (!f?.cwd) throw new Error("No agent and no focused folder to ship");
+    if (space.machine) throw new Error(`No agent to ship, and pushing works on this computer's spaces, not ${space.machine}'s`);
+    const r = await herdrTask(["ship-direct", "--cwd", f.cwd]);
+    if (r.code !== 0) throw new Error(why(r, "ship-direct"));
+    const out = JSON.parse(r.stdout);
+    tell(`Shipped ${out.branch}`, out.pr || "Pushed");
   }
 
   open(url) {

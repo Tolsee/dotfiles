@@ -70,7 +70,7 @@ Shared by all coding agents (Claude Code, Codex, Antigravity/Gemini). Source of 
 - Ticket and PR labels in the sidebar come back by themselves after a Herdr restart (`herdr-task retag` runs at startup); if one is missing, run `herdr-task retag` rather than reporting metadata by hand.
 - Ask first before creating workspaces, tabs or worktrees outside `herdr-task start`, starting another agent, sending input to a pane you did not create, or closing anything. Herdr owns notifications: do not add bell, sound or notify hooks.
 - This table is checked against `herdr/.config/herdr/config.toml` by `herdr/check-keymap`: change both together.
-- In the Herdr desktop app (`HC_TERMINAL_ID` is set), you run in herdr-core, not the TUI: the `herdr` CLI, `herdr-task` and the table's "you run instead" commands do not apply there. Use `hc` (`hc --skill`) for terminals and agents, and `herdr-app --skill` for the window. Its keys are the same Ctrl+B keys (`herdr-app/keys.json`, checked by `herdr-app/check-keys`).
+- In the Herdr desktop app (`HC_TERMINAL_ID` is set), you run in herdr-core, not the TUI: the `herdr` CLI, `herdr-task` and the table's "you run instead" commands do not apply there. Use `hc` (`hc --skill`) for terminals and agents, and `herdr-app --skill` for the window. Its keys are the same Ctrl+B keys (`herdr-app/keys.json`, checked by `herdr-app/check-keys`). The app gives mods no hook on clicks in terminal text (Cmd-click only peeks a terminal address), so the TUI's Ctrl-click Linear and file handlers have no app equivalent: use `prefix+o` for the task's ticket, PR and diff.
 
 ## Git
 

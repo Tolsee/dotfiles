@@ -1,0 +1,1 @@
+{ "place": "none", "title": "Prune worktrees", "overlay": { "kind": "popup", "at": "top", "offset": 40, "width": 640 } }

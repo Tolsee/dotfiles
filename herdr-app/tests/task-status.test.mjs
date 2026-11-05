@@ -32,7 +32,7 @@ function el(kind, arg) {
 }
 `);
 writeFileSync(join(dir, "herdr.mjs"), `
-export const state = { spaces: [], agents: [], panes: [], focused: null, calls: [], exec: async () => ({ code: 1, stdout: "" }), commands: [] };
+export const state = { spaces: [], agents: [], panes: [], focused: null, calls: [], exec: async () => ({ code: 1, stdout: "" }), hc: async () => ({ code: 0, stdout: "", stderr: "" }), commands: [] };
 export const spaces = () => state.spaces, agents = () => state.agents, panes = () => state.panes;
 export const focused = () => state.focused, window = () => ({ platform: "macos" });
 export const theme = () => new Proxy({}, { get: (_, k) => "#" + String(k) });
@@ -40,6 +40,7 @@ export const run = (...a) => state.calls.push(["run", ...a]);
 export const openOverlay = (o) => state.calls.push(["overlay", o]);
 export const exec = (...a) => { state.calls.push(["exec", ...a]); return state.exec(...a); };
 export const nextCommand = () => new Promise(() => {});
+export const hc = (a) => { state.calls.push(["hc", a]); return state.hc(a); }, notify = (n) => state.calls.push(["notify", n]);
 export const shared = (k) => state.shared?.[k], setShared = (k, v) => { state.shared = { ...state.shared, [k]: v }; };
 `);
 const src = readFileSync(join(here, "../mods/task-status/main.js"), "utf8")
@@ -117,4 +118,93 @@ test("last pane goes back and forth between the two latest panes", () => {
   assert.deepEqual(state.calls.filter((c) => c[0] === "run").map((c) => c[2].pane), ["p1", "p2"]);
   state.calls = [];
   state.panes = [];
+});
+
+const later = (cx) => ({ ...cx, timer: { every() {}, after(_ms, f) { setImmediate(f); } } });
+
+test("prefix+y: Claude right of the task, Codex review below it, focus back on the task", async () => {
+  state.spaces = [{ id: "s1", active: true }];
+  state.focused = { pane: "p1", cwd: "/wt/r/abc-1" };
+  state.panes = [{ pane: "p1", terminal: "t1" }];
+  state.shared = {};
+  state.exec = async (_c, args) => ({ code: 0, stdout: JSON.stringify({ repo: "/wt/r/abc-1", branch: "abc-1", base: "main", prompt: "Review it", codex: "~/.codex-review/codex-review --wait" }), stderr: "" });
+  let next = 2;
+  const m = fresh();
+  state.calls = [];
+  // Each terminal.open adds a pane, as the app does.
+  const origRun = state.calls.push.bind(state.calls);
+  state.calls.push = (c) => { if (c[0] === "run" && c[1] === "terminal.open") state.panes = [...state.panes, { pane: `p${next}`, terminal: `t${next++}` }]; return origRun(c); };
+  await m.review(later(cx));
+  state.calls.push = origRun;
+  const runs = state.calls.filter((c) => c[0] === "run").map((c) => [c[1], c[2]]);
+  assert.deepEqual(runs, [
+    ["pane.focus", { pane: "p1" }],
+    ["terminal.open", { argv: ["claude", "Review it"], folder: "/wt/r/abc-1", place: "right" }],
+    ["terminal.open", { argv: ["zsh", "-lc", "~/.codex-review/codex-review --wait; exec zsh"], folder: "/wt/r/abc-1", place: "down" }],
+    ["pane.focus", { pane: "p1" }],
+  ]);
+  assert.deepEqual(state.shared["task.reviewers"], { s1: ["t2", "t3"] });
+  state.calls = [];
+  await m.review(later(cx));
+  assert.equal(state.calls.filter((c) => c[0] === "run").length, 0, "no second set while reviewers are open");
+  assert.match(state.calls.find((c) => c[0] === "notify")[1].body, /still open/);
+});
+
+test("prefix+u: tells the task agent to ship, never a reviewer; no agent pushes directly", async () => {
+  state.spaces = [{ id: "s1", active: true }];
+  state.focused = { pane: "p9", cwd: "/wt/r/abc-1" };
+  state.panes = [{ terminal: "t2" }];
+  state.shared = { "task.reviewers": { s1: ["t2"] } };
+  state.agents = [{ address: "t2", space: "s1", status: "idle" }, { address: "t1", space: "s1", status: "idle", tab_name: "1", program: { name: "Claude" } }];
+  state.exec = async (_c, args) => args[3] === "ship-prompt" ? { code: 0, stdout: "Ship this task now\n", stderr: "" }
+    : { code: 0, stdout: JSON.stringify({ pr: "https://github.com/o/r/pull/3", branch: "abc-1" }), stderr: "" };
+  const m = fresh();
+  state.calls = [];
+  await m.ship();
+  assert.deepEqual(state.calls.filter((c) => c[0] === "hc").map((c) => c[1]), [["send", "t1", "Ship this task now"]]);
+
+  state.agents = [{ address: "t1", space: "s1", status: "blocked" }];
+  state.calls = [];
+  await m.ship();
+  assert.equal(state.calls.filter((c) => c[0] === "hc").length, 0);
+  assert.match(state.calls.find((c) => c[0] === "notify")[1].body, /waiting for you/);
+
+  state.agents = [];
+  state.calls = [];
+  await m.ship();
+  assert.deepEqual(state.calls.find((c) => c[0] === "exec")[2].slice(3), ["ship-direct", "--cwd", "/wt/r/abc-1"]);
+  assert.equal(state.calls.find((c) => c[0] === "notify")[1].body, "https://github.com/o/r/pull/3");
+  state.agents = []; state.panes = []; state.shared = {}; state.focused = null;
+});
+
+test("prefix+shift+o and alt+N focus agents; nothing waiting says so", () => {
+  state.agents = [{ address: "t1", status: "done", seq: 5 }, { address: "t2", status: "blocked", seq: 1 }, { address: "t3", status: "working", seq: 9 }];
+  const m = fresh();
+  m.command("attention", cx);
+  m.command("agent-3", cx);
+  m.command("agent-7", cx);
+  assert.deepEqual(state.calls.filter((c) => c[0] === "run").map((c) => c[2].terminal), ["t2", "t3"]);
+  state.agents = [{ address: "t3", status: "working" }];
+  state.calls = [];
+  m.command("attention", cx);
+  assert.equal(state.calls[0][0], "notify");
+  state.agents = [];
+  state.calls = [];
+});
+
+test("review and ship refuse remote spaces; review stops if the task pane closed", async () => {
+  state.spaces = [{ id: "s1", active: true, machine: "vps" }];
+  state.focused = { pane: "p1", cwd: "/srv/r" };
+  state.agents = [];
+  const m = fresh();
+  await assert.rejects(m.review(cx), /not vps's/);
+  await assert.rejects(m.ship(), /not vps's/);
+  state.spaces = [{ id: "s1", active: true }];
+  state.panes = [];
+  state.shared = {};
+  state.exec = async () => ({ code: 0, stdout: JSON.stringify({ repo: "/r", branch: "b", base: "main", prompt: "p", codex: null }), stderr: "" });
+  state.calls = [];
+  await assert.rejects(m.review(cx), /pane closed/);
+  assert.equal(state.calls.filter((c) => c[0] === "run").length, 0);
+  state.focused = null; state.calls = [];
 });
