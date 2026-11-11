@@ -78,11 +78,21 @@ cat > "$tmp/bin/record-open" <<'EOF'
 printf '%s\n' "$1" >> "$FAKE_OPENED"
 EOF
 # fzf stub: records what it was offered, prints the --expect key line ($FAKE_FZF_KEY) and
-# picks the first line matching $FAKE_FZF_PICK.
+# picks the first line matching $FAKE_FZF_PICK. Like fzf, a start:reload-sync(cmd) replaces
+# the input (first offered rows: $FAKE_FZF_IN.first).
 cat > "$tmp/bin/fzf" <<'EOF'
 #!/bin/sh
+reload=""
+for a in "$@"; do
+    case $a in "start:reload-sync("*) reload=${a#start:reload-sync(}; reload=${reload%)} ;; esac
+done
 printf '%s\n' "${FAKE_FZF_KEY:-}"
-tee "$FAKE_FZF_IN" | grep -m1 -e "$FAKE_FZF_PICK"
+if [ -n "$reload" ]; then
+    cat > "$FAKE_FZF_IN.first"
+    sh -c "$reload" | tee "$FAKE_FZF_IN" | grep -m1 -e "$FAKE_FZF_PICK"
+else
+    tee "$FAKE_FZF_IN" | grep -m1 -e "$FAKE_FZF_PICK"
+fi
 EOF
 chmod +x "$tmp/bin/record-open" "$tmp/bin/fzf"
 export FAKE_OPENED="$tmp/opened" FAKE_FZF_IN="$tmp/fzf-in" PATH="$tmp/bin:$PATH"
@@ -182,15 +192,68 @@ git -C "$tmp/repo" remote set-url origin git@github.com:o/r.git
 : > "$tmp/opened"
 FAKE_FZF_PICK="failing: build" HERDR_TASK_OPEN="$tmp/bin/record-open" bash "$task" open w1:p1 >/dev/null 2>&1
 check "open: failing check opens its own page" "https://ci.example/build/1" "$(cat "$tmp/opened")"
-offered=$(cut -f2 "$tmp/fzf-in" | tr '\n' ' ')
-check "open: every link, ticket first, deduped" \
-    "https://linear.app/x/issue/ABC-1/fix https://github.com/o/r/pull/7 https://github.com/o/r/pull/7/files https://github.com/o/r/pull/7/checks https://ci.example/build/1 https://github.com/o/r/tree/abc-1-fix " \
-    "$offered"
-printf '#!/bin/sh\nexit 1\n' > "$tmp/bin/gh"
+check "open: opens before gh, on what git knows (nothing cached yet)" \
+    "https://linear.app/x/issue/ABC-1/fix https://github.com/o/r/compare/main...abc-1-fix https://github.com/o/r/tree/abc-1-fix " \
+    "$(cut -f2 "$tmp/fzf-in.first" | tr '\n' ' ')"
+check "open: gh's answer replaces the rows, in the app's order, deduped" \
+    "https://linear.app/x/issue/ABC-1/fix https://github.com/o/r/pull/7 https://ci.example/build/1 https://github.com/o/r/pull/7/checks https://github.com/o/r/pull/7/files https://github.com/o/r/tree/abc-1-fix " \
+    "$(cut -f2 "$tmp/fzf-in" | tr '\n' ' ')"
+: > "$tmp/opened"
+FAKE_FZF_PICK="failing: build" HERDR_TASK_OPEN="$tmp/bin/record-open" bash "$task" open w1:p1 >/dev/null 2>&1
+check "open: the next picker opens on the cached PR" \
+    "https://github.com/o/r/pull/7" "$(cut -f2 "$tmp/fzf-in.first" | sed -n 2p)"
+printf '#!/bin/sh\necho "no pull requests found for branch" >&2\nexit 1\n' > "$tmp/bin/gh"
 : > "$tmp/opened"
 FAKE_FZF_PICK=compare HERDR_TASK_OPEN="$tmp/bin/record-open" bash "$task" open w1:p1 >/dev/null 2>&1
 check "open: compare view before a PR" "https://github.com/o/r/compare/main...abc-1-fix" "$(cat "$tmp/opened")"
 git -C "$tmp/repo" remote set-url origin "$tmp/origin.git"
+
+# --- links and pr: the shared core behind both UIs' prefix+o, the app's status bar and the
+# Claude status line ---
+lr="$tmp/lrepo"
+git init -q -b main "$lr" && git -C "$lr" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
+git -C "$lr" remote add origin git@github.com:o/r.git
+git -C "$lr" update-ref refs/remotes/origin/main HEAD
+git -C "$lr" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
+git -C "$lr" checkout -q -b abc-1-fix
+git -C "$lr" config branch.abc-1-fix.linear-id ABC-1
+git -C "$lr" config branch.abc-1-fix.linear-url https://linear.app/x/issue/ABC-1
+git -C "$lr" config branch.abc-1-fix.linear-title "Fix login"
+echo x > "$lr/a" && echo y > "$lr/b"
+cat > "$tmp/bin/gh" <<'EOF'
+#!/bin/sh
+echo gh >> "$FAKE_GH_LOG"
+cat "$FAKE_GH_OUT"
+EOF
+chmod +x "$tmp/bin/gh"
+export FAKE_GH_LOG="$tmp/gh.log" FAKE_GH_OUT="$tmp/gh.out"
+printf '%s\n' '{"number":7,"url":"https://github.com/o/r/pull/7","title":"Fix login","state":"OPEN","isDraft":true,"reviewDecision":"APPROVED","statusCheckRollup":[{"name":"lint","conclusion":"SUCCESS"},{"name":"unit","conclusion":"FAILURE","detailsUrl":"https://ci/unit"}]}' > "$FAKE_GH_OUT"
+: > "$FAKE_GH_LOG"
+out=$(bash "$task" links --cwd "$lr")
+check "links: no PR cached, so no gh and a compare view" "ticket compare diff branch|0" \
+    "$(jq -r '[.links[].kind] | join(" ")' <<<"$out")|$(grep -c . "$FAKE_GH_LOG")"
+out=$(bash "$task" links --cwd "$lr" --fresh)
+check "links: ticket, PR, failing first, checks, files, diff, branch" \
+    "ticket:ABC-1:https://linear.app/x/issue/ABC-1 pr:#7:https://github.com/o/r/pull/7 failing:unit:https://ci/unit checks:Checks:https://github.com/o/r/pull/7/checks files:Changed files:https://github.com/o/r/pull/7/files diff:Uncommitted changes:null branch:abc-1-fix:https://github.com/o/r/tree/abc-1-fix" \
+    "$(jq -r '[.links[] | "\(.kind):\(.label):\(.url)"] | join(" ")' <<<"$out")"
+check "links: CI state and dirty count" "fail|1/2 passed|2 files" \
+    "$(jq -r '[(.links[] | select(.kind == "checks") | .ci, .detail), (.links[] | select(.kind == "diff") | .detail)] | join("|")' <<<"$out")"
+: > "$FAKE_GH_LOG"
+check "links: the next read is the cached PR, without gh" "#7|0" \
+    "$(bash "$task" links --cwd "$lr" | jq -r '.links[1].label')|$(grep -c . "$FAKE_GH_LOG")"
+check "pr: younger than --max-age, from the cache" "7|0" \
+    "$(bash "$task" pr --cwd "$lr" --max-age 60 | jq -r .number)|$(grep -c . "$FAKE_GH_LOG")"
+check "pr: --max-age 0 asks gh" "7|1" "$(bash "$task" pr --cwd "$lr" --max-age 0 | jq -r .number)|$(grep -c . "$FAKE_GH_LOG")"
+printf '#!/bin/sh\necho "HTTP 502" >&2\nexit 1\n' > "$tmp/bin/gh"
+check "pr: a failed gh keeps the cached PR" "7" "$(bash "$task" pr --cwd "$lr" --max-age 0 | jq -r .number)"
+printf '#!/bin/sh\necho "no pull requests found for branch" >&2\nexit 1\n' > "$tmp/bin/gh"
+check "pr: no PR any more clears the cache" "" "$(bash "$task" pr --cwd "$lr" --max-age 0)"
+check "links: after that, a compare view again" "compare" "$(bash "$task" links --cwd "$lr" --no-status | jq -r '.links[1].kind')"
+git -C "$lr" checkout -q main
+check "links: on the base branch, no branch, ticket or PR" "null|null|0" \
+    "$(bash "$task" links --cwd "$lr" --no-status | jq -r '"\(.branch)|\(.ticket)|\(.links | length)"')"
+check "links: outside a checkout, nothing" "null|0" "$(bash "$task" links --cwd "$tmp" | jq -r '"\(.top)|\(.links | length)"')"
+check "links and pr need no herdr" "0" "$(HERDR_BIN_PATH='' PATH="$tmp/bin:/usr/bin:/bin" bash "$task" links --cwd "$lr" >/dev/null 2>&1; echo $?)"
 
 # --- retag: put task tags back after a Herdr restart ---
 git -C "$tmp/repo" worktree add -q -b abc-3-other "$tmp/wt3" main 2>/dev/null

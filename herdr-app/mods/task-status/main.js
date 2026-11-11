@@ -3,14 +3,25 @@
 // ticket (saved on its branch by herdr-task), its PR with review and CI, and the
 // time. Ticket, PR and CI are links. It also takes the Ctrl+B keys that need a
 // mod: new/remove worktree and last pane (keys.json, "layout:tasks").
+//
+// The ticket and PR come from `herdr-task links` (bin/herdr-task), as for prefix+o in the app
+// and the TUI: the cached PR at once when the focus moves, gh at most every 20 s, one cache.
 
 import { View, div, svg } from "gpui-kit";
 import { h_flex } from "gpui-base";
-import { spaces, agents, panes, focused, theme, run, exec, openOverlay, nextCommand, window, shared, setShared } from "herdr";
+import { spaces, agents, panes, focused, theme, run, exec, openOverlay, nextCommand, window } from "herdr";
 
 const LINEAR = "#7a88cf"; // the TUI sidebar's ticket color
 const REFRESH = 20000; // herdr-status interval
 const icon = (name) => svg(`mods/workspace-chrome/${name}.svg`).size(13);
+
+// `herdr-task links` on the space's machine (task-links has the same helper; mods do not share code).
+async function taskLinks(cwd, on, args) {
+  const r = await exec("sh", ["-c", 'exec "$HOME/bin/herdr-task" "$@"', "herdr-task", "links", "--cwd", cwd, "--no-status", ...args], { cwd, on })
+    .catch(() => null);
+  if (r?.code !== 0) return null;
+  try { return JSON.parse(r.stdout); } catch { return null; }
+}
 
 export default class TaskStatus extends View {
   init(_props, cx) {
@@ -37,50 +48,32 @@ export default class TaskStatus extends View {
       this.previous = this.pane;
       this.pane = now;
     }
-    const cwd = focused()?.cwd ?? spaces().find((s) => s.active)?.folder ?? null;
-    const key = JSON.stringify([cwd, spaces().find((s) => s.active)?.branch ?? null]);
-    if (key !== this.key || Date.now() - this.at > REFRESH) {
+    const space = spaces().find((s) => s.active);
+    const cwd = focused()?.cwd ?? space?.folder ?? null, on = space?.machine ?? null;
+    const key = JSON.stringify([cwd, on, space?.branch ?? null]);
+    const moved = key !== this.key;
+    if (moved || Date.now() - this.at > REFRESH) {
       this.key = key;
       this.at = Date.now();
       cx.spawn(async (cx) => {
-        await this.load(cwd, key);
+        // On a move, the cached answer first so the bar follows the focus at once.
+        if (moved) {
+          await this.load(cwd, on, key, []);
+          cx.notify();
+        }
+        await this.load(cwd, on, key, ["--max-age", String(REFRESH / 1000)]);
         cx.notify();
       });
     }
     cx.notify(); // the clock
   }
 
-  async load(cwd, key) {
-    if (!cwd) {
-      this.branch = this.ticket = this.pr = null;
-      return;
-    }
-    const git = (...args) => exec("git", args, { cwd }).then((r) => (r.code === 0 ? r.stdout.trim() : ""), () => "");
-    const [branch, top] = await Promise.all([git("symbolic-ref", "--short", "-q", "HEAD"), git("rev-parse", "--show-toplevel")]);
-    let ticket = null, pr = null;
-    if (branch) {
-      const id = await git("config", "--get", `branch.${branch}.linear-id`);
-      if (id) ticket = { id, url: await git("config", "--get", `branch.${branch}.linear-url`) };
-      const r = await exec("gh", ["pr", "view", "--json", "number,url,title,state,isDraft,reviewDecision,statusCheckRollup"], { cwd })
-        .catch(() => null);
-      if (r?.code === 0) {
-        try { pr = JSON.parse(r.stdout); } catch { pr = null; }
-      }
-    }
-    // prefix+o (task-links) opens on this, then asks gh itself.
-    // It runs git here, so it only speaks for spaces on this computer (machine "").
-    const local = (spaces().find((s) => s.active)?.machine ?? null) === null;
-    if (branch && top && local) {
-      const all = { ...(shared("task.prs") ?? {}) }, k = `\t${top}\t${branch}`; // task-links prKey(null, ...)
-      if (JSON.stringify(all[k] ?? null) !== JSON.stringify(pr)) {
-        if (pr) all[k] = pr; else delete all[k];
-        setShared("task.prs", all);
-      }
-    }
+  async load(cwd, on, key, args) {
+    const facts = cwd ? await taskLinks(cwd, on, args) : null;
     if (key !== this.key) return; // the focus moved on while this ran
-    this.branch = branch || null;
-    this.ticket = ticket;
-    this.pr = pr;
+    this.branch = facts?.branch ?? null;
+    this.ticket = facts?.ticket ?? null;
+    this.pr = facts?.pr ?? null;
   }
 
   command(name) {

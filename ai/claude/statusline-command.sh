@@ -95,8 +95,15 @@ if [ -n "$branch" ] && command -v gh >/dev/null 2>&1; then
   # Merged and closed PRs are dropped: the branch is done, so its PR is noise.
   current_pr=$(echo "$input" | jq -c 'select(.pr.url and .pr.number and ((.pr.state // "OPEN") | ascii_upcase == "OPEN")) | {url: .pr.url, number: .pr.number}' 2>/dev/null)
   if [ -z "$current_pr" ]; then
-    current_pr=$(cached "pr-$branch_key" "$repo_root" gh pr view "$branch" --json url,number,state \
-      | jq -c 'select(.state == "OPEN") | {url, number}')
+    # The PR cache herdr-task shares with prefix+o in the TUI and the Herdr app, at this
+    # line's once-a-minute pace; plain gh where herdr-task is not installed.
+    if [ -x "$HOME/bin/herdr-task" ]; then
+      current_pr=$(with_deadline 2 "$HOME/bin/herdr-task" pr --cwd "$repo_root" --max-age "$cache_ttl" 2>/dev/null \
+        | jq -c 'select(.state == "OPEN") | {url, number}')
+    else
+      current_pr=$(cached "pr-$branch_key" "$repo_root" gh pr view "$branch" --json url,number,state \
+        | jq -c 'select(.state == "OPEN") | {url, number}')
+    fi
   fi
   current_number=$(printf '%s' "$current_pr" | jq -r '.number // empty' 2>/dev/null)
   current_url=$(printf '%s' "$current_pr" | jq -r '.url // empty' 2>/dev/null)

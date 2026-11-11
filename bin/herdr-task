@@ -36,6 +36,14 @@
 #                                         tokens), from what start and tag saved on the branch;
 #                                         run by the task plugin at startup and when a worktree
 #                                         opens
+#   herdr-task links [--cwd DIR] [--fresh | --max-age N] [--no-status] [--fzf]
+#                                         the task's links (ticket, PR, checks, files, branch)
+#                                         as JSON: the one source for prefix+o in the TUI and
+#                                         the Herdr app and the app's status bar; the PR comes
+#                                         from a shared cache, gh refreshes it
+#   herdr-task pr [--cwd DIR] [--max-age N]
+#                                         the branch's PR JSON from that cache (the Claude
+#                                         status line's fallback)
 #   herdr-task open-ticket <url>          Ctrl-click on a Linear link: focus the workspace of
 #                                         that ticket's task, else open the link in the browser
 #   herdr-task review [options]           (prefix+y) open reviewer splits beside the pane: Codex
@@ -132,8 +140,9 @@ for dependency in jq git; do
     command -v "$dependency" >/dev/null 2>&1 || die "$dependency is required"
 done
 herdr_bin="${HERDR_BIN_PATH:-$(command -v herdr || true)}"
-# The Herdr app's task mods call projects, parse and prepare, which need no herdr TUI.
-case "${1:-}" in projects | parse | prepare) ;; *) [[ -n "$herdr_bin" ]] || die "herdr is required" ;; esac
+# The Herdr app's task mods and the Claude status line call projects, parse, prepare, links and
+# pr, which need no herdr TUI.
+case "${1:-}" in projects | parse | prepare | links | pr) ;; *) [[ -n "$herdr_bin" ]] || die "herdr is required" ;; esac
 
 server_running() {
     "$herdr_bin" status server --json | jq -e '.running == true' >/dev/null
@@ -207,9 +216,10 @@ save_ticket() {
 # branch_ticket <dir> <branch>: sets ticket_id, ticket_url and ticket_title for a task branch:
 # what start or tag saved on it, else the id in its name (abc-12-fix, me/abc-12-fix) when a
 # task of that team was started before (so utf-8 is nobody's ticket), linked through the
-# Linear workspace seen last. All empty for any other branch.
+# Linear workspace seen last (ticket_guessed=true then). All empty for any other branch.
 branch_ticket() {
     local dir=$1 b=$2 team number org
+    ticket_guessed=false
     ticket_id=$(git -C "$dir" config --get "branch.$b.linear-id" 2>/dev/null || true)
     ticket_url=$(git -C "$dir" config --get "branch.$b.linear-url" 2>/dev/null || true)
     ticket_title=$(git -C "$dir" config --get "branch.$b.linear-title" 2>/dev/null || true)
@@ -220,6 +230,7 @@ branch_ticket() {
     team=$(printf '%s' "${BASH_REMATCH[1]}" | tr '[:lower:]' '[:upper:]')
     [[ -n "$(team_repo "$team")" ]] || return 0
     ticket_id="$team-$number"
+    ticket_guessed=true
     org=$(cat "$linear_org_file" 2>/dev/null || true)
     if [[ -n "$org" ]]; then ticket_url="https://linear.app/$org/issue/$ticket_id"; fi
     return 0
@@ -651,13 +662,182 @@ i_fail=$(printf '\357\224\257')      # nf-oct-x_circle
 i_compare=$(printf '\357\221\277')   # nf-oct-git_compare
 i_branch=$(printf '\357\220\230')    # nf-oct-git_branch
 
-# open [PANE] (prefix+o): every link for the focused task in one picker. The Linear ticket; the
-# branch's PR with its changed files, its checks and each failing check's own page; PRs the
-# Claude status line reported; the branch on GitHub (and a compare view before there is a PR).
-# Sidebar rows and the tab bar are not clickable, so this is the keyboard route. Enter opens,
-# ctrl-y copies; a single link opens straight away.
+# --- Task links, shared by every UI ------------------------------------------------------
+# The TUI's prefix+o, the app's prefix+o popup and status bar (herdr-app/mods) and the Claude
+# status line all read a task's links and PR through these, so they agree and share one PR
+# cache: what git knows is instant, the PR comes from the cache, and gh refreshes it.
+
+# One file per "<checkout>\t<branch>": gh pr view's JSON, empty when the branch has no PR.
+pr_cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/herdr-task/prs"
+pr_fields=number,url,title,state,isDraft,reviewDecision,statusCheckRollup
+pr_cache_file() {
+    local name="$1@$2"
+    printf '%s/%s.json' "$pr_cache_dir" "${name//\//%}"
+}
+
+# pr_get <checkout> <branch> <max-age>: the branch's PR JSON, nothing when it has none. Served
+# from the cache when younger than max-age seconds (-1: any age, never asks gh; 0: always asks).
+# gh runs in the checkout without a branch argument, so fork PR checkouts (pr-<n>) resolve too.
+# A failed gh (offline, rate limit) keeps the cached answer.
+pr_get() {
+    local top=$1 b=$2 max=$3 file mtime out err
+    file=$(pr_cache_file "$top" "$b")
+    if [[ -f "$file" ]]; then
+        mtime=$(stat -c %Y "$file" 2>/dev/null || stat -f %m "$file" 2>/dev/null || echo 0)
+        if (( max < 0 || $(date +%s) - mtime < max )); then
+            cat "$file"
+            return 0
+        fi
+    elif (( max < 0 )); then
+        return 0
+    fi
+    command -v gh >/dev/null 2>&1 || return 0
+    mkdir -p "$pr_cache_dir" 2>/dev/null || return 0
+    err=$(mktemp "${TMPDIR:-/tmp}/herdr-task-gh.XXXXXX")
+    if out=$(cd "$top" && gh pr view --json "$pr_fields" 2>"$err"); then
+        printf '%s\n' "$out" > "$file.$$" && mv -f "$file.$$" "$file"
+        printf '%s\n' "$out"
+    elif grep -qi 'no pull requests found' "$err"; then
+        : > "$file.$$" && mv -f "$file.$$" "$file"
+    elif [[ -f "$file" ]]; then
+        cat "$file"
+    fi
+    rm -f "$err"
+}
+
+# pr [--cwd DIR] [--max-age N]: the PR of DIR's branch as JSON (nothing when none), from the
+# shared cache when younger than N seconds (default 60, the status line's pace).
+cmd_pr() {
+    local cwd=$PWD max=60 top b
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --cwd) cwd=$2; shift 2 ;;
+            --max-age) max=$2; shift 2 ;;
+            *) die "unknown option: $1" ;;
+        esac
+    done
+    top=$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null) || return 0
+    b=$(git -C "$top" symbolic-ref --short -q HEAD) || return 0
+    pr_get "$top" "$b" "$max"
+}
+
+# The rows every UI shows, in this order: the ticket; the PR, its failing checks, the checks and
+# its changed files (or a compare view before there is a PR); uncommitted changes; the branch.
+# shellcheck disable=SC2016
+links_jq='
+def failed: ["FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE"];
+def passed: ["SUCCESS", "NEUTRAL", "SKIPPED", "COMPLETED"];
+def st: ([.conclusion, .state, .status] | map(select(. != null and . != "")) | (.[0] // "")) | ascii_upcase;
+def nonempty: select(. != null and . != "");
+. + {links: [
+  (if (.ticket.url // "") != "" then {kind: "ticket", label: .ticket.id, detail: (.ticket.title // ""), url: .ticket.url} else empty end),
+  (if (.pr.url // "") != "" then
+     .pr as $pr | ($pr.statusCheckRollup // []) as $c
+     | [$c[] | select(st as $s | failed | index($s))] as $failed
+     | [$c[] | select(st as $s | passed | index($s))] as $passed
+     | {kind: "pr", label: "#\($pr.number)", detail: ($pr.title // ""), url: $pr.url},
+       ($failed[] | {kind: "failing", label: ([.name, .context] | map(nonempty) | .[0] // "check"), detail: "failing",
+                     url: ([.detailsUrl, .targetUrl] | map(nonempty) | .[0] // "\($pr.url)/checks")}),
+       (if ($c | length) > 0 then {kind: "checks", label: "Checks", detail: "\($passed | length)/\($c | length) passed",
+            url: "\($pr.url)/checks",
+            ci: (if ($failed | length) > 0 then "fail" elif ($passed | length) == ($c | length) then "pass" else "pending" end)}
+        else empty end),
+       {kind: "files", label: "Changed files", detail: "on GitHub", url: "\($pr.url)/files"}
+   elif .slug and .branch then
+     {kind: "compare", label: "Compare", detail: "\(.base) ← \(.branch)", url: "https://github.com/\(.slug)/compare/\(.base)...\(.branch)"}
+   else empty end),
+  (if (.dirty // 0) > 0 then {kind: "diff", label: "Uncommitted changes", detail: "\(.dirty) file\(if .dirty > 1 then "s" else "" end)", url: null} else empty end),
+  (if .slug and .branch then {kind: "branch", label: .branch, detail: "branch", url: "https://github.com/\(.slug)/tree/\(.branch)"} else empty end)
+]}'
+
+# links [--cwd DIR] [--fresh | --max-age N] [--no-status] [--tokens FILE] [--fzf]: the task links
+# for DIR's checkout as JSON: {cwd, top, branch, base, slug, dirty, ticket, pr, links: [{kind,
+# label, detail, url, ci}]}. The PR is the cached one (any age, so it never waits) unless --fresh
+# (ask gh) or --max-age N (ask gh when the cache is older). --no-status skips git status (the
+# dirty count). --tokens: a TUI pane's metadata tokens (JSON); their ticket stands in for one
+# guessed from the branch name, and their pr_url_<n> PRs are added. --fzf prints the TUI
+# picker's "label<TAB>url" lines instead, each url once.
+cmd_links() {
+    local cwd=$PWD max=-1 status=true fzf=false tokens="{}" top branch remote head base slug="" dirty=0 pr=""
+    local ticket_id="" ticket_url="" ticket_title="" ticket_guessed=false facts
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --cwd) cwd=$2; shift 2 ;;
+            --fresh) max=0; shift ;;
+            --max-age) max=$2; shift 2 ;;
+            --no-status) status=false; shift ;;
+            --fzf) fzf=true; shift ;;
+            --tokens) tokens=$(cat "$2" 2>/dev/null || echo '{}'); shift 2 ;;
+            *) die "unknown option: $1" ;;
+        esac
+    done
+    if top=$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null); then
+        branch=$(git -C "$top" symbolic-ref --short -q HEAD || true)
+        remote=$(git -C "$top" remote get-url origin 2>/dev/null || true)
+        head=$(git -C "$top" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || true)
+        [[ "$remote" =~ github\.com[:/]([^/]+/[^/]+)$ ]] && slug=${BASH_REMATCH[1]%.git}
+        base=${head#origin/}
+        base=${base:-main}
+        [[ "$branch" != "$base" ]] || branch=""
+        if [[ "$status" == true ]]; then
+            dirty=$(git -C "$top" status --porcelain 2>/dev/null | grep -c . || true)
+        fi
+        if [[ -n "$branch" ]]; then
+            branch_ticket "$top" "$branch"
+            [[ -z "$ticket_id" || -n "$ticket_url" ]] || ticket_url="https://linear.app/issue/$ticket_id"
+            pr=$(pr_get "$top" "$branch" "$max")
+        fi
+    else
+        top="" branch="" base=""
+    fi
+    facts=$(jq -n --arg cwd "$cwd" --arg top "$top" --arg branch "$branch" --arg base "$base" --arg slug "$slug" \
+        --argjson dirty "${dirty:-0}" --arg id "$ticket_id" --arg url "$ticket_url" --arg title "$ticket_title" \
+        --arg pr "$pr" --argjson guessed "$ticket_guessed" --argjson tokens "$tokens" '
+        def opt: if . == "" then null else . end;
+        {cwd: $cwd, top: ($top | opt), branch: ($branch | opt), base: ($base | opt), slug: ($slug | opt), dirty: $dirty,
+         ticket: (if (($id == "" or $guessed) and ($tokens.linear_url // "") != "") then
+                    {id: ($tokens.linear_id // "ticket"), url: $tokens.linear_url, title: ($tokens.linear_title // "")}
+                  elif $id == "" then null else {id: $id, url: $url, title: $title} end),
+         pr: (if $pr == "" then null else ($pr | fromjson? // null) end)}' | jq -c "$links_jq")
+    if [[ "$fzf" != true ]]; then
+        printf '%s\n' "$facts"
+        return
+    fi
+    {
+        jq -r --arg ticket "$linear_glyph" --arg pr "$i_pr" --arg diff "$i_diff" --arg checks "$i_checks" \
+            --arg fail "$i_fail" --arg compare "$i_compare" --arg branch "$i_branch" '
+            .pr as $p | .links[] | select(.url != null)
+            | ( if .kind == "ticket" then "\($ticket)  \(.label)  \(.detail)"
+                elif .kind == "pr" then "\($pr)  \(.label)  \(.detail)" + (
+                    [ (if $p.state == "MERGED" then "merged" elif $p.state == "CLOSED" then "closed"
+                       elif $p.isDraft then "draft" else empty end),
+                      (if $p.state == "OPEN" then {APPROVED: "approved", CHANGES_REQUESTED: "changes requested",
+                         REVIEW_REQUIRED: "review required"}[$p.reviewDecision // ""] // empty else empty end) ]
+                    | if length > 0 then "  · " + join(" · ") else "" end)
+                elif .kind == "failing" then "\($fail)  failing: \(.label)"
+                elif .kind == "checks" then "\($checks)  checks  \(.detail)"
+                elif .kind == "files" then "\($diff)  changed files"
+                elif .kind == "compare" then "\($compare)  compare \(.detail)"
+                else "\($branch)  branch \(.label)" end ) + "\t" + .url' <<<"$facts"
+        # pr_url_<n>: one token per PR the Claude status line saw (Herdr truncates long token
+        # values); pr_url is the old space-joined scheme, so split it and drop fragments.
+        jq -r --arg pr "$i_pr" '
+            [ to_entries[]
+              | select(.key == "pr_url" or (.key | startswith("pr_url_")))
+              | if .key == "pr_url" then (.value | split(" ")[]) else .value end
+              | select(test("/pull/[0-9]+$")) ]
+            | unique[] | "\($pr)  #\(split("/") | last)\t\(.)"' <<<"$tokens"
+    } | awk -F'\t' 'NF == 2 && $2 != "" && !seen[$2]++'
+}
+
+# open [PANE] (prefix+o): every link for the focused task in one picker, the same rows as the
+# app's prefix+o (cmd_links): the Linear ticket; the branch's PR, its failing checks, its checks
+# and changed files (a compare view before there is a PR); the branch on GitHub; plus PRs the
+# Claude status line reported. The picker opens at once on what git knows and the cached PR,
+# then gh's answer replaces the rows in place. Enter opens, ctrl-y copies; a single link opens
+# straight away when gh has nothing to add.
 cmd_open() {
-    local ws pane=${1:-} tokens links cwd="" branch="" slug="" base pr_json="" out key choice url
+    local ws pane=${1:-} pane_json tokens tokens_file cwd="" rows self key choice url out cmd
     if [[ -z "$pane" ]]; then
         ws=$("$herdr_bin" workspace list | jq -r '.result.workspaces[] | select(.focused) | .workspace_id' | head -n1)
         [[ -n "$ws" ]] || fail_open "no focused workspace"
@@ -667,68 +847,34 @@ cmd_open() {
     # Pane tokens first (ticket via herdr-task or the Claude hook, PRs via the status line);
     # the ticket falls back to the workspace, which every agent kind has.
     ws=${ws:-${pane%%:*}}
+    pane_json=$("$herdr_bin" pane get "$pane" 2>/dev/null) || pane_json='{}'
     tokens=$(jq -cs '.[1] + .[0]' \
-        <("$herdr_bin" pane get "$pane" | jq -c '.result.pane.tokens // {}') \
+        <(jq -c '.result.pane.tokens // {}' <<<"$pane_json") \
         <("$herdr_bin" workspace get "$ws" | jq -c '.result.workspace.tokens // {}'))
+    cwd=$(jq -r '.result.pane.foreground_cwd // .result.pane.cwd // empty' <<<"$pane_json")
 
-    cwd=$("$herdr_bin" pane get "$pane" 2>/dev/null | jq -r '.result.pane.foreground_cwd // .result.pane.cwd // empty')
-    if [[ -n "$cwd" ]] && git -C "$cwd" rev-parse --git-dir >/dev/null 2>&1; then
-        branch=$(git -C "$cwd" symbolic-ref --short -q HEAD || true)
-        slug=$(git -C "$cwd" remote get-url origin 2>/dev/null | sed -E 's#\.git$##' | sed -nE 's#^.*github\.com[:/]([^/]+/[^/]+)$#\1#p')
-        base=$(git -C "$cwd" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##' || true)
-        [[ "$branch" == "${base:-main}" ]] && branch=""
-    fi
-    if [[ -n "$branch" ]] && command -v gh >/dev/null 2>&1; then
-        pr_json=$(cd "$cwd" && gh pr view --json number,url,title,statusCheckRollup 2>/dev/null) || pr_json=""
-    fi
-
-    # "label<TAB>url" lines, first occurrence of a url wins.
-    links=$( {
-        jq -r --arg ticket "$linear_glyph" '
-            if (.linear_url // "") != "" then
-                "\($ticket)  \(.linear_id // "ticket")  \(.linear_title // "")\t\(.linear_url)"
-            else empty end' <<<"$tokens"
-        if [[ -n "$pr_json" ]]; then
-            jq -r --arg pr "$i_pr" --arg diff "$i_diff" --arg checks "$i_checks" --arg fail "$i_fail" '
-                .url as $u
-                | "\($pr)  #\(.number)  \(.title)\t\($u)",
-                  "\($diff)  changed files\t\($u)/files",
-                  "\($checks)  checks\t\($u)/checks",
-                  (.statusCheckRollup[]?
-                    | select((if (.conclusion // "") != "" then .conclusion else (.state // "") end | ascii_upcase) as $c
-                        | ["FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE"] | index($c))
-                    | "\($fail)  failing: \(.name // .context)\t\(.detailsUrl // .targetUrl // "")")' <<<"$pr_json"
-        elif [[ -n "$slug" && -n "$branch" ]]; then
-            printf '%s  compare %s\thttps://github.com/%s/compare/%s...%s\n' "$i_compare" "$branch" "$slug" "${base:-main}" "$branch"
-        fi
-        # pr_url_<n> tokens: the status line reports one per PR because Herdr
-        # truncates long token values. pr_url (unindexed) is the old scheme,
-        # space-joined and possibly truncated, so split it and drop fragments.
-        jq -r --arg pr "$i_pr" '
-            [ to_entries[]
-              | select(.key == "pr_url" or (.key | startswith("pr_url_")))
-              | if .key == "pr_url" then (.value | split(" ")[]) else .value end
-              | select(test("/pull/[0-9]+$")) ]
-            | unique[]
-            | "\($pr)  #\(split("/") | last)\t\(.)"' <<<"$tokens"
-        if [[ -n "$slug" && -n "$branch" ]]; then
-            printf '%s  branch %s\thttps://github.com/%s/tree/%s\n' "$i_branch" "$branch" "$slug" "$branch"
-        fi
-    } | awk -F'\t' 'NF == 2 && $2 != "" && !seen[$2]++')
-
-    [[ -n "$links" ]] || fail_open "no ticket, PR or GitHub branch for pane $pane (start the task with prefix+t)"
-    if [[ $(wc -l <<<"$links") -eq 1 ]]; then
-        key="" choice=$links
+    # The tokens go to links in a file, read again by the picker's refresh.
+    tokens_file=$(mktemp "${TMPDIR:-/tmp}/herdr-task-tokens.XXXXXX")
+    # shellcheck disable=SC2064
+    trap "rm -f '$tokens_file'" EXIT
+    printf '%s\n' "$tokens" > "$tokens_file"
+    rows=$(cmd_links --cwd "${cwd:-.}" --no-status --tokens "$tokens_file" --fzf)
+    [[ -n "$rows" ]] || fail_open "no ticket, PR or GitHub branch for pane $pane (start the task with prefix+t)"
+    if [[ $(wc -l <<<"$rows") -eq 1 ]] && ! links_can_change "${cwd:-.}"; then
+        key="" choice=$rows
     else
         command -v fzf >/dev/null 2>&1 || fail_open "fzf is required to pick between several links"
+        self=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")
+        printf -v cmd '%q links --cwd %q --fresh --no-status --tokens %q --fzf' "$self" "${cwd:-.}" "$tokens_file"
         # shellcheck disable=SC2016
-        out=$(fzf --delimiter=$'\t' --with-nth=1 --prompt='Open > ' --expect=ctrl-y \
+        out=$(fzf --delimiter=$'\t' --with-nth=1 --prompt='Open > ' --expect=ctrl-y --track \
             --header='enter: open   ctrl-y: copy link' \
+            --bind "start:reload-sync($cmd)" \
             --preview='u={2}; case "$u" in
                 */checks) gh pr checks "${u%/checks}" 2>/dev/null ;;
                 */pull/*) gh pr view "${u%/files}" 2>/dev/null | head -n 40 ;;
                 *) printf "%s\n" "$u" ;;
-            esac' --preview-window='down,50%,wrap' <<<"$links") || exit 0
+            esac' --preview-window='down,50%,wrap' <<<"$rows") || exit 0
         key=$(head -n1 <<<"$out")
         choice=$(sed -n 2p <<<"$out")
         [[ -n "$choice" ]] || exit 0
@@ -744,6 +890,16 @@ cmd_open() {
         return
     fi
     "${HERDR_TASK_OPEN:-open}" "$url"
+}
+
+# links_can_change <dir>: whether gh could still add rows (a branch off the base, on GitHub).
+links_can_change() {
+    local top b remote
+    command -v gh >/dev/null 2>&1 || return 1
+    top=$(git -C "$1" rev-parse --show-toplevel 2>/dev/null) || return 1
+    b=$(git -C "$top" symbolic-ref --short -q HEAD) || return 1
+    remote=$(git -C "$top" remote get-url origin 2>/dev/null) || return 1
+    [[ "$remote" == *github.com* && "refs/remotes/origin/$b" != "$(git -C "$top" symbolic-ref -q refs/remotes/origin/HEAD)" ]]
 }
 
 # target_pane [PANE]: the given pane, else the calling pane (an agent's own pane, or the
@@ -1243,6 +1399,8 @@ case "${1:-}" in
     branch) parse_ticket "${2:?ticket}"; printf '%s\n' "$branch" ;;
     tag) cmd_tag "${2:?ticket}" "${@:3}" ;;
     open) cmd_open "${2:-}" ;;
+    links) shift; cmd_links "$@" ;;
+    pr) shift; cmd_pr "$@" ;;
     agent-start) start_agent "$2" "$3" "$4" "$5" "${6:-}" ;;
     review) shift; cmd_review "$@" ;;
     ship) shift; cmd_ship "$@" ;;

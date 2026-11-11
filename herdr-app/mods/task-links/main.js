@@ -5,61 +5,36 @@
 // changes view as a popup: it reads the focused pane's folder live, and a popup leaves focus
 // on the source terminal where a split would take it (and fall back to the space folder).
 //
-// Opens on what git knows (tens of ms) and the cached PR, then fills in gh's answer (~1 s).
+// The rows come from `herdr-task links` (bin/herdr-task), the same command behind the TUI's
+// prefix+o and the status bar, so every UI shows the same links and shares one PR cache on disk.
+// Opens on what git knows and the cached PR (tens of ms), then fills in gh's answer (~1 s).
 //
 // Keys: j/k or ↑/↓ move, 1-9 pick, Enter opens, y copies the link, d opens the diff
 // (uncommitted changes), r reloads, Esc closes.
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { focused, spaces, theme, exec, props, closeOverlay, openOverlay, notify, window, shared, setShared } from "herdr";
-
-// The last PR seen per "<machine>\t<repo>\t<branch>" (machine "" here), shared with task-status (which refreshes it every
-// 20 s), so the PR rows show at once and gh only confirms them.
-export const PR_CACHE = "task.prs";
-export const prKey = (on, top, branch) => `${on ?? ""}\t${top}\t${branch}`;
-export function rememberPr(key, pr) {
-  const all = { ...(shared(PR_CACHE) ?? {}) };
-  if (pr) all[key] = pr; else delete all[key];
-  const keys = Object.keys(all);
-  for (const k of keys.slice(0, Math.max(0, keys.length - 40))) delete all[k];
-  setShared(PR_CACHE, all);
-}
+import { focused, spaces, theme, exec, props, closeOverlay, openOverlay, notify, window } from "herdr";
 
 const LINEAR = "#7a88cf"; // the TUI sidebar's ticket color
-const FAILED = ["FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE"];
-const PASSED = ["SUCCESS", "NEUTRAL", "SKIPPED", "COMPLETED"];
 const VISIBLE = 9; // rows shown at once; the window follows the selection
 const icon = (name) => svg(`mods/workspace-chrome/${name}.svg`).size(13).flex_none();
 
-const checkState = (c) => String(c.conclusion || c.state || c.status || "").toUpperCase();
-
-// The rows for what load() found, in the order the TUI's picker lists them.
-// facts: { branch, base, slug, ticket: {id, url, title}, pr (gh pr view JSON), dirty }
-export function buildLinks(f) {
-  const out = [];
-  if (f.ticket?.url) out.push({ kind: "ticket", label: f.ticket.id, detail: f.ticket.title ?? "", url: f.ticket.url });
-  const pr = f.pr;
-  if (pr?.url) {
-    const checks = pr.statusCheckRollup ?? [];
-    const failed = checks.filter((c) => FAILED.includes(checkState(c)));
-    const passed = checks.filter((c) => PASSED.includes(checkState(c)));
-    out.push({ kind: "pr", label: `#${pr.number}`, detail: pr.title ?? "", url: pr.url, pr });
-    for (const c of failed) {
-      out.push({ kind: "failing", label: c.name || c.context || "check", detail: "failing", url: c.detailsUrl || c.targetUrl || `${pr.url}/checks` });
-    }
-    if (checks.length) {
-      const ci = failed.length ? "fail" : passed.length === checks.length ? "pass" : "pending";
-      out.push({ kind: "checks", label: "Checks", detail: `${passed.length}/${checks.length} passed`, url: `${pr.url}/checks`, ci });
-    }
-    out.push({ kind: "files", label: "Changed files", detail: "on GitHub", url: `${pr.url}/files` });
-  } else if (f.slug && f.branch) {
-    out.push({ kind: "compare", label: "Compare", detail: `${f.base} ← ${f.branch}`, url: `https://github.com/${f.slug}/compare/${f.base}...${f.branch}` });
-  }
-  if (f.dirty) out.push({ kind: "diff", label: "Uncommitted changes", detail: `${f.dirty} file${f.dirty > 1 ? "s" : ""}`, url: null });
-  if (f.slug && f.branch) out.push({ kind: "branch", label: f.branch, detail: "branch", url: `https://github.com/${f.slug}/tree/${f.branch}` });
-  return out;
+// `herdr-task links` on the space's machine: the task's facts and its rows, in the order every
+// UI lists them: {branch, base, slug, dirty, ticket, pr, links: [{kind, label, detail, url, ci}]}.
+// fresh: true asks gh, a number asks it when the cached PR is older (seconds), nothing never.
+export async function taskLinks({ cwd, on, fresh, status = true }) {
+  const args = ["links", "--cwd", cwd];
+  if (fresh === true) args.push("--fresh");
+  else if (typeof fresh === "number") args.push("--max-age", String(fresh));
+  if (!status) args.push("--no-status");
+  const r = await exec("sh", ["-c", 'exec "$HOME/bin/herdr-task" "$@"', "herdr-task", ...args], { cwd, on }).catch((e) => ({ code: 1, stderr: String(e) }));
+  if (r.code !== 0) throw new Error(String(r.stderr ?? "").trim().split("\n").pop()?.replace(/^herdr-task: /, "") || "herdr-task links failed");
+  return JSON.parse(r.stdout);
 }
+
+// The rows for one answer of taskLinks; the PR row carries the PR for its badges.
+export const rowsOf = (facts) => (facts.links ?? []).map((l) => (l.kind === "pr" ? { ...l, pr: facts.pr } : l));
 
 export default class TaskLinks extends View {
   init(_props, cx) {
@@ -87,23 +62,23 @@ export default class TaskLinks extends View {
     this.facts = facts;
     // Keep the selection on the same link while rows arrive above it.
     const was = this.links[this.at]?.url ?? this.links[this.at]?.kind;
-    this.links = buildLinks(facts);
+    this.links = rowsOf(facts);
     const i = this.links.findIndex((l) => (l.url ?? l.kind) === was);
     this.at = i >= 0 ? i : Math.min(this.at, Math.max(0, this.links.length - 1));
   }
 
+  // What git knows and the cached PR first (instant), then gh's answer.
   reload(cx) {
     this.loading = true;
     this.error = null;
     cx.spawn(async (cx) => {
       try {
-        const facts = await this.load();
-        this.show(facts);
-        cx.notify();
-        if (facts.branch) {
-          const pr = await this.loadPr(facts);
-          rememberPr(facts.key, pr);
-          this.show({ ...facts, pr });
+        const { cwd, on } = this.where();
+        if (cwd) {
+          const facts = { ...(await taskLinks({ cwd, on })), cwd };
+          this.show(facts);
+          cx.notify();
+          if (facts.branch) this.show({ ...(await taskLinks({ cwd, on, fresh: true })), cwd });
         }
       } catch (e) {
         this.error = String(e?.message ?? e);
@@ -112,40 +87,6 @@ export default class TaskLinks extends View {
       if (!this.error && !this.links.length) this.error = "No ticket, PR or GitHub branch here. Start the task with prefix+t.";
       cx.notify();
     });
-  }
-
-  async loadPr({ cwd, on }) {
-    const r = await exec("gh", ["pr", "view", "--json", "number,url,title,state,isDraft,reviewDecision,statusCheckRollup"], { cwd, on })
-      .catch(() => null);
-    if (r?.code !== 0) return null;
-    try { return JSON.parse(r.stdout); } catch { return null; }
-  }
-
-  // What git knows, plus the PR cached for this branch; gh comes after (loadPr).
-  async load() {
-    const { cwd, on } = this.where();
-    if (!cwd) return {};
-    const git = (...args) => exec("git", args, { cwd, on }).then((r) => (r.code === 0 ? r.stdout.trim() : ""), () => "");
-    const [top, branch, remote, head, status] = await Promise.all([
-      git("rev-parse", "--show-toplevel"),
-      git("symbolic-ref", "--short", "-q", "HEAD"),
-      git("remote", "get-url", "origin"),
-      git("symbolic-ref", "--short", "refs/remotes/origin/HEAD"),
-      git("status", "--porcelain"),
-    ]);
-    if (!top) return {};
-    const slug = remote.replace(/\.git$/, "").match(/github\.com[:/]([^/]+\/[^/]+)$/)?.[1] ?? null;
-    const base = head.replace(/^origin\//, "") || "main";
-    const dirty = status ? status.split("\n").length : 0;
-    const onBase = !branch || branch === base;
-    let ticket = null;
-    if (branch) {
-      const [id, url, title] = await Promise.all(["id", "url", "title"].map((k) => git("config", "--get", `branch.${branch}.linear-${k}`)));
-      if (id) ticket = { id, url: url || `https://linear.app/issue/${id}`, title };
-    }
-    const key = prKey(on, top, branch);
-    const pr = onBase ? null : ((shared(PR_CACHE) ?? {})[key] ?? null);
-    return { cwd, on, key, branch: onBase ? null : branch, base, slug, ticket, pr, dirty };
   }
 
   open(link) {
