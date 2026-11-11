@@ -50,6 +50,7 @@ Shared by all coding agents (Claude Code, Codex, Antigravity/Gemini). Source of 
 | --- | --- | --- |
 | `prefix+t` | Start a task (Linear link or id, branch or free text) in its own worktree workspace with an agent | `herdr-task start <ticket> --project <repo> --title "<title>"` (see Git) |
 | `prefix+m` | GitHub PR popup (herdr-github): mine, waiting for my review, this repo's; merge, draft/ready, worktree | `gh search prs --author=@me --state=open` to list; ask first before merging or opening worktrees |
+| `prefix+i` | Recap popup (herdr-recap): every agent, the ones waiting on me first, with what each got to | `herdr agent list` |
 | `prefix+y` | Review the branch: Codex and a no-edit Claude reviewer in splits | `herdr-task review` (ask first: starts agents) |
 | `prefix+u` | Ship: the task's agent reviews, pushes, opens the PR, babysits it | Nothing: you already do this when the task is done (see Pull Requests) |
 | `prefix+o` | Pick from the task's links (ticket, PR, changed files, checks, failing checks, branch) | Print the link instead |

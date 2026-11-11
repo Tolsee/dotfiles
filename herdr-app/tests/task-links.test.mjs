@@ -95,16 +95,16 @@ test("the rows come from herdr-task links: cached at once, then gh's answer", as
   assert.equal(ghCalls(), before, "without asking gh");
 });
 
-test("taskLinks passes --fresh, --max-age and --no-status through to herdr-task", async () => {
+test("taskLinks passes --fresh and --max-age through to herdr-task", async () => {
   const seen = [];
   state.exec = async (cmd, args, opts) => { seen.push([cmd, args.slice(3).join(" "), opts.on]); return { code: 0, stdout: "{}" }; };
   await taskLinks({ cwd: "/r", on: "box" });
   await taskLinks({ cwd: "/r", on: null, fresh: true });
-  await taskLinks({ cwd: "/r", on: null, fresh: 20, status: false });
+  await taskLinks({ cwd: "/r", on: null, fresh: 20 });
   assert.deepEqual(seen, [
     ["sh", "links --cwd /r", "box"],
     ["sh", "links --cwd /r --fresh", null],
-    ["sh", "links --cwd /r --max-age 20 --no-status", null],
+    ["sh", "links --cwd /r --max-age 20", null],
   ]);
   state.exec = async () => ({ code: 1, stdout: "", stderr: "herdr-task: boom" });
   await assert.rejects(taskLinks({ cwd: "/r" }), /boom/);

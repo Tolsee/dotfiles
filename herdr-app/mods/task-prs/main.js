@@ -1,7 +1,9 @@
-// prefix+m (keys.json "mod.open:task-prs"): GitHub pull requests in a popup, the app's
-// version of the TUI's herdr-github: mine, waiting for my review, and the focused repo's,
-// each with CI, review and draft state. GitHub search takes ~3 s, so the popup opens on the
-// lists it fetched last time (shared state) and refreshes them.
+// prefix+shift+m (keys.json "mod.open:task-prs"): GitHub pull requests in a popup: mine,
+// waiting for my review, and the focused repo's, each with CI, review and draft state.
+// prefix+m is herdr-github's own app mod (herdr-app/install), as in the TUI; this one stays for
+// opening a PR's branch as a Tasks worktree space the way prefix+t does (herdr-task prepare).
+// GitHub search takes ~3 s, so the popup opens on the lists it fetched last time (shared
+// state) and refreshes them.
 //
 // Keys: j/k or ↑/↓ move, h/l, ←/→ or 1-3 switch list, Enter opens the PR, w opens its branch
 // as a worktree space (herdr-task prepare, in the matching repo under the project roots),
@@ -15,6 +17,10 @@ const CACHE = "task-prs.lists";
 const VISIBLE = 10;
 const LISTS = [["mine", "Mine"], ["review", "Review"], ["repo", "This repo"]];
 const icon = (name) => svg(`mods/workspace-chrome/${name}.svg`).size(13).flex_none();
+// exec's timeouts (ms; its default is 30 s): a fetch or a new worktree can take minutes on a
+// big repository, listing the project roots does not.
+const LONG = 300000;
+const LIST = 120000;
 
 const FIELDS = `number title url isDraft updatedAt headRefName isCrossRepository author { login } reviewDecision
   repository { nameWithOwner } commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }`;
@@ -40,8 +46,25 @@ export async function search(query) {
 export const slugOf = (remote) => String(remote ?? "").trim().replace(/\.git$/, "").match(/github\.com[:/]([^/]+\/[^/]+)$/)?.[1] ?? null;
 
 // herdr-task with the private shell config (HERDR_TASK_PROJECT_ROOTS), as the TUI popups run it.
-function herdrTask(args) {
-  return exec("zsh", ["-c", 'source ~/.secrets.zshrc 2>/dev/null; exec ~/bin/herdr-task "$@"', "herdr-task", ...args]);
+function herdrTask(args, opts) {
+  return exec("zsh", ["-c", 'source ~/.secrets.zshrc 2>/dev/null; exec ~/bin/herdr-task "$@"', "herdr-task", ...args], opts);
+}
+const lastLine = (r, what) => r.stderr.trim().split("\n").pop()?.replace(/^herdr-task: /, "") || `${what} failed`;
+
+// The space already working in `path`: one made there, else the one with a pane inside it,
+// and then that pane, so its tab comes up too. Local spaces only.
+export function placeOf(path) {
+  const local = spaces().filter((s) => (s.machine ?? null) === null);
+  const spaceOf = new Map(local.flatMap((s) => (s.tabs ?? []).map((t) => [t.id, s.id]))); // panes name their tab
+  const id = local.find((s) => s.folder === path)?.id;
+  if (id) return { id, pane: null };
+  const pane = panes().find((x) => spaceOf.has(x.tab) && (x.cwd === path || x.cwd?.startsWith(`${path}/`)));
+  return pane ? { id: spaceOf.get(pane.tab), pane: pane.pane ?? null } : null;
+}
+
+function goTo(place) {
+  run("space.select", { id: place.id });
+  if (place.pane) run("pane.focus", { pane: place.pane });
 }
 
 // The local checkout of owner/name among the project roots: same folder name, origin pointing there.
@@ -112,39 +135,44 @@ export default class TaskPrs extends View {
     this.error = null;
     cx.spawn(async (cx) => {
       try {
-        const listed = await herdrTask(["projects"]);
+        const listed = await herdrTask(["projects"], { timeout: LIST });
         const repo = await localRepo(pr.repo, listed.code === 0 ? JSON.parse(listed.stdout).projects : []);
         if (!repo) throw new Error(`No checkout of ${pr.repo} under the project roots`);
-        // A fork's branch is not on origin: take the PR's head into its own local branch.
+        const branch = pr.fork ? await this.forkBranch(pr, repo) : pr.branch;
+        // --branch: the PR's head is the branch as it is, never read as a Linear ticket (pr-5).
         // Same-repo branches come from origin in prepare, which fetches and tracks them.
-        let branch = pr.branch;
-        if (pr.fork) {
-          branch = `pr-${pr.number}`;
-          // Once fetched, pr-<n> is kept as it is (it may be checked out, or hold review
-          // commits): prepare reopens it. Pull it there for newer commits.
-          const have = await exec("git", ["show-ref", "-q", "--verify", `refs/heads/${branch}`], { cwd: repo });
-          if (have.code !== 0) {
-            const f = await exec("git", ["fetch", "-q", "origin", `pull/${pr.number}/head:${branch}`], { cwd: repo });
-            if (f.code !== 0) throw new Error(f.stderr.trim().split("\n").pop() || `git fetch pull/${pr.number}/head failed`);
-          }
-        }
-        const r = await herdrTask(["prepare", branch, "--project", repo, "--title", pr.title, "--agent", "none"]);
-        if (r.code !== 0) throw new Error(r.stderr.trim().split("\n").pop()?.replace(/^herdr-task: /, "") || "herdr-task prepare failed");
+        const r = await herdrTask(["prepare", "--branch", branch, "--project", repo, "--title", pr.title, "--agent", "none"], { timeout: LONG });
+        if (r.code !== 0) throw new Error(lastLine(r, "herdr-task prepare"));
         const p = JSON.parse(r.stdout);
-        const local = spaces().filter((s) => (s.machine ?? null) === null);
-        const spaceOf = new Map(local.flatMap((s) => (s.tabs ?? []).map((t) => [t.id, s.id])));
-        const id = local.find((s) => s.folder === p.path)?.id
-          ?? spaceOf.get(panes().find((x) => spaceOf.has(x.tab) && (x.cwd === p.path || x.cwd?.startsWith(`${p.path}/`)))?.tab);
-        if (id) run("space.select", { id });
+        const place = placeOf(p.path);
+        if (place) goTo(place);
         else run("space.new", { name: `#${pr.number} ${pr.title}`.slice(0, 48), folder: p.path, machine: "" });
         this.dismiss();
-        notify({ title: `#${pr.number}`, body: id ? "Went to its space" : `Worktree on ${p.branch}`, level: "info", timeout: 4 });
+        notify({ title: `#${pr.number}`, body: place ? "Went to its space" : `Worktree on ${p.branch}`, level: "info", timeout: 4 });
       } catch (e) {
         this.error = String(e?.message ?? e);
       }
       this.busy = false;
       cx.notify();
     });
+  }
+
+  // A fork's branch is not on origin: take the PR's head into its own local branch, pr-<n>.
+  // Once fetched it is kept as it is (it may be checked out, or hold review commits): prepare
+  // reopens it. It tracks the PR's head as `gh pr checkout` sets it up, so gh in the worktree
+  // (gh pr view, herdr-task links) finds the PR and `git pull` there brings newer commits.
+  async forkBranch(pr, repo) {
+    const branch = `pr-${pr.number}`;
+    const have = await exec("git", ["show-ref", "-q", "--verify", `refs/heads/${branch}`], { cwd: repo });
+    if (have.code !== 0) {
+      const f = await exec("git", ["fetch", "-q", "origin", `pull/${pr.number}/head:${branch}`], { cwd: repo, timeout: LONG });
+      if (f.code !== 0) throw new Error(lastLine(f, `git fetch pull/${pr.number}/head`));
+    }
+    for (const [key, value] of [["remote", "origin"], ["merge", `refs/pull/${pr.number}/head`]]) {
+      const c = await exec("git", ["config", `branch.${branch}.${key}`, value], { cwd: repo });
+      if (c.code !== 0) throw new Error(lastLine(c, `git config branch.${branch}.${key}`));
+    }
+    return branch;
   }
 
   key(e, cx) {

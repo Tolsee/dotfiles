@@ -4,8 +4,8 @@
 // time. Ticket, PR and CI are links. It also takes the Ctrl+B keys that need a
 // mod: new/remove worktree and last pane (keys.json, "layout:tasks").
 //
-// The ticket and PR come from `herdr-task links` (bin/herdr-task), as for prefix+o in the app
-// and the TUI: the cached PR at once when the focus moves, gh at most every 20 s, one cache.
+// The ticket, PR and CI come from `herdr-task links` (bin/herdr-task), as for prefix+o in the
+// app and the TUI: the cached PR at once when the focus moves, gh at most every 20 s, one cache.
 
 import { View, div, svg } from "gpui-kit";
 import { h_flex } from "gpui-base";
@@ -13,7 +13,9 @@ import { spaces, agents, panes, focused, theme, run, exec, openOverlay, nextComm
 
 const LINEAR = "#7a88cf"; // the TUI sidebar's ticket color
 const REFRESH = 20000; // herdr-status interval
+const HISTORY = 16; // panes remembered for last pane
 const icon = (name) => svg(`mods/workspace-chrome/${name}.svg`).size(13);
+const clockText = () => new Date().toTimeString().slice(0, 5);
 
 // `herdr-task links` on the space's machine (task-links has the same helper; mods do not share code).
 async function taskLinks(cwd, on, args) {
@@ -25,29 +27,39 @@ async function taskLinks(cwd, on, args) {
 
 export default class TaskStatus extends View {
   init(_props, cx) {
-    this.key = null; // [cwd, branch] the facts below belong to
-    this.branch = null;
+    this.key = null; // [cwd, machine, branch] the facts below belong to
     this.ticket = null; // { id, url }
     this.pr = null; // gh pr view JSON
+    this.checks = null; // the links answer's checks row: { ci: "pass" | "fail" | "pending", url }
     this.at = 0;
-    this.pane = null; // focused pane now, and the one before it (last pane)
-    this.previous = null;
+    this.clock = null; // the HH:MM drawn, or asked to be, last
+    this.pane = null; // focused pane now, and the ones before it, newest first (last pane)
+    this.history = [];
     cx.timer.every(1000, (cx) => this.tick(cx));
     cx.spawn(async (cx) => {
       for (;;) {
         const c = await nextCommand();
-        this.command(typeof c === "string" ? c : (c?.name ?? c?.command ?? ""));
+        try {
+          this.command(typeof c === "string" ? c : (c?.name ?? c?.command ?? ""));
+        } catch (e) {
+          console.log(`task-status: ${c?.name ?? c}: ${e?.message ?? e}`); // the next key still works
+        }
         cx.notify();
       }
     });
   }
 
-  tick(cx) {
+  // Follow the focus: render() runs on every focus change, the timer catches anything else.
+  // Only model panes count; none is focused while a layout terminal block is.
+  track() {
     const now = panes().find((p) => p.focused)?.pane ?? null;
-    if (now && now !== this.pane) {
-      this.previous = this.pane;
-      this.pane = now;
-    }
+    if (!now || now === this.pane) return;
+    this.history = [this.pane, ...this.history].filter((p, i, all) => p && p !== now && all.indexOf(p) === i).slice(0, HISTORY);
+    this.pane = now;
+  }
+
+  tick(cx) {
+    this.track();
     const space = spaces().find((s) => s.active);
     const cwd = focused()?.cwd ?? space?.folder ?? null, on = space?.machine ?? null;
     const key = JSON.stringify([cwd, on, space?.branch ?? null]);
@@ -65,15 +77,20 @@ export default class TaskStatus extends View {
         cx.notify();
       });
     }
-    cx.notify(); // the clock
+    // A redraw is the whole window: only when the minute or the focus changed.
+    const clock = clockText();
+    if (moved || clock !== this.clock) {
+      this.clock = clock;
+      cx.notify();
+    }
   }
 
   async load(cwd, on, key, args) {
     const facts = cwd ? await taskLinks(cwd, on, args) : null;
     if (key !== this.key) return; // the focus moved on while this ran
-    this.branch = facts?.branch ?? null;
     this.ticket = facts?.ticket ?? null;
     this.pr = facts?.pr ?? null;
+    this.checks = facts?.links?.find((l) => l.kind === "checks") ?? null;
   }
 
   command(name) {
@@ -81,13 +98,20 @@ export default class TaskStatus extends View {
     if (name === "new-worktree" || name === "remove-worktree") {
       if (!space) return;
       const action = name === "new-worktree" ? "new" : "remove";
-      openOverlay({ mod: "worktree", kind: "dialog", width: 440, height: 260, props: { space: space.id, action } });
-    } else if (name === "last-pane" && this.previous) {
-      const target = this.previous;
-      this.previous = this.pane;
-      this.pane = target;
-      run("pane.focus", { pane: target });
+      // folder: the focused terminal's repo, as the app's new menu opens it, not the space's.
+      openOverlay({ mod: "worktree", kind: "dialog", width: 440, height: 260, props: { space: space.id, folder: focused()?.cwd, action } });
+    } else if (name === "last-pane") {
+      this.lastPane();
     }
+  }
+
+  // The latest pane before this one that is still open; closed ones are skipped and forgotten.
+  // The focus change it makes comes back through track().
+  lastPane() {
+    this.track();
+    const open = new Set(panes().map((p) => p.pane));
+    this.history = this.history.filter((p) => open.has(p));
+    if (this.history[0]) run("pane.focus", { pane: this.history[0] });
   }
 
   open(url) {
@@ -95,19 +119,11 @@ export default class TaskStatus extends View {
     exec(window()?.platform === "macos" ? "open" : "xdg-open", [url]).catch(() => null);
   }
 
-  ci() {
-    const checks = this.pr?.statusCheckRollup ?? [];
-    if (!checks.length) return null;
-    const state = (c) => String(c.conclusion || c.state || c.status || "").toUpperCase();
-    if (checks.some((c) => ["FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE"].includes(state(c)))) return "fail";
-    if (checks.every((c) => ["SUCCESS", "NEUTRAL", "SKIPPED", "COMPLETED"].includes(state(c)))) return "pass";
-    return "pending";
-  }
-
   render() {
+    this.track();
     const t = theme();
     const blocked = agents().filter((a) => a.status === "blocked").length;
-    const pr = this.pr, ci = this.ci();
+    const pr = this.pr, ci = pr && this.checks ? this.checks.ci : null;
     const dot = () => div().text_color(t.dim).child("·");
     const link = (id, el, url) => el.id(id).cursor_pointer().hover((s) => s.text_color(t.foreground)).on_click(() => this.open(url));
     const prState = pr && (pr.state === "MERGED" ? "merged" : pr.state === "CLOSED" ? "closed" : pr.isDraft ? "draft" : null);
@@ -130,11 +146,11 @@ export default class TaskStatus extends View {
     if (review) {
       parts.push(h_flex().gap(6).items_center().text_color(review[2]).child(icon(review[0])).child(review[1]));
     }
-    if (ci) {
-      const [name, color] = { pass: ["check", t.done], fail: ["x", t.blocked], pending: ["clock", t.working ?? t.muted] }[ci];
-      parts.push(link("ci", h_flex().gap(6).items_center().text_color(color).child(icon(name)).child("CI"), `${pr.url}/checks`));
+    const badge = ci && { pass: ["check", t.done], fail: ["x", t.blocked], pending: ["clock", t.working ?? t.muted] }[ci];
+    if (badge) {
+      parts.push(link("ci", h_flex().gap(6).items_center().text_color(badge[1]).child(icon(badge[0])).child("CI"), this.checks.url ?? `${pr.url}/checks`));
     }
-    const time = new Date().toTimeString().slice(0, 5);
+    const time = (this.clock = clockText());
     // Separators between the parts, then the clock, as the TUI's " · " joins its segments.
     const items = parts.flatMap((p, i) => (i ? [dot(), p] : [p]));
     if (items.length) items.push(dot());

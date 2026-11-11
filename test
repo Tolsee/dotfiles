@@ -7,7 +7,7 @@
 #   fzf     the vim-mode fzf defaults, driven through a pseudo-terminal (fzf/test_fzfrc.py)
 #   aws     ai/aws unit tests
 #   mcps    ai/mcps installer tests
-#   app     the Herdr app's task-status and task-links mods against stand-in app modules (herdr-app/tests)
+#   app     the Herdr app's mods, installer and check-keys against stand-ins (herdr-app/tests)
 #   claude  agent files pin a model and can't spawn; jev-model-router policy (ai/claude/tests)
 #
 # A check whose tool is missing (fzf, node, tomlkit, ...) is skipped; TEST_STRICT=1 (CI) makes

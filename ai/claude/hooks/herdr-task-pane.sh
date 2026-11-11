@@ -9,12 +9,18 @@ command -v herdr >/dev/null 2>&1 || exit 0
 command -v jq >/dev/null 2>&1 || exit 0
 cat >/dev/null 2>&1 # hook input is not needed
 
-tokens=""
+# Arguments built here rather than through xargs: BSD xargs runs nothing on empty input, so
+# outside a task the glyph would never be set on a Mac.
+set -- --display-agent "$(printf '\356\262\202') claude"
 if [ -n "${HERDR_WORKSPACE_ID:-}" ]; then
     tokens=$(herdr workspace get "$HERDR_WORKSPACE_ID" 2>/dev/null \
-        | jq -r '.result.workspace.tokens // {} | to_entries[] | select(.key | startswith("linear")) | "--token\n\(.key)=\(.value)"' 2>/dev/null)
+        | jq -r '.result.workspace.tokens // {} | to_entries[] | select(.key | startswith("linear"))
+                 | "\(.key)=\(.value | tostring | gsub("\n"; " "))"' 2>/dev/null)
+    while IFS= read -r kv; do
+        [ -n "$kv" ] && set -- "$@" --token "$kv"
+    done <<EOF
+$tokens
+EOF
 fi
-printf '%s\n' "$tokens" | grep -v '^$' | tr '\n' '\0' \
-    | xargs -0 herdr pane report-metadata "$HERDR_PANE_ID" --source herdr-task \
-        --display-agent "$(printf '\356\262\202') claude" >/dev/null 2>&1
+herdr pane report-metadata "$HERDR_PANE_ID" --source herdr-task "$@" >/dev/null 2>&1
 exit 0

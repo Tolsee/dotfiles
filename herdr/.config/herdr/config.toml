@@ -110,6 +110,13 @@ type = "plugin_action"
 command = "herdr-github.open"
 description = "GitHub pull requests: mine, review requested, this repo"
 
+# herdr-recap (marketplace): every agent, the ones waiting on you first, with what each got to.
+[[keys.command]]
+key = "prefix+i"
+type = "plugin_action"
+command = "herdr-recap.open"
+description = "recap: which agents need you, and where each got to"
+
 # dotfiles.task plugin (herdr/plugins/task). Both act on the focused pane's task and report
 # through a notification, so nothing opens over the work.
 [[keys.command]]

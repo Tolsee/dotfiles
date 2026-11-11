@@ -16,10 +16,11 @@ const LINEAR = "#7a88cf"; // the TUI sidebar's ticket color
 const VISIBLE = 6;
 const TICKET = /^(https?:\/\/[^/]*linear\.app\/[^/]+\/issue\/[A-Za-z][A-Za-z0-9]*-[0-9]+\S*|[A-Za-z][A-Za-z0-9]*-[0-9]+)$/;
 const icon = (name) => svg(`mods/workspace-chrome/${name}.svg`).size(13).flex_none();
+const LONG = 300000; // ms, exec's timeout for prepare (a fetch and a new worktree); its default is 30 s
 
 // herdr-task with the private shell config (HERDR_TASK_PROJECT_ROOTS), as the TUI popups run it.
-export function herdrTask(args) {
-  return exec("zsh", ["-c", 'source ~/.secrets.zshrc 2>/dev/null; exec ~/bin/herdr-task "$@"', "herdr-task", ...args]);
+export function herdrTask(args, opts) {
+  return exec("zsh", ["-c", 'source ~/.secrets.zshrc 2>/dev/null; exec ~/bin/herdr-task "$@"', "herdr-task", ...args], opts);
 }
 const failure = (r, what) => new Error(r.stderr.trim().split("\n").pop()?.replace(/^herdr-task: /, "") || `herdr-task ${what} failed`);
 
@@ -29,14 +30,23 @@ export function suggestion(text) {
   return TICKET.test(line) ? line : "";
 }
 
-// After prepare: go to the space already working in the worktree, else open one with the agent.
-export function openTask(p) {
+// The space already working in `path`: one made there, else the one with a pane inside it,
+// and then that pane, so its tab comes up too. Local spaces only.
+export function placeOf(path) {
   const local = spaces().filter((s) => (s.machine ?? null) === null);
   const spaceOf = new Map(local.flatMap((s) => (s.tabs ?? []).map((t) => [t.id, s.id]))); // panes name their tab
-  const id = local.find((s) => s.folder === p.path)?.id
-    ?? spaceOf.get(panes().find((x) => spaceOf.has(x.tab) && (x.cwd === p.path || x.cwd?.startsWith(`${p.path}/`)))?.tab);
-  if (id) {
-    run("space.select", { id });
+  const id = local.find((s) => s.folder === path)?.id;
+  if (id) return { id, pane: null };
+  const pane = panes().find((x) => spaceOf.has(x.tab) && (x.cwd === path || x.cwd?.startsWith(`${path}/`)));
+  return pane ? { id: spaceOf.get(pane.tab), pane: pane.pane ?? null } : null;
+}
+
+// After prepare: go to the space already working in the worktree, else open one with the agent.
+export function openTask(p) {
+  const place = placeOf(p.path);
+  if (place) {
+    run("space.select", { id: place.id });
+    if (place.pane) run("pane.focus", { pane: place.pane });
     return "focused";
   }
   if (p.agent) run("space.new", { name: p.label, folder: p.path, machine: "", tab: p.agent, argv: [p.agent], task: p.prompt });
@@ -126,7 +136,7 @@ export default class TaskStart extends View {
     cx.notify();
     cx.spawn(async (cx) => {
       try {
-        const r = await herdrTask(["prepare", ref, "--project", project]);
+        const r = await herdrTask(["prepare", ref, "--project", project], { timeout: LONG });
         if (r.code !== 0) throw failure(r, "prepare");
         const p = JSON.parse(r.stdout);
         const how = openTask(p);
