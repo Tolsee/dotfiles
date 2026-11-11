@@ -77,24 +77,29 @@ test("blocked agents, ticket, PR, review and CI, joined like the TUI", () => {
   state.calls = [];
 });
 
-test("loads the ticket saved on the branch and the branch's PR", async () => {
-  state.exec = async (cmd, args) => {
-    const a = args.join(" ");
-    if (cmd === "git" && a === "symbolic-ref --short -q HEAD") return { code: 0, stdout: "abc-12-fix\n" };
-    if (cmd === "git" && a === "rev-parse --show-toplevel") return { code: 0, stdout: "/repo\n" };
-    if (cmd === "git" && a === "config --get branch.abc-12-fix.linear-id") return { code: 0, stdout: "ABC-12\n" };
-    if (cmd === "git" && a === "config --get branch.abc-12-fix.linear-url") return { code: 0, stdout: "https://l/ABC-12\n" };
-    if (cmd === "gh") return { code: 0, stdout: '{"number":9,"url":"u","state":"MERGED","statusCheckRollup":[]}' };
-    return { code: 1, stdout: "" };
+test("ticket and PR come from herdr-task links on the space's machine, cached first", async () => {
+  const seen = [];
+  state.exec = async (cmd, args, opts) => {
+    seen.push([cmd, args.slice(3).join(" "), opts?.on ?? null]);
+    const fresh = args.includes("--max-age");
+    return { code: 0, stdout: JSON.stringify({ branch: "abc-12-fix", ticket: { id: "ABC-12", url: "https://l/ABC-12", title: "" },
+      pr: { number: fresh ? 9 : 8, url: "u", state: "MERGED", statusCheckRollup: [] } }) };
   };
+  state.spaces = [{ id: "s1", active: true, folder: "/repo", machine: "box" }];
   const m = fresh();
-  m.key = "k";
-  await m.load("/repo", "k");
-  assert.deepEqual(m.ticket, { id: "ABC-12", url: "https://l/ABC-12" });
-  assert.equal(m.pr.number, 9);
+  m.tick(cx);
+  await cx.task;
+  assert.deepEqual(seen, [
+    ["sh", "links --cwd /repo --no-status", "box"], // the cached answer, at once
+    ["sh", "links --cwd /repo --no-status --max-age 20", "box"], // gh at most every 20 s
+  ]);
+  assert.deepEqual(m.ticket, { id: "ABC-12", url: "https://l/ABC-12", title: "" });
   assert.ok(texts(m.render()).includes("#9 merged"));
-  assert.equal(state.shared["task.prs"]["\t/repo\tabc-12-fix"].number, 9, "shared with task-links");
+  seen.length = 0;
+  m.tick(cx);
+  assert.deepEqual(seen, [], "nothing again until the focus moves or 20 s pass");
   state.exec = async () => ({ code: 1, stdout: "" });
+  state.spaces = [];
   state.calls = [];
 });
 

@@ -76,6 +76,24 @@ not reach Ghostty. Herdr opens `http(s)` itself; the `dotfiles.task` plugin hand
 Claude Code only prints real (OSC 8) links when it trusts the terminal, and it does not
 recognise `TERM_PROGRAM=herdr`, so `.zshrc` sets `FORCE_HYPERLINK=1` inside Herdr panes.
 
+## One source for task links
+
+`herdr-task links` is the single place that knows a task's links: the Linear ticket saved on
+the branch, the branch's PR with its failing checks, checks and changed files (a compare view
+before there is a PR), uncommitted changes, and the branch on GitHub. It answers from git and a
+PR cache on disk (`~/.cache/herdr-task/prs`) in tens of milliseconds; `--fresh` (or
+`--max-age N`) asks gh and updates the cache. Everything reads it:
+
+| Where | How |
+| --- | --- |
+| TUI `prefix+o` | fzf opens at once on the cached rows, then gh's answer replaces them in place |
+| Herdr app `prefix+o` (`task-links`) | the same rows, cached first, then gh's |
+| Herdr app status bar (`task-status`) | the ticket and PR, cached on a focus change, gh at most every 20 s |
+| Claude status line | `herdr-task pr --max-age 60`, its gh fallback |
+
+So all of them list the same rows in the same order, and a PR one of them fetched shows up at
+once in the others.
+
 ## Restarts
 
 A server restart brings back workspaces, tabs, panes and agent conversations (native
