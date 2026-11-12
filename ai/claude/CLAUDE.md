@@ -23,6 +23,19 @@ The main session keeps the decisions: diagnosis, the exact change, reading diffs
 - One agent per question, one implementer per file (group every change a file needs into one dispatch). Never re-dispatch a failed or empty agent: do that lookup yourself.
 - Verify delegated edits by reading the diff and running the tests yourself, never by the agent's report. Implementers run only the specs they touched; run the full suite once before committing.
 
+### Non-Claude models (headless)
+
+The Agent tool only accepts haiku/sonnet/opus/fable. The LiteLLM gateway's other models run headless via Bash `claude -p --model <gateway-id>`, read-only, with the output read back before it is relied on. Route by work:
+
+| Work | Model |
+| --- | --- |
+| Bulk read-only sweeps: log and metric queries, kubectl dumps, repo sweeps, large CLI output | `deepseek/deepseek-flash` |
+| Same, second choice when deepseek is slow or down | `glm-5p3-flash` |
+| Cross-checking a decision, a diff or a claim from a different vendor family | `gpt-5.4-mini` |
+| Avoid | `gemini-3.5-flash-lite` (LiteLLM error, 2026-10-28); `kimi-k3` until a tool-loop test passes (Kimi K2 drops tool calls silently in LiteLLM, issue #34522) |
+
+A headless run is one question with a bounded answer, the same discipline as a subagent brief. Test a model with a short kubectl/grep loop before first use in a session; none of these have published tool-use benchmarks.
+
 ## Memory
 
 Do not save project-status snapshots as memories (open TODOs, review rounds, handoffs, dated research, "current state of X"): git, PRs, and Linear are the record for those. Save only durable constraints, gotchas, preferences, and reference facts.
