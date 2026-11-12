@@ -1,4 +1,4 @@
-// The task-prs mod (prefix+m) against stand-ins for the app's modules: the rows it makes from
+// The task-prs mod (prefix+shift+m) against stand-ins for the app's modules: the rows it makes from
 // GitHub's search, the cache it opens on, its keys, and the worktree it opens for a PR.
 // Run: node --test herdr-app/tests/task-prs.test.mjs
 import { test } from "node:test";
@@ -94,9 +94,49 @@ test("worktree: finds the checkout by origin, prepares the PR branch, opens a sp
   m.worktree({ number: 7, title: "Fix it", branch: "b7", repo: "o/r" }, cx);
   await flush(tasks);
   const prep = state.calls.find((c) => c[0] === "exec" && c[2][3] === "prepare");
-  assert.deepEqual(prep[2].slice(3), ["prepare", "b7", "--project", "/r/work/r", "--title", "Fix it", "--agent", "none"]);
+  assert.deepEqual(prep[2].slice(3), ["prepare", "--branch", "b7", "--project", "/r/work/r", "--title", "Fix it", "--agent", "none"]);
+  assert.equal(prep[3].timeout, 300000, "prepare may fetch and make a worktree: more than exec's 30 s");
+  assert.ok(!state.calls.some((c) => c[0] === "exec" && c[1] === "git" && c[2][0] === "config"), "a same-repo branch tracks origin's");
   assert.deepEqual(state.calls.filter((c) => c[0] === "run").map((c) => [c[1], c[2]]),
     [["space.new", { name: "#7 Fix it", folder: "/wt/r/b7", machine: "" }]]);
+});
+
+test("worktree: a branch that reads like a ticket is still the branch (--branch)", async () => {
+  state.calls = [];
+  state.spaces = [];
+  state.exec = async (cmd, args) => cmd === "git" ? { code: 0, stdout: "git@github.com:o/r.git", stderr: "" }
+    : args[3] === "projects" ? { code: 0, stdout: JSON.stringify({ projects: ["/r/work/r"] }), stderr: "" }
+    : { code: 0, stdout: JSON.stringify({ path: "/wt/r/abc-12-fix", branch: "abc-12-fix" }), stderr: "" };
+  const tasks = [], m = new mod.default();
+  m.worktree({ number: 3, title: "Fix", branch: "abc-12-fix", repo: "o/r" }, cxFor(tasks));
+  await flush(tasks);
+  const prep = state.calls.find((c) => c[0] === "exec" && c[2][3] === "prepare")[2].slice(3);
+  assert.deepEqual(prep.slice(0, 3), ["prepare", "--branch", "abc-12-fix"]);
+});
+
+test("worktree: already open in a pane goes to its space and that pane", async () => {
+  state.calls = [];
+  state.spaces = [{ id: "s1", folder: "/Users/me", machine: null, tabs: [{ id: "t1" }, { id: "t2" }] }];
+  state.panes = [{ pane: "p1", tab: "t1", cwd: "/Users/me" }, { pane: "p2", tab: "t2", cwd: "/wt/r/b7/src" }];
+  state.exec = async (cmd, args) => cmd === "git" ? { code: 0, stdout: "git@github.com:o/r.git", stderr: "" }
+    : args[3] === "projects" ? { code: 0, stdout: JSON.stringify({ projects: ["/r/work/r"] }), stderr: "" }
+    : { code: 0, stdout: JSON.stringify({ path: "/wt/r/b7", branch: "b7" }), stderr: "" };
+  const tasks = [], m = new mod.default();
+  m.worktree({ number: 7, title: "Fix it", branch: "b7", repo: "o/r" }, cxFor(tasks));
+  await flush(tasks);
+  assert.deepEqual(state.calls.filter((c) => c[0] === "run").map((c) => [c[1], c[2]]),
+    [["space.select", { id: "s1" }], ["pane.focus", { pane: "p2" }]]);
+  assert.equal(state.calls.find((c) => c[0] === "notify")[1].body, "Went to its space");
+
+  // A space made in the worktree: that space, no pane to pick.
+  state.calls = [];
+  state.spaces = [{ id: "s2", folder: "/wt/r/b7", machine: null, tabs: [{ id: "t3" }] }];
+  const t2 = [], m2 = new mod.default();
+  m2.worktree({ number: 7, title: "Fix it", branch: "b7", repo: "o/r" }, cxFor(t2));
+  await flush(t2);
+  assert.deepEqual(state.calls.filter((c) => c[0] === "run").map((c) => [c[1], c[2]]), [["space.select", { id: "s2" }]]);
+  state.spaces = [];
+  state.panes = [];
 });
 
 test("worktree: no checkout of the repo says so", async () => {
@@ -108,30 +148,59 @@ test("worktree: no checkout of the repo says so", async () => {
   assert.equal(m.error, "No checkout of o/zzz under the project roots");
 });
 
-test("worktree: a fork PR fetches its head into pr-<n> first", async () => {
+test("worktree: a fork PR fetches its head into pr-<n>, tracking the PR as gh pr checkout does", async () => {
   state.calls = [];
   state.spaces = [];
   state.exec = async (cmd, args, opts) => {
     if (cmd === "git" && args[0] === "fetch") return { code: 0, stdout: "", stderr: "" };
+    if (cmd === "git" && args[0] === "config") return { code: state.configFails ? 255 : 0, stdout: "", stderr: state.configFails ? "error: could not lock config file\n" : "" };
     if (cmd === "git" && args[0] === "show-ref") return { code: state.havePr ? 0 : 1, stdout: "", stderr: "" };
     if (cmd === "git") return { code: 0, stdout: "git@github.com:o/r.git", stderr: "" };
     if (args[3] === "projects") return { code: 0, stdout: JSON.stringify({ projects: ["/r/work/r"] }), stderr: "" };
     return { code: 0, stdout: JSON.stringify({ path: "/wt/r/pr-5", branch: "pr-5" }), stderr: "" };
   };
+  const steps = () => state.calls.filter((c) => c[0] === "exec" && (c[1] === "git" ? ["fetch", "config"].includes(c[2][0]) : c[2][3] === "prepare"))
+    .map((c) => (c[1] === "git" ? c[2].join(" ") : c[2].slice(3, 6).join(" ")));
   const tasks = [], m = new mod.default();
   m.worktree({ number: 5, title: "From a fork", branch: "main", repo: "o/r", fork: true }, cxFor(tasks));
   await flush(tasks);
-  const ex = state.calls.filter((c) => c[0] === "exec");
-  assert.ok(ex.some((c) => c[1] === "git" && c[2].join(" ") === "fetch -q origin pull/5/head:pr-5" && c[3].cwd === "/r/work/r"));
-  assert.deepEqual(ex.find((c) => c[2][3] === "prepare")[2].slice(3, 6), ["prepare", "pr-5", "--project"]);
+  assert.deepEqual(steps(), [
+    "fetch -q origin pull/5/head:pr-5",
+    "config branch.pr-5.remote origin", // gh pr view in the worktree finds PR 5 by these
+    "config branch.pr-5.merge refs/pull/5/head",
+    "prepare --branch pr-5", // never read as ticket PR-5
+  ]);
+  const ex = state.calls.filter((c) => c[0] === "exec" && c[1] === "git" && ["fetch", "config"].includes(c[2][0]));
+  assert.ok(ex.every((c) => c[3].cwd === "/r/work/r"));
+  assert.equal(ex[0][3].timeout, 300000, "a fetch can take minutes");
 
-  // Opened before: pr-5 exists (maybe checked out); no fetch, prepare reopens it.
+  // Opened before: pr-5 exists (maybe checked out); no fetch, its tracking set all the same.
   state.havePr = true;
   state.calls = [];
   const t2 = [], m2 = new mod.default();
   m2.worktree({ number: 5, title: "From a fork", branch: "main", repo: "o/r", fork: true }, cxFor(t2));
   await flush(t2);
-  assert.ok(!state.calls.some((c) => c[0] === "exec" && c[2][0] === "fetch"));
-  assert.ok(state.calls.some((c) => c[0] === "exec" && c[2][3] === "prepare"));
+  assert.deepEqual(steps(), ["config branch.pr-5.remote origin", "config branch.pr-5.merge refs/pull/5/head", "prepare --branch pr-5"]);
+
+  // git config failing says why and prepares nothing.
+  state.configFails = true;
+  state.calls = [];
+  const t3 = [], m3 = new mod.default();
+  m3.worktree({ number: 5, title: "From a fork", branch: "main", repo: "o/r", fork: true }, cxFor(t3));
+  await flush(t3);
+  assert.equal(m3.error, "error: could not lock config file");
+  assert.ok(!state.calls.some((c) => c[0] === "exec" && c[2][3] === "prepare"));
   state.havePr = false;
+  state.configFails = false;
+});
+
+test("worktree: herdr-task's error shows without its prefix", async () => {
+  state.exec = async (cmd, args) => cmd === "git" ? { code: 0, stdout: "git@github.com:o/r.git", stderr: "" }
+    : args[3] === "projects" ? { code: 0, stdout: JSON.stringify({ projects: ["/r/work/r"] }), stderr: "" }
+    : { code: 1, stdout: "", stderr: "fatal: x\nherdr-task: not a branch name: b..\n" };
+  const tasks = [], m = new mod.default();
+  m.worktree({ number: 1, title: "t", branch: "b..", repo: "o/r" }, cxFor(tasks));
+  await flush(tasks);
+  assert.equal(m.error, "not a branch name: b..");
+  assert.equal(m.busy, false);
 });

@@ -95,10 +95,11 @@ if [ -n "$branch" ] && command -v gh >/dev/null 2>&1; then
   # Merged and closed PRs are dropped: the branch is done, so its PR is noise.
   current_pr=$(echo "$input" | jq -c 'select(.pr.url and .pr.number and ((.pr.state // "OPEN") | ascii_upcase == "OPEN")) | {url: .pr.url, number: .pr.number}' 2>/dev/null)
   if [ -z "$current_pr" ]; then
-    # The PR cache herdr-task shares with prefix+o in the TUI and the Herdr app, at this
-    # line's once-a-minute pace; plain gh where herdr-task is not installed.
+    # The PR cache herdr-task shares with prefix+o in the TUI and the Herdr app: answered from
+    # the cache at once, refreshed in the background once a minute (gh can outlast the
+    # deadline); plain gh where herdr-task is not installed.
     if [ -x "$HOME/bin/herdr-task" ]; then
-      current_pr=$(with_deadline 2 "$HOME/bin/herdr-task" pr --cwd "$repo_root" --max-age "$cache_ttl" 2>/dev/null \
+      current_pr=$(with_deadline 2 "$HOME/bin/herdr-task" pr --cwd "$repo_root" --max-age "$cache_ttl" --stale-ok 2>/dev/null \
         | jq -c 'select(.state == "OPEN") | {url, number}')
     else
       current_pr=$(cached "pr-$branch_key" "$repo_root" gh pr view "$branch" --json url,number,state \
@@ -162,7 +163,7 @@ if [ -n "$HERDR_PANE_ID" ] && command -v herdr >/dev/null 2>&1; then
     pr_tokens+=(--token "pr_url_$pr_count=${entry#* }")
   done
   # Clear the slots above the current count so a merged or closed PR drops off
-  # the pane. pr_url (unindexed) is the pre-index scheme, cleared for good.
+  # the pane.
   if [ "$pr_count" -lt 8 ]; then
     for slot in $(seq $((pr_count + 1)) 8); do
       pr_tokens+=(--clear-token "pr_url_$slot")
@@ -171,9 +172,8 @@ if [ -n "$HERDR_PANE_ID" ] && command -v herdr >/dev/null 2>&1; then
   pr_state_file="$cache_dir/${cache_prefix}pane-pr-$HERDR_PANE_ID"
   if [ "$(cat "$pr_state_file" 2>/dev/null)" != "$pr_label ${pr_links[*]}" ]; then
     printf '%s' "$pr_label ${pr_links[*]}" 2>/dev/null > "$pr_state_file"
-    report_args=(--clear-token pr_url)
     with_deadline 2 herdr pane report-metadata "$HERDR_PANE_ID" --source statusline \
-      "${report_args[@]}" "${pr_tokens[@]}" >/dev/null 2>&1
+      "${pr_tokens[@]}" >/dev/null 2>&1
   fi
 fi
 

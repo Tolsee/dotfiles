@@ -13,10 +13,11 @@ import { focused, spaces, panes, theme, run, exec, props, closeOverlay, shared, 
 const RECENT = "task-projects.recent"; // most recently opened repositories, newest first
 const VISIBLE = 9;
 const icon = (name) => svg(`mods/workspace-chrome/${name}.svg`).size(13).flex_none();
+const LIST = 120000; // ms, exec's timeout for `herdr-task projects` (a find under the roots); its default is 30 s
 
 // herdr-task with the private shell config (HERDR_TASK_PROJECT_ROOTS), as the TUI popups run it.
-export function herdrTask(args, cwd) {
-  return exec("zsh", ["-c", 'source ~/.secrets.zshrc 2>/dev/null; exec ~/bin/herdr-task "$@"', "herdr-task", ...args], cwd ? { cwd } : undefined);
+export function herdrTask(args, opts) {
+  return exec("zsh", ["-c", 'source ~/.secrets.zshrc 2>/dev/null; exec ~/bin/herdr-task "$@"', "herdr-task", ...args], opts);
 }
 
 // Letters of `query` in order in `text`; lower is better, null for no match. Matches in the
@@ -41,15 +42,16 @@ export function score(query, path) {
   return p === null ? null : 100 + p;
 }
 
-// Repository -> id of the space working in it: a space made there, or one with a terminal
-// inside it (worktrees of it count as their own repositories).
-export function spaceFor(repo) {
+// Repository -> where it is open: { id } of a space made there, or { id, pane } of the space
+// with a terminal inside it and that pane (worktrees of it count as their own repositories).
+export function placeFor(repo) {
   const local = spaces().filter((s) => (s.machine ?? null) === null);
   const spaceOf = new Map(local.flatMap((s) => (s.tabs ?? []).map((t) => [t.id, s.id]))); // panes name their tab
   const inside = (dir) => dir === repo || dir?.startsWith(`${repo}/`);
-  return local.find((s) => s.folder === repo)?.id
-    ?? spaceOf.get(panes().find((p) => spaceOf.has(p.tab) && inside(p.cwd))?.tab)
-    ?? null;
+  const id = local.find((s) => s.folder === repo)?.id;
+  if (id) return { id, pane: null };
+  const pane = panes().find((p) => spaceOf.has(p.tab) && inside(p.cwd));
+  return pane ? { id: spaceOf.get(pane.tab), pane: pane.pane ?? null } : null;
 }
 
 export function ordered(projects, recent, query) {
@@ -64,9 +66,13 @@ export function ordered(projects, recent, query) {
 
 export function openProject(repo) {
   setShared(RECENT, [repo, ...((shared(RECENT) ?? []).filter((r) => r !== repo))].slice(0, 30));
-  const id = spaceFor(repo);
-  if (id) run("space.select", { id });
-  else run("space.new", { name: repo.split("/").pop(), folder: repo, machine: "" });
+  const place = placeFor(repo);
+  if (place) {
+    run("space.select", { id: place.id });
+    if (place.pane) run("pane.focus", { pane: place.pane }); // its tab, not the space's last one
+  } else {
+    run("space.new", { name: repo.split("/").pop(), folder: repo, machine: "" });
+  }
 }
 
 export default class TaskProjects extends View {
@@ -85,8 +91,8 @@ export default class TaskProjects extends View {
     cx.spawn(async (cx) => {
       try {
         const cwd = focused()?.cwd ?? null;
-        const r = await herdrTask(cwd ? ["projects", "--cwd", cwd] : ["projects"]);
-        if (r.code !== 0) throw new Error(r.stderr.trim().split("\n").pop() || "herdr-task projects failed");
+        const r = await herdrTask(cwd ? ["projects", "--cwd", cwd] : ["projects"], { timeout: LIST });
+        if (r.code !== 0) throw new Error(r.stderr.trim().split("\n").pop()?.replace(/^herdr-task: /, "") || "herdr-task projects failed");
         this.projects = JSON.parse(r.stdout).projects ?? [];
         if (!this.projects.length) this.error = "No repositories. Set HERDR_TASK_PROJECT_ROOTS in ~/.secrets.zshrc.";
       } catch (e) {
@@ -132,7 +138,7 @@ export default class TaskProjects extends View {
     const top = this.first(rows.length);
     const home = (p) => p.replace(/^\/Users\/[^/]+/, "~");
     const row = (repo, i) => {
-      const on = i === this.at, open = spaceFor(repo);
+      const on = i === this.at, open = placeFor(repo);
       const parts = repo.split("/");
       return h_flex().id(`tp-${i}`).h(34).px(10).gap(10).items_center().rounded(7).cursor_pointer()
         .when(on, (el) => el.bg(t.hover)).hover((s) => s.bg(t.hover))

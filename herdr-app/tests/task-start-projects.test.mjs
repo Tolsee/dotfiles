@@ -61,12 +61,20 @@ test("start: new worktree opens a space with the agent on the prompt", () => {
   assert.deepEqual(runs(), [["space.new", { name: "x", folder: "/wt/r/x", machine: "" }]]);
 });
 
-test("start: a worktree already open goes to its space, found through a pane's tab", () => {
+test("start: a worktree already open goes to its space and pane, found through the pane's tab", () => {
   reset();
-  state.spaces = [{ id: "s1", folder: "/Users/me", machine: null, tabs: [{ id: "t1" }] }, { id: "s2", folder: "/elsewhere", machine: "vps", tabs: [{ id: "t2" }] }];
-  state.panes = [{ tab: "t2", cwd: "/wt/r/abc-1" }, { tab: "t1", cwd: "/wt/r/abc-1/src" }];
+  state.spaces = [{ id: "s1", folder: "/Users/me", machine: null, tabs: [{ id: "t0" }, { id: "t1" }] }, { id: "s2", folder: "/elsewhere", machine: "vps", tabs: [{ id: "t2" }] }];
+  state.panes = [{ pane: "p2", tab: "t2", cwd: "/wt/r/abc-1" }, { pane: "p0", tab: "t0", cwd: "/Users/me" }, { pane: "p1", tab: "t1", cwd: "/wt/r/abc-1/src" }];
   assert.equal(start.openTask({ path: "/wt/r/abc-1", label: "l", agent: "claude", prompt: "p" }), "focused");
-  assert.deepEqual(runs(), [["space.select", { id: "s1" }]]);
+  assert.deepEqual(runs(), [["space.select", { id: "s1" }], ["pane.focus", { pane: "p1" }]], "the remote pane in s2 does not count");
+});
+
+test("start: a space made in the worktree is selected as it is", () => {
+  reset();
+  state.spaces = [{ id: "s3", folder: "/wt/r/abc-1", machine: null, tabs: [{ id: "t3" }] }];
+  state.panes = [{ pane: "p3", tab: "t3", cwd: "/wt/r/abc-1" }];
+  assert.equal(start.openTask({ path: "/wt/r/abc-1", label: "l", agent: null, prompt: "" }), "focused");
+  assert.deepEqual(runs(), [["space.select", { id: "s3" }]]);
 });
 
 test("start popup: previews with parse, starts with prepare in the picked project", async () => {
@@ -86,7 +94,9 @@ test("start popup: previews with parse, starts with prepare in the picked projec
   m.key({ key: "down", modifiers: {} });
   m.start(cx);
   await Promise.all(tasks);
-  assert.deepEqual(taskArgs(state.calls.filter((c) => c[0] === "exec")[1]), ["prepare", "ABC-1", "--project", "/r/dotfiles"]);
+  const prepare = state.calls.filter((c) => c[0] === "exec")[1];
+  assert.deepEqual(taskArgs(prepare), ["prepare", "ABC-1", "--project", "/r/dotfiles"]);
+  assert.equal(prepare[3]?.timeout, 300000, "prepare may fetch and make a worktree: more than exec's 30 s");
   assert.equal(runs()[0][0], "space.new");
   assert.ok(state.calls.some((c) => c[0] === "close"));
 });
@@ -119,14 +129,41 @@ test("projects: focused first, then recently opened, then the rest", () => {
   assert.deepEqual(projects.ordered(all, ["/r/c", "/r/b"], ""), ["/r/dotfiles", "/r/c", "/r/b", "/r/a"]);
 });
 
-test("projects: open goes to the space working there, else a new one, and remembers it", () => {
+test("projects: open goes to the space and pane working there, else a new one, and remembers it", () => {
   reset();
-  state.spaces = [{ id: "s1", folder: "/Users/me", machine: null, tabs: [{ id: "t1" }] }];
-  state.panes = [{ tab: "t1", cwd: "/r/dotfiles/bin" }];
+  state.spaces = [{ id: "s1", folder: "/Users/me", machine: null, tabs: [{ id: "t0" }, { id: "t1" }] }, { id: "s2", folder: "/r/web", machine: null, tabs: [] }];
+  state.panes = [{ pane: "p0", tab: "t0", cwd: "/Users/me" }, { pane: "p1", tab: "t1", cwd: "/r/dotfiles/bin" }];
   projects.openProject("/r/dotfiles");
   projects.openProject("/r/api");
-  assert.deepEqual(runs(), [["space.select", { id: "s1" }], ["space.new", { name: "api", folder: "/r/api", machine: "" }]]);
-  assert.deepEqual(state.shared["task-projects.recent"], ["/r/api", "/r/dotfiles"]);
+  projects.openProject("/r/web");
+  assert.deepEqual(runs(), [
+    ["space.select", { id: "s1" }], ["pane.focus", { pane: "p1" }], // its tab, not s1's last one
+    ["space.new", { name: "api", folder: "/r/api", machine: "" }],
+    ["space.select", { id: "s2" }], // a space made there: as it is
+  ]);
+  assert.deepEqual(state.shared["task-projects.recent"], ["/r/web", "/r/api", "/r/dotfiles"]);
+});
+
+test("projects popup: lists with a timeout; herdr-task's error shows without its prefix", async () => {
+  reset();
+  state.exec = async () => ({ code: 0, stdout: JSON.stringify({ projects: ["/r/dotfiles", "/r/api"] }), stderr: "" });
+  const tasks = [];
+  const cx = { notify() {}, spawn(f) { tasks.push(f(cx)); }, timer: { after() {} } };
+  const m = new projects.default();
+  m.init({}, cx);
+  await Promise.all(tasks);
+  const call = state.calls.find((c) => c[0] === "exec");
+  assert.deepEqual(taskArgs(call), ["projects", "--cwd", "/r/dotfiles"]);
+  assert.equal(call[3]?.timeout, 120000);
+  assert.deepEqual(m.projects, ["/r/dotfiles", "/r/api"]);
+
+  state.exec = async () => ({ code: 1, stdout: "", stderr: "zsh: warning\nherdr-task: jq not found\n" });
+  const t2 = [];
+  const cx2 = { notify() {}, spawn(f) { t2.push(f(cx2)); }, timer: { after() {} } };
+  const m2 = new projects.default();
+  m2.init({}, cx2);
+  await Promise.all(t2);
+  assert.equal(m2.error, "jq not found");
 });
 
 test("start popup: Enter before the new text is parsed waits for its project", async () => {

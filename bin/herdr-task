@@ -19,7 +19,6 @@
 #                                         workspace closes
 #   herdr-task open [PANE]                open the focused (or given) pane's ticket or PR in the
 #                                         browser, with a picker when there are several
-#   herdr-task branch <ticket>            print the branch name a ticket would get
 #   herdr-task tag <ticket> [-t TITLE]    tag the current workspace with a ticket created
 #                                         after the work started: sidebar, label, and the
 #                                         branch renamed to carry the id if not pushed yet
@@ -41,9 +40,10 @@
 #                                         as JSON: the one source for prefix+o in the TUI and
 #                                         the Herdr app and the app's status bar; the PR comes
 #                                         from a shared cache, gh refreshes it
-#   herdr-task pr [--cwd DIR] [--max-age N]
+#   herdr-task pr [--cwd DIR] [--max-age N] [--stale-ok]
 #                                         the branch's PR JSON from that cache (the Claude
-#                                         status line's fallback)
+#                                         status line's fallback); --stale-ok prints a stale
+#                                         answer at once and refreshes it in the background
 #   herdr-task open-ticket <url>          Ctrl-click on a Linear link: focus the workspace of
 #                                         that ticket's task, else open the link in the browser
 #   herdr-task review [options]           (prefix+y) open reviewer splits beside the pane: Codex
@@ -59,9 +59,10 @@
 #                                         repositories under the roots, the focused one first
 #   herdr-task parse <ref> [--cwd DIR]    what <ref> would start: kind, ticket, branch, title,
 #                                         projects with the best guess first (prefix+t preview)
-#   herdr-task prepare <ref> --project DIR [--title T] [--agent KIND]
+#   herdr-task prepare <ref> --project DIR [--title T] [--agent KIND] [--branch NAME]
 #                                         the worktree and saved ticket for <ref>; prints the
-#                                         path, space label and agent prompt for the mod
+#                                         path, space label and agent prompt for the mod;
+#                                         --branch NAME takes NAME as the branch, never a ticket
 #   herdr-task open-file <url> [--pane P] open a file:// link in $EDITOR in a split beside the
 #                                         pane, at the line the link carries (#L12 or :12)
 #
@@ -201,6 +202,13 @@ remember_linear_org() {
     printf '%s\n' "${BASH_REMATCH[1]}" > "$linear_org_file" 2>/dev/null || true
 }
 
+# ticket_link <ID>: the ticket's link in the Linear workspace seen last; nothing before one was.
+ticket_link() {
+    local org
+    org=$(cat "$linear_org_file" 2>/dev/null || true)
+    [[ -z "$org" ]] || printf 'https://linear.app/%s/issue/%s\n' "$org" "$1"
+}
+
 # Herdr keeps no metadata tokens across a server restart, so the ticket also lives on its
 # branch (git config branch.<b>.linear-*), where retag finds it again. It outlives Herdr and
 # goes away with the branch. save_ticket <dir> <branch> <id> <url> <title>
@@ -218,7 +226,7 @@ save_ticket() {
 # task of that team was started before (so utf-8 is nobody's ticket), linked through the
 # Linear workspace seen last (ticket_guessed=true then). All empty for any other branch.
 branch_ticket() {
-    local dir=$1 b=$2 team number org
+    local dir=$1 b=$2 team number
     ticket_guessed=false
     ticket_id=$(git -C "$dir" config --get "branch.$b.linear-id" 2>/dev/null || true)
     ticket_url=$(git -C "$dir" config --get "branch.$b.linear-url" 2>/dev/null || true)
@@ -228,11 +236,13 @@ branch_ticket() {
     [[ "${b##*/}" =~ ^([A-Za-z][A-Za-z0-9]*)-([0-9]+)(-|$) ]] || return 0
     number=${BASH_REMATCH[2]}
     team=$(printf '%s' "${BASH_REMATCH[1]}" | tr '[:lower:]' '[:upper:]')
+    # pr-<n> is a fork PR's checkout (the app's prefix+m), never a ticket, even where an older
+    # prepare recorded PR as a team.
+    [[ "$team" != PR ]] || return 0
     [[ -n "$(team_repo "$team")" ]] || return 0
     ticket_id="$team-$number"
     ticket_guessed=true
-    org=$(cat "$linear_org_file" 2>/dev/null || true)
-    if [[ -n "$org" ]]; then ticket_url="https://linear.app/$org/issue/$ticket_id"; fi
+    ticket_url=$(ticket_link "$ticket_id")
     return 0
 }
 
@@ -242,7 +252,15 @@ ticket_token_args() {
                 --token "linear_url=$2" --token "linear_title=$3")
 }
 
-# Sets ticket_id, ticket_url, ticket_slug, branch from a link, an id, or a branch name.
+# cut_text <n> <text>: its first n characters, never half of one. Popups can run in the C
+# locale, where ${text:0:n} counts bytes and may end inside a multibyte character (user's),
+# which Herdr rejects as invalid UTF-8; perl counts characters whatever the locale.
+cut_text() {
+    perl -CSA -e 'print substr($ARGV[1], 0, $ARGV[0])' "$1" "$2" 2>/dev/null || printf '%s' "${2:0:$1}"
+}
+
+# Sets ticket_id, ticket_url, ticket_slug, branch and ref_kind (ticket, branch or task) from a
+# link, an id, a branch name or free text.
 parse_ticket() {
     local ref=$1
     ticket_id="" ticket_url="" ticket_slug=""
@@ -263,6 +281,9 @@ parse_ticket() {
         branch=$(slugify "$ref")
     fi
     [[ -n "$branch" ]] || die "could not derive a branch name from '$ref'"
+    # Free text ("fix flaky login test") is a task, not a ref: the callers keep it as the title
+    # and first prompt, with its slug as the branch.
+    if [[ -n "$ticket_id" ]]; then ref_kind=ticket; elif [[ "$branch" == "$ref" ]]; then ref_kind=branch; else ref_kind=task; fi
 }
 
 # Gitignored env files the worktree needs that git does not carry over.
@@ -304,6 +325,27 @@ start_agent() {
     fi
 }
 
+# default_branch_of <repo>: origin's default branch (main when origin names none).
+default_branch_of() {
+    local head
+    head=$(git -C "$1" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null || true)
+    head=${head#origin/}
+    printf '%s\n' "${head:-main}"
+}
+
+# new_branch_base <repo> <branch> [nofetch]: where a new task branch starts. Fetches origin
+# first (best effort, unless nofetch); a branch published on origin starts from origin's copy,
+# any other from origin's default branch, else HEAD (no origin).
+new_branch_base() {
+    local repo=$1 b=$2
+    [[ "${3:-}" == nofetch ]] || git -C "$repo" fetch -q origin 2>/dev/null || true
+    if git -C "$repo" show-ref -q --verify "refs/remotes/origin/$b"; then
+        printf 'origin/%s\n' "$b"
+    else
+        git -C "$repo" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null || echo HEAD
+    fi
+}
+
 cmd_start() {
     local ref="" project="" title="" url_opt="" agent="$default_agent" prompt="" agent_async=false
     while [[ $# -gt 0 ]]; do
@@ -313,7 +355,6 @@ cmd_start() {
             -u|--url) url_opt=$2; shift 2 ;;
             -a|--agent) agent=$2; shift 2 ;;
             --prompt) prompt=$2; shift 2 ;;
-            --no-agent) agent=none; shift ;;
             --async-agent) agent_async=true; shift ;;
             -*) die "unknown option: $1" ;;
             *) [[ -z "$ref" ]] || die "unexpected argument: $1"; ref=$1; shift ;;
@@ -335,9 +376,10 @@ cmd_start() {
     else
         label="${title:-$branch}"
     fi
-    label=${label:0:36}
+    label=$(cut_text 36 "$label")
 
-    local worktrees existing_path response workspace_id checkout_path root_pane start
+    local worktrees existing_path response workspace_id checkout_path root_pane start already_open base=""
+    local -a base_args=()
     worktrees=$("$herdr_bin" worktree list --cwd "$project")
     existing_path=$(jq -r --arg b "$branch" '.result.worktrees[] | select(.branch == $b) | .path' <<<"$worktrees" | head -n1)
     if [[ -z "$existing_path" && -n "$ticket_id" && -z "$ticket_slug" ]]; then
@@ -349,12 +391,23 @@ cmd_start() {
         note "branch $branch already has a worktree at $existing_path, opening it"
         response=$("$herdr_bin" worktree open --cwd "$project" --path "$existing_path" --label "$label" --focus)
     else
-        response=$("$herdr_bin" worktree create --cwd "$project" --branch "$branch" --label "$label" --focus)
+        # Herdr starts a new branch from the checkout's HEAD, which may be stale or another
+        # task's branch: start it where prepare does (origin's copy of it, else origin's default).
+        if ! git -C "$project" show-ref -q --verify "refs/heads/$branch"; then
+            base=$(new_branch_base "$project" "$branch")
+            base_args=(--base "$base")
+        fi
+        response=$("$herdr_bin" worktree create --cwd "$project" --branch "$branch" \
+            ${base_args[@]+"${base_args[@]}"} --label "$label" --focus)
     fi
     workspace_id=$(jq -r '.result.workspace.workspace_id' <<<"$response")
     checkout_path=$(jq -r '.result.worktree.path' <<<"$response")
     root_pane=$(jq -r '.result.root_pane.pane_id' <<<"$response")
+    already_open=$(jq -r '.result.already_open // false' <<<"$response")
     note "workspace $workspace_id at $checkout_path ($((SECONDS - start))s)"
+    # A branch made from origin's default must not track it (a push would go to main); one made
+    # from origin's copy of itself tracks that.
+    [[ -n "$base" && "$base" != "origin/$branch" ]] && git -C "$checkout_path" branch -q --unset-upstream 2>/dev/null || true
     [[ -n "$ticket_id" ]] && remember_team_repo "${ticket_id%%-*}" "$project"
 
     "$herdr_bin" workspace report-metadata "$workspace_id" --source "$metadata_source" \
@@ -370,6 +423,11 @@ cmd_start() {
     fi
     [[ -z "$existing_path" ]] && copy_env_files "$project" "$checkout_path"
 
+    if [[ "$already_open" == true && "$agent" != none ]]; then
+        # Its agent, if any, is already there; a prompt typed now would land in it.
+        note "the workspace was already open; focused it, no new agent"
+        agent=none
+    fi
     if [[ "$agent" != none ]]; then
         local agent_name
         # Unique per workspace: a ticket retried after a closed workspace must not collide
@@ -377,6 +435,8 @@ cmd_start() {
         agent_name="$(slugify "${ticket_id:-$branch}")"
         # Workspace ids carry uppercase letters (w1V); agent names must be lowercase.
         agent_name="$(slugify "${agent_name:0:26}-${workspace_id#w}")"
+        # Herdr agent names start with a letter (^[a-z][a-z0-9_-]{0,31}$): "2fa login bug".
+        [[ "$agent_name" =~ ^[a-z] ]] || agent_name="t${agent_name:0:31}"
         if [[ -z "$prompt" ]]; then
             if [[ -n "$ticket_id" ]]; then
                 prompt="Work on ${ticket_url:-$ticket_id}. Groom it first (groom skill)."
@@ -439,16 +499,14 @@ cmd_tag() {
     [[ -n "$ws" ]] || die "not inside a Herdr workspace (HERDR_WORKSPACE_ID unset)"
     parse_ticket "$ref"
     [[ -n "$ticket_id" ]] || die "'$ref' is not a Linear ticket link or id"
-    if [[ -z "$ticket_url" && -s "$linear_org_file" ]]; then
-        ticket_url="https://linear.app/$(cat "$linear_org_file")/issue/$ticket_id"
-    fi
+    [[ -n "$ticket_url" ]] || ticket_url=$(ticket_link "$ticket_id")
     local -a token_args
     ticket_token_args "$ticket_id" "$ticket_url" "$title"
     "$herdr_bin" workspace report-metadata "$ws" --source "$metadata_source" "${token_args[@]}" >/dev/null
     [[ -n "${HERDR_PANE_ID:-}" ]] && "$herdr_bin" pane report-metadata "$HERDR_PANE_ID" --source "$metadata_source" "${token_args[@]}" >/dev/null
     local label="${title:-${ticket_slug//-/ }}"
     [[ -n "$label" ]] || label=$ticket_id
-    "$herdr_bin" workspace rename "$ws" "${label:0:36}" >/dev/null
+    "$herdr_bin" workspace rename "$ws" "$(cut_text 36 "$label")" >/dev/null
     local current
     current=$(git branch --show-current 2>/dev/null || true)
     if [[ -n "$current" && "$current" != "$branch" ]] && ! git rev-parse --verify -q "$current@{upstream}" >/dev/null 2>&1; then
@@ -481,9 +539,8 @@ cmd_interactive() {
     parse_ticket "$ref"
     # Best guess first: the repo this ticket's team was last started in, then the focused one.
     project=$(pick_project "$(team_repo "${ticket_id%%-*}")" "$(focused_repo)") || exit 0
-    # Free text ("fix flaky login test") is a task, not a ref: keep it as the title and first
-    # prompt, with the slug as the branch. A ticket or a valid branch name passes through.
-    if [[ -z "$ticket_id" ]] && ! git check-ref-format --branch "$ref" >/dev/null 2>&1; then
+    # Free text is the title and first prompt; a ticket or a branch name passes through.
+    if [[ "$ref_kind" == task ]]; then
         cmd_start "$ref" --project "$project" --title "$ref" --async-agent
     else
         cmd_start "$ref" --project "$project" --async-agent
@@ -509,7 +566,15 @@ prune_verdict() {
     elif [[ -n "$(tsv_field "$open_heads" "$branch" 2)" ]]; then
         verdict="keep: open PR $(tsv_field "$open_heads" "$branch" 2)"
     elif git -C "$repo_root" merge-base --is-ancestor "$branch" "origin/$default_branch" 2>/dev/null; then
-        verdict="remove: merged into $default_branch"
+        # A branch only ever created, never committed to, is "in" the base too: its task has
+        # just started. Done means history of its own (reflog) or a PR merged at its tip.
+        head_sha=$(git -C "$repo_root" rev-parse "$branch" 2>/dev/null || true)
+        if [[ -n "$head_sha" && "$(tsv_field "$merged_heads" "$branch" 2)" == "$head_sha" ]] \
+            || (( $(git -C "$repo_root" reflog show --format=%H "refs/heads/$branch" 2>/dev/null | wc -l) > 1 )); then
+            verdict="remove: merged into $default_branch"
+        else
+            verdict="keep: no commits yet"
+        fi
     else
         # A merged PR only proves the commit it merged; the branch may have moved on.
         head_sha=$(git -C "$repo_root" rev-parse "$branch" 2>/dev/null || true)
@@ -540,12 +605,12 @@ cmd_prune() {
     project=${1:-$(pick_project)} || exit 0
     project=$(cd "$project" && pwd -P)
     server_running || die "herdr server is not running; start herdr first"
+    tidy_caches
 
     worktrees=$("$herdr_bin" worktree list --cwd "$project")
     repo_root=$(jq -r '.result.source.repo_root' <<<"$worktrees")
     git -C "$repo_root" fetch --prune --quiet origin || note "fetch failed, using local refs"
-    default_branch=$(git -C "$repo_root" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##' || true)
-    default_branch=${default_branch:-main}
+    default_branch=$(default_branch_of "$repo_root")
     merged_heads="" open_heads=""
     if command -v gh >/dev/null 2>&1; then
         merged_heads=$(cd "$repo_root" && gh pr list --state merged --limit 300 --json headRefName,headRefOid --jq '.[] | "\(.headRefName)\t\(.headRefOid)"' 2>/dev/null || true)
@@ -591,10 +656,12 @@ cmd_prune() {
                 note "removed ${remove_paths[$i]} (workspace ${remove_workspaces[$i]})"
             else
                 note "herdr could not remove ${remove_paths[$i]}; close its workspace and retry"
+                continue
             fi
         elif [[ -d "${remove_paths[$i]}" ]]; then
-            git -C "$repo_root" worktree remove "${remove_paths[$i]}" && note "removed ${remove_paths[$i]}"
+            git -C "$repo_root" worktree remove "${remove_paths[$i]}" && note "removed ${remove_paths[$i]}" || continue
         fi
+        rm -f "$(pr_cache_file "${remove_paths[$i]}" "${remove_branches[$i]}")"
     done
     git -C "$repo_root" worktree prune
     note "done"
@@ -615,8 +682,7 @@ cmd_prune_worktree() {
 
     branch=$(git -C "$wt_path" symbolic-ref --short -q HEAD || true)
     git -C "$repo_root" fetch --prune --quiet origin || note "fetch failed, using local refs"
-    default_branch=$(git -C "$repo_root" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##' || true)
-    default_branch=${default_branch:-main}
+    default_branch=$(default_branch_of "$repo_root")
     # Nobody confirms this removal, so an open PR we failed to look up keeps the worktree.
     if [[ -n "$branch" ]]; then
         open_heads=$(cd "$repo_root" && gh pr list --head "$branch" --state open --json headRefName,number --jq '.[] | "\(.headRefName)\t#\(.number)"' 2>/dev/null) ||
@@ -625,7 +691,9 @@ cmd_prune_worktree() {
     prune_verdict "$wt_path" "$branch" false
     note "$wt_path: $verdict"
     [[ "$verdict" == remove:* ]] || return 0
-    git -C "$repo_root" worktree remove "$wt_path" && note "removed $wt_path (branch kept)"
+    git -C "$repo_root" worktree remove "$wt_path" || return 0
+    note "removed $wt_path (branch kept)"
+    rm -f "$(pr_cache_file "$wt_path" "$branch")"
     git -C "$repo_root" worktree prune
 }
 
@@ -675,12 +743,14 @@ pr_cache_file() {
     printf '%s/%s.json' "$pr_cache_dir" "${name//\//%}"
 }
 
-# pr_get <checkout> <branch> <max-age>: the branch's PR JSON, nothing when it has none. Served
-# from the cache when younger than max-age seconds (-1: any age, never asks gh; 0: always asks).
-# gh runs in the checkout without a branch argument, so fork PR checkouts (pr-<n>) resolve too.
-# A failed gh (offline, rate limit) keeps the cached answer.
+# pr_get <checkout> <branch> <max-age> [stale-ok]: the branch's PR JSON, nothing when it has
+# none. Served from the cache when younger than max-age seconds (-1: any age, never asks gh;
+# 0: always asks). gh runs in the checkout without a branch argument, so fork PR checkouts
+# (pr-<n>) resolve too. A failed gh (offline, rate limit) keeps the cached answer. With
+# stale-ok it never waits: the cached answer, whatever its age, and an older one is refreshed
+# in the background (for callers with a deadline, like the Claude status line).
 pr_get() {
-    local top=$1 b=$2 max=$3 file mtime out err
+    local top=$1 b=$2 max=$3 stale_ok=${4:-} file mtime out err
     file=$(pr_cache_file "$top" "$b")
     if [[ -f "$file" ]]; then
         mtime=$(stat -c %Y "$file" 2>/dev/null || stat -f %m "$file" 2>/dev/null || echo 0)
@@ -688,16 +758,26 @@ pr_get() {
             cat "$file"
             return 0
         fi
+        [[ -z "$stale_ok" ]] || cat "$file"
     elif (( max < 0 )); then
         return 0
     fi
     command -v gh >/dev/null 2>&1 || return 0
     mkdir -p "$pr_cache_dir" 2>/dev/null || return 0
-    err=$(mktemp "${TMPDIR:-/tmp}/herdr-task-gh.XXXXXX")
-    if out=$(cd "$top" && gh pr view --json "$pr_fields" 2>"$err"); then
+    if [[ -n "$stale_ok" ]]; then
+        # One refresh at a time per branch; a lock left by a killed one expires in two minutes.
+        if [[ -d "$file.lock" ]] && [[ -n "$(find "$file.lock" -maxdepth 0 -mmin +2 2>/dev/null)" ]]; then
+            rmdir "$file.lock" 2>/dev/null || true
+        fi
+        mkdir "$file.lock" 2>/dev/null || return 0
+        ( pr_get "$top" "$b" 0 >/dev/null 2>&1; rmdir "$file.lock" 2>/dev/null ) </dev/null >/dev/null 2>&1 &
+        return 0
+    fi
+    err="$file.$$.err"
+    if out=$(cd "$top" && GH_NO_UPDATE_NOTIFIER=1 gh pr view --json "$pr_fields" 2>"$err"); then
         printf '%s\n' "$out" > "$file.$$" && mv -f "$file.$$" "$file"
         printf '%s\n' "$out"
-    elif grep -qi 'no pull requests found' "$err"; then
+    elif grep -qi 'no pull requests found' "$err" 2>/dev/null; then
         : > "$file.$$" && mv -f "$file.$$" "$file"
     elif [[ -f "$file" ]]; then
         cat "$file"
@@ -705,20 +785,23 @@ pr_get() {
     rm -f "$err"
 }
 
-# pr [--cwd DIR] [--max-age N]: the PR of DIR's branch as JSON (nothing when none), from the
-# shared cache when younger than N seconds (default 60, the status line's pace).
+# pr [--cwd DIR] [--max-age N] [--stale-ok]: the PR of DIR's branch as JSON (nothing when
+# none), from the shared cache when younger than N seconds (default 60, the status line's
+# pace). --stale-ok answers from the cache at once and refreshes an old answer in the
+# background.
 cmd_pr() {
-    local cwd=$PWD max=60 top b
+    local cwd=$PWD max=60 stale="" top b
     while [[ $# -gt 0 ]]; do
         case $1 in
             --cwd) cwd=$2; shift 2 ;;
             --max-age) max=$2; shift 2 ;;
+            --stale-ok) stale=1; shift ;;
             *) die "unknown option: $1" ;;
         esac
     done
     top=$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null) || return 0
     b=$(git -C "$top" symbolic-ref --short -q HEAD) || return 0
-    pr_get "$top" "$b" "$max"
+    pr_get "$top" "$b" "$max" "$stale"
 }
 
 # The rows every UI shows, in this order: the ticket; the PR, its failing checks, the checks and
@@ -774,10 +857,8 @@ cmd_links() {
     if top=$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null); then
         branch=$(git -C "$top" symbolic-ref --short -q HEAD || true)
         remote=$(git -C "$top" remote get-url origin 2>/dev/null || true)
-        head=$(git -C "$top" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || true)
         [[ "$remote" =~ github\.com[:/]([^/]+/[^/]+)$ ]] && slug=${BASH_REMATCH[1]%.git}
-        base=${head#origin/}
-        base=${base:-main}
+        base=$(default_branch_of "$top")
         [[ "$branch" != "$base" ]] || branch=""
         if [[ "$status" == true ]]; then
             dirty=$(git -C "$top" status --porcelain 2>/dev/null | grep -c . || true)
@@ -820,11 +901,9 @@ cmd_links() {
                 elif .kind == "compare" then "\($compare)  compare \(.detail)"
                 else "\($branch)  branch \(.label)" end ) + "\t" + .url' <<<"$facts"
         # pr_url_<n>: one token per PR the Claude status line saw (Herdr truncates long token
-        # values); pr_url is the old space-joined scheme, so split it and drop fragments.
+        # values, so a cut one is dropped).
         jq -r --arg pr "$i_pr" '
-            [ to_entries[]
-              | select(.key == "pr_url" or (.key | startswith("pr_url_")))
-              | if .key == "pr_url" then (.value | split(" ")[]) else .value end
+            [ to_entries[] | select(.key | startswith("pr_url_")) | .value
               | select(test("/pull/[0-9]+$")) ]
             | unique[] | "\($pr)  #\(split("/") | last)\t\(.)"' <<<"$tokens"
     } | awk -F'\t' 'NF == 2 && $2 != "" && !seen[$2]++'
@@ -881,15 +960,34 @@ cmd_open() {
     fi
     url=${choice#*$'\t'}
     if [[ "$key" == ctrl-y ]]; then
-        if command -v pbcopy >/dev/null 2>&1; then
-            printf '%s' "$url" | pbcopy
+        if printf '%s' "$url" | copy_text; then
             "$herdr_bin" notification show "Link copied" --body "$url" >/dev/null 2>&1 || true
         else
-            fail_open "no pbcopy; the link is $url"
+            fail_open "no clipboard command; the link is $url"
         fi
         return
     fi
-    "${HERDR_TASK_OPEN:-open}" "$url"
+    open_url "$url"
+}
+
+# open_url <url>: the default browser (open on a Mac, xdg-open elsewhere; $HERDR_TASK_OPEN wins).
+open_url() {
+    if [[ -n "${HERDR_TASK_OPEN:-}" ]]; then
+        "$HERDR_TASK_OPEN" "$1"
+    elif [[ "$(uname -s)" == Darwin ]]; then
+        open "$1"
+    else
+        xdg-open "$1" >/dev/null 2>&1
+    fi
+}
+
+# copy_text < text: onto the clipboard (pbcopy, wl-copy or xclip); fails with none of them.
+copy_text() {
+    if command -v pbcopy >/dev/null 2>&1; then pbcopy
+    elif command -v wl-copy >/dev/null 2>&1; then wl-copy
+    elif command -v xclip >/dev/null 2>&1; then xclip -selection clipboard
+    else cat >/dev/null; return 1
+    fi
 }
 
 # links_can_change <dir>: whether gh could still add rows (a branch off the base, on GitHub).
@@ -931,8 +1029,7 @@ load_task() {
     repo=$(git -C "$pane_cwd" rev-parse --show-toplevel 2>/dev/null) || fail "pane $1 is not in a git repository"
     branch=$(git -C "$repo" symbolic-ref --short -q HEAD) || fail "detached HEAD in $repo; check out the task branch"
     if [[ -z "${base:-}" ]]; then
-        base=$(git -C "$repo" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##' || true)
-        base=${base:-main}
+        base=$(default_branch_of "$repo")
     fi
     [[ "$branch" != "$base" ]] || fail "$(basename "$repo") is on $base; run this from a task branch"
 }
@@ -950,6 +1047,27 @@ split_pane() {
 # Reviewer panes per workspace, so a second review does not stack more splits, and ship never
 # mistakes a reviewer for the task's agent.
 review_state_dir="${XDG_CACHE_HOME:-$HOME/.cache}/herdr-task/reviews"
+
+# tidy_caches: drops what nothing reads any more, so the caches do not grow forever: PR answers
+# untouched for two weeks (branches long gone), gh error files and refresh locks left by a killed
+# refresh, reviewer records older than a day, and the Claude status line's per-transcript PR
+# lists older than a week; detach.log keeps its last 500 lines. Run by prune and at startup.
+tidy_caches() {
+    local cache="${XDG_CACHE_HOME:-$HOME/.cache}/herdr-task" log
+    if [[ -d "$pr_cache_dir" ]]; then
+        find "$pr_cache_dir" -type f -name '*.json' -mtime +14 -exec rm -f {} + 2>/dev/null
+        find "$pr_cache_dir" -type f -name '*.err' -mmin +60 -exec rm -f {} + 2>/dev/null
+        find "$pr_cache_dir" -type d -name '*.lock' -mmin +60 -exec rmdir {} + 2>/dev/null
+    fi
+    [[ -d "$review_state_dir" ]] && find "$review_state_dir" -type f -mtime +1 -exec rm -f {} + 2>/dev/null
+    [[ -d "$HOME/.claude/cache" ]] &&
+        find "$HOME/.claude/cache" -maxdepth 1 -type f -name 'v2-transcript-prs-*' -mtime +7 -exec rm -f {} + 2>/dev/null
+    log="$cache/detach.log"
+    if [[ -f "$log" ]] && (( $(wc -l < "$log") > 1000 )); then
+        tail -n 500 "$log" > "$log.$$" && mv "$log.$$" "$log"
+    fi
+    return 0
+}
 
 # live_reviewers <workspace>: reviewer panes recorded for the workspace that still exist.
 live_reviewers() {
@@ -1087,7 +1205,7 @@ $(git -C "$repo" log --reverse --format='- %s' "origin/$base..HEAD")"
     # tokens are one map shared by every source, so `pr` (herdr-github's) is neither set nor
     # cleared here.
     "$herdr_bin" pane report-metadata "$pane" --source "$metadata_source" \
-        --token "pr_url_1=$pr" --clear-token pr_url >/dev/null 2>&1 || true
+        --token "pr_url_1=$pr" >/dev/null 2>&1 || true
 }
 
 # open-file <file-url> [--pane PANE]: the task plugin's file:// link handler (Ctrl-click on a
@@ -1141,7 +1259,7 @@ parse_file_url() {
 # labels had: each task workspace's repo and ticket, and on its panes the ticket and the agent
 # glyph label. Task workspaces are linked worktrees; plain checkouts are left alone. --startup
 # also drops the Claude status line's "already reported" PR markers so it reports its PR links
-# again. Safe to run any time.
+# again, and forgets reviewer splits (a restart ends them). Safe to run any time.
 cmd_retag() {
     local only="" startup=false agents ws dir
     while [[ $# -gt 0 ]]; do
@@ -1154,6 +1272,10 @@ cmd_retag() {
     server_running 2>/dev/null || return 0
     if [[ "$startup" == true ]]; then
         rm -f "$HOME/.claude/cache/v2-pane-pr-"* 2>/dev/null || true
+        # Reviewer splits are recorded per workspace id; ids are reused after a restart, so a
+        # new workspace could look "still reviewing" (prefix+y refuses).
+        rm -f "$review_state_dir"/* 2>/dev/null || true
+        tidy_caches
     fi
     # Agent names (reviewers are rv-*); agents that have not resumed yet get theirs from the
     # pane.agent_detected hook.
@@ -1212,7 +1334,7 @@ cmd_open_ticket() {
     if [[ -n "$ws" ]] && "$herdr_bin" workspace focus "$ws" >/dev/null 2>&1; then
         return 0
     fi
-    "${HERDR_TASK_OPEN:-open}" "$url"
+    open_url "$url"
 }
 
 # ticket_workspace <ID>: the open workspace tagged with the ticket, else the one whose worktree
@@ -1276,17 +1398,12 @@ cmd_projects() {
 # best guess first (this ticket's team's last repository, then the focused one).
 cmd_parse() {
     local ref=${1:?ticket link, id, branch or task} cwd="" kind title="" team="" here=""
-    local ticket_id ticket_url ticket_slug branch
+    local ticket_id ticket_url ticket_slug branch ref_kind
     [[ "${2:-}" == --cwd ]] && cwd=${3:-}
     parse_ticket "$ref"
-    if [[ -n "$ticket_id" ]]; then
-        kind=ticket
-        team=$(team_repo "${ticket_id%%-*}")
-    elif git check-ref-format --branch "$ref" >/dev/null 2>&1; then
-        kind=branch
-    else
-        kind=task title=$ref
-    fi
+    kind=$ref_kind
+    [[ "$kind" == ticket ]] && team=$(team_repo "${ticket_id%%-*}")
+    [[ "$kind" == task ]] && title=$ref
     [[ -n "$cwd" ]] && here=$(repo_of "$cwd")
     jq -nc --arg kind "$kind" --arg id "$ticket_id" --arg url "$ticket_url" --arg branch "$branch" \
         --arg title "$title" --argjson projects "$(json_projects "$team" "$here")" \
@@ -1297,13 +1414,16 @@ cmd_parse() {
 # task (the branch's own worktree if it has one), the ticket saved on its branch as start
 # does, env files copied. Prints {path, branch, label, existing, agent, prompt, ticket_id,
 # ticket_url}; the mod opens or focuses the space and starts the agent.
+# prepare --branch NAME ...: NAME is the branch as it is, never read as a ticket (a PR's head:
+# pr-5 or fix-123 are not Linear tickets).
 cmd_prepare() {
-    local ref="" project="" title="" agent="$default_agent" ticket_id ticket_url ticket_slug branch
+    local ref="" project="" title="" agent="$default_agent" ticket_id ticket_url ticket_slug branch literal="" ref_kind
     while [[ $# -gt 0 ]]; do
         case "$1" in
             -p|--project) project=$2; shift 2 ;;
             -t|--title) title=$2; shift 2 ;;
             -a|--agent) agent=$2; shift 2 ;;
+            -b|--branch) literal=$2; ref=$2; shift 2 ;;
             -*) die "unknown option: $1" ;;
             *) [[ -z "$ref" ]] || die "unexpected argument: $1"; ref=$1; shift ;;
         esac
@@ -1311,11 +1431,14 @@ cmd_prepare() {
     [[ -n "$ref" && -n "$project" ]] || die "usage: herdr-task prepare <ticket | branch | task> --project DIR"
     project=$(repo_of "$project")
     [[ -n "$project" ]] || die "not a git repository"
-    parse_ticket "$ref"
-    # Free text is the title and the first prompt; its slug is the branch.
-    if [[ -z "$ticket_id" ]] && ! git check-ref-format --branch "$ref" >/dev/null 2>&1; then
-        title=${title:-$ref}
+    if [[ -n "$literal" ]]; then
+        git check-ref-format --branch "$literal" >/dev/null 2>&1 || die "not a branch name: $literal"
+        ticket_id="" ticket_url="" ticket_slug="" branch=$literal ref_kind=branch
+    else
+        parse_ticket "$ref"
     fi
+    # Free text is the title and the first prompt; its slug is the branch.
+    [[ "$ref_kind" != task ]] || title=${title:-$ref}
 
     local path existing=false bare=""
     [[ -n "$ticket_id" && -z "$ticket_slug" ]] && bare=1
@@ -1337,7 +1460,7 @@ cmd_prepare() {
             git -C "$project" worktree add -q --track -b "$branch" "$path" "origin/$branch" >&2 || die "git worktree add failed"
         else
             local base
-            base=$(git -C "$project" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null || echo HEAD)
+            base=$(new_branch_base "$project" "$branch" nofetch)
             git -C "$project" worktree add -q -b "$branch" "$path" "$base" >&2 || die "git worktree add failed"
             git -C "$path" branch -q --unset-upstream 2>/dev/null || true
         fi
@@ -1355,8 +1478,8 @@ cmd_prepare() {
         if [[ -z "$title" ]]; then
             title=$(git -C "$project" config --get "branch.$b.linear-title" 2>/dev/null || true)
         fi
-        if [[ -z "$ticket_url" && -s "$linear_org_file" ]]; then
-            ticket_url="https://linear.app/$(cat "$linear_org_file")/issue/$ticket_id"
+        if [[ -z "$ticket_url" ]]; then
+            ticket_url=$(ticket_link "$ticket_id")
             save_ticket "$project" "$b" "$ticket_id" "$ticket_url" ""
         fi
         # The app has no sidebar ticket token, so the space name carries the id.
@@ -1367,7 +1490,7 @@ cmd_prepare() {
         label=${title:-$b}
     fi
     label=${label% }
-    label=${label:0:48}
+    label=$(cut_text 48 "$label")
 
     local prompt=""
     if [[ "$agent" != none ]]; then
@@ -1396,7 +1519,6 @@ fi
 case "${1:-}" in
     "") cmd_interactive ;;
     start) shift; cmd_start "$@" ;;
-    branch) parse_ticket "${2:?ticket}"; printf '%s\n' "$branch" ;;
     tag) cmd_tag "${2:?ticket}" "${@:3}" ;;
     open) cmd_open "${2:-}" ;;
     links) shift; cmd_links "$@" ;;
@@ -1413,5 +1535,5 @@ case "${1:-}" in
     parse) shift; cmd_parse "$@" ;;
     prepare) shift; cmd_prepare "$@" ;;
     -h|--help) awk 'NR > 1 && !/^#/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "$0" ;;
-    *) die "unknown command: $1 (start, tag, open, review, ship, open-file, open-ticket, retag, prune, prune-worktree, branch)" ;;
+    *) die "unknown command: $1 (start, tag, open, links, pr, review, ship, open-file, open-ticket, retag, prune, prune-worktree, projects, parse, prepare; --help)" ;;
 esac

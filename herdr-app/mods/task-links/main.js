@@ -23,11 +23,10 @@ const icon = (name) => svg(`mods/workspace-chrome/${name}.svg`).size(13).flex_no
 // `herdr-task links` on the space's machine: the task's facts and its rows, in the order every
 // UI lists them: {branch, base, slug, dirty, ticket, pr, links: [{kind, label, detail, url, ci}]}.
 // fresh: true asks gh, a number asks it when the cached PR is older (seconds), nothing never.
-export async function taskLinks({ cwd, on, fresh, status = true }) {
+export async function taskLinks({ cwd, on, fresh }) {
   const args = ["links", "--cwd", cwd];
   if (fresh === true) args.push("--fresh");
   else if (typeof fresh === "number") args.push("--max-age", String(fresh));
-  if (!status) args.push("--no-status");
   const r = await exec("sh", ["-c", 'exec "$HOME/bin/herdr-task" "$@"', "herdr-task", ...args], { cwd, on }).catch((e) => ({ code: 1, stderr: String(e) }));
   if (r.code !== 0) throw new Error(String(r.stderr ?? "").trim().split("\n").pop()?.replace(/^herdr-task: /, "") || "herdr-task links failed");
   return JSON.parse(r.stdout);

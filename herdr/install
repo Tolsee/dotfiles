@@ -51,16 +51,34 @@ for integration in claude codex devin pi; do
     fi
 done
 
-# Marketplace plugins, owner/repo[@ref]; a ref pins a reviewed release.
+# Marketplace plugins, owner/repo[@ref]; a ref pins a reviewed release, and a changed ref
+# reinstalls the plugin at it (herdr plugin list --json says which ref is installed).
 # - Sidebar: agent logos, state spinners and the workspace > tab > agent tree. Its own setup
 #   step is never run; the rows are hand-merged in config.toml.
 # - herdr-github: prefix+m PR popup and the $prs sidebar token. Builds with Go, else downloads
-#   the release binary checked against its SHA-256 sums; uses gh's sign-in.
-for plugin in testy-cool/herdr-sidebar-config mrolafsson/herdr-github@v0.8.5; do
-    repo=${plugin%@*}
-    if ! herdr plugin list 2>/dev/null | grep -qi "${repo##*/}"; then
-        if [[ "$plugin" == *@* ]]; then
-            herdr plugin install --yes "$repo" --ref "${plugin##*@}"
+#   the release binary checked against its SHA-256 sums; uses gh's sign-in. Its Herdr app mod
+#   is installed at the same ref by herdr-app/install.
+# - herdr-recap: prefix+i popup of every agent, the ones waiting on you first, each with a recap
+#   written after it sat unlooked at for 3 minutes (a short Claude/Codex request on its own
+#   conversation, so it costs tokens). Same build as herdr-github; its app mod is installed at
+#   the same ref by herdr-app/install.
+for plugin in testy-cool/herdr-sidebar-config mrolafsson/herdr-github@v0.11.0 \
+    mrolafsson/herdr-recap@v0.12.11; do
+    repo=${plugin%@*} want=""
+    [[ "$plugin" == *@* ]] && want=${plugin##*@}
+    if command -v jq >/dev/null 2>&1; then
+        have=$(herdr plugin list --json 2>/dev/null | jq -r --arg o "${repo%%/*}" --arg r "${repo##*/}" '
+            [.result.plugins[]? | select(.source.owner == $o and .source.repo == $r)][0]
+            | if . == null then "-" else (.source.requested_ref // "") end' 2>/dev/null || echo -)
+    elif herdr plugin list 2>/dev/null | grep -qi "${repo##*/}"; then
+        have=$want # without jq, an installed plugin is left as it is
+    else
+        have=-
+    fi
+    if [[ "$have" == - || ( -n "$want" && "$have" != "$want" ) ]]; then
+        [[ "$have" == - ]] || echo "herdr: $repo is at ${have:-its default branch}, installing $want"
+        if [[ -n "$want" ]]; then
+            herdr plugin install --yes "$repo" --ref "$want"
         else
             herdr plugin install --yes "$repo"
         fi

@@ -65,7 +65,9 @@
     "ctrl-b o": "mod.open:task-links",
     "ctrl-b t": "mod.open:task-start",
     "ctrl-b f": "mod.open:task-projects",
-    "ctrl-b m": "mod.open:task-prs",
+    "ctrl-b m": "mod.open:github",
+    "ctrl-b shift-m": "mod.open:task-prs",
+    "ctrl-b i": "mod.open:recap",
     "ctrl-b b": "layout.toggle:sidebar",
     "ctrl-b ?": "app.help",
     "ctrl-b shift-n": "space.new",
@@ -120,5 +122,14 @@
     "ctrl-b shift-g": "task-status.new-worktree",
     "ctrl-b alt-x": "task-status.remove-worktree",
     "ctrl-b ;": "task-status.last-pane"
+  },
+  "mod:github": {
+    "escape": "github.escape"
+  },
+  "mod:recap": {
+    "tab": "recap.reply",
+    "ctrl-r": "recap.rename",
+    "ctrl-x": "recap.ignore",
+    "escape": "recap.escape"
   }
 }

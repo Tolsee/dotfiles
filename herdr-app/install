@@ -1,9 +1,20 @@
 #!/usr/bin/env bash
 # The Herdr desktop app (herdr-app, running on herdr-core `hc`) and this repo's look for it:
 # the Tasks layout (the TUI's layout and colors), the TokyoNight Moon theme, keys.json with
-# the TUI's Ctrl+B keys, and the task-status mod. Only those are linked into the app's home;
-# everything else there stays the app's. The TUI (herdr/install) is not touched.
+# the TUI's Ctrl+B keys, and every mod in mods/ (task-status, task-links, ...). Only those are
+# linked into the app's home; everything else there stays the app's. Plus the app mods of
+# herdr-github (prefix+m) and herdr-recap (prefix+i), as in the TUI, copied at a pinned release
+# since they are not ours.
+# The TUI (herdr/install) is not touched.
 set -euo pipefail
+
+# Others' app mods, copied at a pinned release: "<mod> <owner/repo> <ref> <mark>". The mod is
+# app/mods/<mod> of the repo at <ref>; <mark> is a string only that project's main.js has. Bump a
+# ref to update its mod, with the same ref in herdr/install for its TUI plugin.
+EXTERNAL_MODS=(
+    "github mrolafsson/herdr-github v0.11.0 GITHUB_VERSION"
+    "recap mrolafsson/herdr-recap v0.12.11 RECAP_VERSION"
+)
 
 root=$(cd "$(dirname "$0")" && pwd)
 app_home="${HERDR_APP_HOME:-$HOME/.config/herdr-app}"
@@ -34,13 +45,60 @@ link() {
     ln -s "$src" "$dst"
 }
 
+# install_mod <mod> <owner/repo> <ref> <mark>: copies the repo's app/mods/<mod> at <ref> into
+# the app home. Not linked: it is not ours, and its keys are in our keys.json. .dotfiles-ref
+# records the ref, so a rerun skips the download until the ref changes. Its main.js fetches
+# its own binary. Best effort: without git or the network it says so and skips.
+# A subshell, so the trap cleans up when it returns.
+install_mod() (
+    local name=$1 repo=$2 ref=$3 mark=$4 dst marker tmp
+    dst="$app_home/mods/$name"
+    marker="$dst/.dotfiles-ref"
+    if [[ -L "$dst" ]]; then
+        printf 'herdr-app: %s is a link, not our copy of %s; leaving it\n' "$dst" "$repo" >&2
+        return 0
+    fi
+    if [[ -f "$marker" && "$(cat "$marker")" == "$ref" ]]; then
+        return 0
+    fi
+    # A mod by that name we did not copy: the project's own (its main.js has <mark>) is updated
+    # in place, as its install notes say; another mod by that name is left alone.
+    if [[ -e "$dst" && ! -f "$marker" ]] && ! grep -qs "$mark" "$dst/main.js"; then
+        printf 'herdr-app: %s is another mod named %s; leaving it, not installing %s\n' "$dst" "$name" "$repo" >&2
+        return 0
+    fi
+    if ! command -v git >/dev/null 2>&1; then
+        printf "herdr-app: no git; skipping %s's app mod\n" "$repo" >&2
+        return 0
+    fi
+    tmp=$(mktemp -d) || return 0
+    trap 'rm -rf "$tmp"' EXIT
+    if ! GIT_TERMINAL_PROMPT=0 git -c advice.detachedHead=false clone -q --depth 1 --branch "$ref" \
+        "https://github.com/$repo" "$tmp/src" 2>/dev/null ||
+        [[ ! -f "$tmp/src/app/mods/$name/main.js" ]]; then
+        printf 'herdr-app: could not get %s %s; skipping its app mod (rerun to retry)\n' "$repo" "$ref" >&2
+        return 0
+    fi
+    rm -rf "$dst"
+    mkdir -p "$dst"
+    if ! cp -R "$tmp/src/app/mods/$name/." "$dst/"; then
+        printf "herdr-app: could not copy %s's app mod; skipping it (rerun to retry)\n" "$repo" >&2
+        return 0
+    fi
+    printf '%s\n' "$ref" >"$marker"
+    printf 'herdr-app: %s app mod %s installed\n' "$repo" "$ref"
+)
+
 link keys.json keys.json
 link layouts/tasks.json layouts/tasks.json
 link themes/tokyo-night-moon.json themes/tokyo-night-moon.json
-link mods/task-status mods/task-status
-link mods/task-links mods/task-links
-link mods/task-start mods/task-start
-link mods/task-projects mods/task-projects
-link mods/task-prs mods/task-prs
+for mod in "$root"/mods/*/; do
+    mod=$(basename "$mod")
+    link "mods/$mod" "mods/$mod"
+done
+for spec in "${EXTERNAL_MODS[@]}"; do
+    # shellcheck disable=SC2086 # the spec is four words
+    install_mod $spec || echo "herdr-app: the ${spec%% *} app mod was not installed" >&2
+done
 
 echo "Herdr app configuration installed. Pick the Tasks layout in Settings, or: herdr-app do layout.switch --name tasks"

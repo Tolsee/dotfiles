@@ -55,8 +55,8 @@ case "$1 $2" in
             echo "$FAKE_PANES"
         fi ;;
     "worktree list") echo '{"result":{"worktrees":[]}}' ;;
-    "worktree create")
-        echo "{\"result\":{\"workspace\":{\"workspace_id\":\"w8\"},\"worktree\":{\"path\":\"$FAKE_WT\"},\"root_pane\":{\"pane_id\":\"w8:p1\"}}}" ;;
+    "worktree create" | "worktree open")
+        echo "{\"result\":{\"workspace\":{\"workspace_id\":\"w8\"},\"worktree\":{\"path\":\"$FAKE_WT\"},\"root_pane\":{\"pane_id\":\"w8:p1\"},\"already_open\":${FAKE_ALREADY_OPEN:-false}}}" ;;
     "agent list")
         if [[ -n "${FAKE_AGENTS:-}" ]]; then echo "$FAKE_AGENTS"; else echo '{"result":{"agents":[]}}'; fi ;;
     "pane split")
@@ -103,6 +103,11 @@ HERDR_TASK_SOURCE_ONLY=1 source "$task"
 set +e
 parse_ticket "https://linear.app/acme/issue/ABC-12/fix-login?x=1"
 check "linear link" "ABC-12 abc-12-fix-login" "$ticket_id $branch"
+check "cut_text counts characters, not bytes" "Fix é" "$(LC_ALL=C cut_text 5 "Fix éclair")"
+parse_ticket "fix flaky test"
+check "parse_ticket: free text is a task" "task fix-flaky-test" "$ref_kind $branch"
+parse_ticket feat/x
+check "parse_ticket: a branch name is a branch" "branch" "$ref_kind"
 
 touch "$tmp/my file.ts"
 parse_file_url "file://$tmp/my%20file.ts#L12"
@@ -177,7 +182,7 @@ out=$(bash "$task" open-file "file:///nope/missing.ts" 2>&1)
 check "open-file on a missing file" 1 "$(grep -c 'no such file' <<<"$out")"
 
 # --- status line ---
-printf '#!/bin/sh\necho %s\n' "'{\"number\":7,\"state\":\"OPEN\",\"isDraft\":true,\"reviewDecision\":\"APPROVED\",\"statusCheckRollup\":[{\"conclusion\":\"FAILURE\"}]}'" > "$tmp/home/gh"
+printf '#!/bin/sh\necho %s\n' "'{\"number\":7,\"url\":\"https://github.com/o/r/pull/7\",\"state\":\"OPEN\",\"isDraft\":true,\"reviewDecision\":\"APPROVED\",\"statusCheckRollup\":[{\"conclusion\":\"FAILURE\"}]}'" > "$tmp/home/gh"
 mkdir -p "$HOME/bin" && mv "$tmp/home/gh" "$HOME/bin/gh" && chmod +x "$HOME/bin/gh"
 expected="$(printf '\357\220\241') 1 blocked · $(printf '\357\223\235') #7 · $(printf '\357\222\236') approved · $(printf '\357\221\247') CI"
 check "status line (octicons)" "$expected" "$(bash "$root/bin/herdr-status")"
@@ -189,6 +194,7 @@ echo '{"number":7,"url":"https://github.com/o/r/pull/7","title":"Fix login","sta
 EOF
 chmod +x "$tmp/bin/gh"
 git -C "$tmp/repo" remote set-url origin git@github.com:o/r.git
+rm -rf "${XDG_CACHE_HOME:-$HOME/.cache}/herdr-task/prs" # the status line above cached its PR
 : > "$tmp/opened"
 FAKE_FZF_PICK="failing: build" HERDR_TASK_OPEN="$tmp/bin/record-open" bash "$task" open w1:p1 >/dev/null 2>&1
 check "open: failing check opens its own page" "https://ci.example/build/1" "$(cat "$tmp/opened")"
@@ -244,6 +250,19 @@ check "links: the next read is the cached PR, without gh" "#7|0" \
 check "pr: younger than --max-age, from the cache" "7|0" \
     "$(bash "$task" pr --cwd "$lr" --max-age 60 | jq -r .number)|$(grep -c . "$FAKE_GH_LOG")"
 check "pr: --max-age 0 asks gh" "7|1" "$(bash "$task" pr --cwd "$lr" --max-age 0 | jq -r .number)|$(grep -c . "$FAKE_GH_LOG")"
+# --stale-ok: a stale answer at once, gh in the background (the Claude status line).
+touch -t 202001010000 "$(pr_cache_file "$(git -C "$lr" rev-parse --show-toplevel)" abc-1-fix)"
+sed 's/"number":7/"number":8/' "$FAKE_GH_OUT" > "$FAKE_GH_OUT.8" && mv "$FAKE_GH_OUT" "$FAKE_GH_OUT.7" && mv "$FAKE_GH_OUT.8" "$FAKE_GH_OUT"
+: > "$FAKE_GH_LOG"
+check "pr: --stale-ok answers from a stale cache at once" "7" "$(bash "$task" pr --cwd "$lr" --max-age 60 --stale-ok | jq -r .number)"
+for _ in $(seq 1 30); do
+    [[ "$(bash "$task" pr --cwd "$lr" --max-age -1 | jq -r .number)" == 8 ]] && break
+    sleep 0.2
+done
+check "pr: ...and refreshes it in the background, once" "8|1" "$(bash "$task" pr --cwd "$lr" --max-age -1 | jq -r .number)|$(grep -c . "$FAKE_GH_LOG")"
+mv "$FAKE_GH_OUT.7" "$FAKE_GH_OUT"
+sleep 0.3
+bash "$task" pr --cwd "$lr" --max-age 0 >/dev/null
 printf '#!/bin/sh\necho "HTTP 502" >&2\nexit 1\n' > "$tmp/bin/gh"
 check "pr: a failed gh keeps the cached PR" "7" "$(bash "$task" pr --cwd "$lr" --max-age 0 | jq -r .number)"
 printf '#!/bin/sh\necho "no pull requests found for branch" >&2\nexit 1\n' > "$tmp/bin/gh"
@@ -269,8 +288,10 @@ export FAKE_PANES='{"result":{"panes":[
   {"pane_id":"w4:p1","cwd":"'"$tmp/wt4"'"}]}}'
 export FAKE_AGENTS='{"result":{"agents":[{"pane_id":"w1:p1","name":"abc-2-w1"},{"pane_id":"w1:p2","name":"rv-codex-1"}]}}'
 : > "$FAKE_LOG"
+mkdir -p "$XDG_CACHE_HOME/herdr-task/reviews" && echo w1:p3 > "$XDG_CACHE_HOME/herdr-task/reviews/w1"
 bash "$task" retag --startup 2>&1
 check "retag exit" 0 $?
+check "retag --startup forgets reviewer splits" "" "$(ls "$XDG_CACHE_HOME/herdr-task/reviews")"
 log=$(cat "$FAKE_LOG")
 glyph=$(printf '\356\206\260')
 check "retag: saved ticket back on the workspace" 1 "$(grep -cF "workspace report-metadata w1 --source herdr-task --token repo=repo --token linear=$glyph  ABC-2 --token linear_id=ABC-2 --token linear_url=https://linear.app/acme/issue/ABC-2/login --token linear_title=Fix login" <<<"$log")"
@@ -305,7 +326,7 @@ check "plugin: Linear click goes to open-ticket" "herdr-task open-ticket https:/
 git -C "$tmp/repo" worktree add -q -b abc-5-new-thing "$tmp/wt5" main 2>/dev/null
 : > "$FAKE_LOG"
 FAKE_WT="$tmp/wt5" HERDR_SOCKET_PATH=x bash "$task" start https://linear.app/acme/issue/ABC-5/new-thing \
-    --project "$tmp/repo" --title "New thing" --no-agent >/dev/null 2>&1
+    --project "$tmp/repo" --title "New thing" -a none >/dev/null 2>&1
 check "start saves the ticket on the branch" "ABC-5|https://linear.app/acme/issue/ABC-5/new-thing|New thing" \
     "$(git -C "$tmp/repo" config branch.abc-5-new-thing.linear-id)|$(git -C "$tmp/repo" config branch.abc-5-new-thing.linear-url)|$(git -C "$tmp/repo" config branch.abc-5-new-thing.linear-title)"
 git -C "$tmp/repo" worktree add -q -b late-idea "$tmp/wt6" main 2>/dev/null
@@ -313,6 +334,36 @@ git -C "$tmp/repo" worktree add -q -b late-idea "$tmp/wt6" main 2>/dev/null
 check "tag renames the unpushed branch and saves the ticket there" \
     "abc-6|ABC-6|https://linear.app/acme/issue/ABC-6|Late idea" \
     "$(git -C "$tmp/wt6" branch --show-current)|$(git -C "$tmp/repo" config branch.abc-6.linear-id)|$(git -C "$tmp/repo" config branch.abc-6.linear-url)|$(git -C "$tmp/repo" config branch.abc-6.linear-title)"
+
+# --- start: where a new branch starts; an open workspace gets no second agent ---
+: > "$FAKE_LOG"
+FAKE_WT="$tmp/wt5" HERDR_SOCKET_PATH=x bash "$task" start brand-new --project "$tmp/repo" -a none >/dev/null 2>&1
+check "start: a new branch starts from origin's default branch" 1 "$(grep -c -- '^worktree create .*--branch brand-new --base origin/main ' "$FAKE_LOG")"
+git -C "$tmp/repo" push -q origin abc-1-fix:pub-only 2>/dev/null
+: > "$FAKE_LOG"
+FAKE_WT="$tmp/wt5" HERDR_SOCKET_PATH=x bash "$task" start pub-only --project "$tmp/repo" -a none >/dev/null 2>&1
+check "start: a published branch starts from origin's copy" 1 "$(grep -c -- '--branch pub-only --base origin/pub-only ' "$FAKE_LOG")"
+: > "$FAKE_LOG"
+FAKE_WT="$tmp/wt5" HERDR_SOCKET_PATH=x bash "$task" start abc-1-fix --project "$tmp/repo" -a none >/dev/null 2>&1
+check "start: a local branch is checked out as it is" 0 "$(grep -c -- '--base' "$FAKE_LOG")"
+: > "$FAKE_LOG"
+FAKE_WT="$tmp/wt5" HERDR_SOCKET_PATH=x bash "$task" start "2fa login bug" --project "$tmp/repo" --title "2fa login bug" >/dev/null 2>&1
+check "start: agent names start with a letter" 1 "$(grep -c '^agent start t2fa-login-bug-8 --kind claude --pane w8:p1' "$FAKE_LOG")"
+: > "$FAKE_LOG"
+FAKE_ALREADY_OPEN=true FAKE_WT="$tmp/wt5" HERDR_SOCKET_PATH=x bash "$task" start brand-new --project "$tmp/repo" >/dev/null 2>&1
+check "start: an already open workspace gets no second agent" "1|0" \
+    "$(grep -c '^worktree create' "$FAKE_LOG")|$(grep -c '^agent ' "$FAKE_LOG")"
+
+# --- the Claude SessionStart hook labels the pane, ticket or not ---
+claude_glyph=$(printf '\356\262\202')
+: > "$FAKE_LOG"
+HERDR_ENV=1 HERDR_WORKSPACE_ID='' sh "$root/ai/claude/hooks/herdr-task-pane.sh" </dev/null
+check "claude hook: the glyph outside a task" "pane report-metadata w1:p1 --source herdr-task --display-agent $claude_glyph claude" "$(cat "$FAKE_LOG")"
+: > "$FAKE_LOG"
+HERDR_ENV=1 HERDR_WORKSPACE_ID=w1 sh "$root/ai/claude/hooks/herdr-task-pane.sh" </dev/null
+check "claude hook: the workspace's ticket tokens too" \
+    "pane report-metadata w1:p1 --source herdr-task --display-agent $claude_glyph claude --token linear_id=ABC-1 --token linear_url=https://linear.app/x/issue/ABC-1/fix" \
+    "$(grep '^pane' "$FAKE_LOG")"
 
 # --- open-ticket: Ctrl-click on a Linear link ---
 : > "$FAKE_LOG"; : > "$tmp/opened"
@@ -360,6 +411,36 @@ check "prepare: a branch only on origin keeps its commits" "$(git -C "$ptmp/repo
     "$(git -C "$ptmp/appwt/repo/remote-only" rev-parse HEAD 2>/dev/null)"
 check "projects: from the worktree, its repo first" "$ptmp/repo" \
     "$("${app_env[@]}" bash "$task" projects --cwd "$ptmp/appwt/repo/abc-7-fix-login" | jq -r '.projects[0]')"
+
+# prepare --branch: a PR's head as it is, even one an older prepare took for team PR.
+git -C "$ptmp/repo" branch pr-5 main
+printf 'PR\t%s\n' "$ptmp/repo" >> "$tmp/appcache/herdr-task/team-repos"
+out=$("${app_env[@]}" bash "$task" prepare --branch pr-5 --project "$ptmp/repo" --agent none 2>/dev/null)
+check "prepare --branch: the branch as it is, no ticket" "pr-5||pr-5" "$(jq -r '"\(.branch)|\(.ticket_id)|\(.label)"' <<<"$out")"
+check "prepare --branch: no ticket saved on it" "" "$(git -C "$ptmp/repo" config --get branch.pr-5.linear-id)"
+check "links: pr-<n> is never a guessed ticket" "null" \
+    "$("${app_env[@]}" bash "$task" links --cwd "$ptmp/appwt/repo/pr-5" --no-status | jq -r .ticket)"
+
+# --- prune: a branch only created is not done; one merged at its tip is ---
+git -C "$tmp/repo" worktree add -q -b fresh-task "$tmp/wt7" origin/main 2>/dev/null
+repo_root=$tmp/repo default_branch=main merged_heads="" open_heads=""
+prune_verdict "$tmp/wt7" fresh-task false
+check "prune: a branch never committed to is kept" "keep: no commits yet" "$verdict"
+merged_heads="fresh-task	$(git -C "$tmp/repo" rev-parse fresh-task)"
+prune_verdict "$tmp/wt7" fresh-task false
+check "prune: a PR merged at its tip removes it" "remove: merged into main" "$verdict"
+
+# --- tidy_caches: old PR answers and leftovers go, fresh ones stay ---
+mkdir -p "$pr_cache_dir" "$review_state_dir"
+touch "$pr_cache_dir/fresh.json"
+touch -t 202001010000 "$pr_cache_dir/old.json" "$pr_cache_dir/x.json.1.err" "$review_state_dir/w9"
+seq 1 1200 > "$XDG_CACHE_HOME/herdr-task/detach.log"
+tidy_caches
+left=""
+for f in old.json fresh.json x.json.1.err; do [[ -e "$pr_cache_dir/$f" ]] && left+="$f "; done
+check "tidy_caches: keeps fresh, drops old" "fresh.json " "$left"
+check "tidy_caches: reviewer records and the detach log" "|500" \
+    "$(ls "$review_state_dir")|$(wc -l < "$XDG_CACHE_HOME/herdr-task/detach.log" | tr -d ' ')"
 
 printf '\n%d failure(s)\n' "$failures"
 [[ $failures -eq 0 ]]

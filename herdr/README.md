@@ -16,6 +16,7 @@ One task, one worktree workspace, one agent. `prefix` is Ctrl+B.
 | --- | --- |
 | `prefix+t` | Start a task: Linear link or id, branch, or free text (prefilled from the clipboard) |
 | `prefix+m` | GitHub PRs ([herdr-github](https://github.com/mrolafsson/herdr-github)): mine, waiting for my review, this repo's; checks, reviews and threads; merge, draft/ready, or a worktree for one |
+| `prefix+i` | Recap ([herdr-recap](https://github.com/mrolafsson/herdr-recap)): every agent, the ones waiting on you first, with what each got to and the question it's stuck on; reply from the list, or Enter to go to it |
 | `prefix+y` | Review the focused task's branch: Codex (`codex-review`) and a no-edit Claude reviewer in splits |
 | `prefix+u` | Ship: prompt the task's agent to review, push, open the PR and babysit it; with no agent, push and open a draft PR |
 | `prefix+o` | Links for the focused task: ticket, PR, changed files, checks, each failing check, the branch (compare view before a PR); Enter opens, ctrl-y copies |
@@ -136,7 +137,8 @@ Marketplace plugins, installed (pinned) by the installer:
 | Plugin | Does |
 | --- | --- |
 | [testy-cool/herdr-sidebar-config](https://github.com/testy-cool/herdr-sidebar-config) | Agent logos, state spinners, workspace > tab > agent tree |
-| [mrolafsson/herdr-github](https://github.com/mrolafsson/herdr-github) `v0.8.5` | `prefix+m` PR popup, `$prs` badge on agent rows; uses `gh`'s sign-in |
+| [mrolafsson/herdr-github](https://github.com/mrolafsson/herdr-github) `v0.11.0` | `prefix+m` PR popup, `$prs` badge on agent rows; uses `gh`'s sign-in. Its app mod is installed at the same ref |
+| [mrolafsson/herdr-recap](https://github.com/mrolafsson/herdr-recap) `v0.12.11` | `prefix+i` recap popup. A recap is written once an agent has sat done or blocked, unlooked at, for 3 minutes: one short request on that agent's own Claude/Codex conversation, so it costs tokens (a few cents). Its app mod is installed at the same ref |
 
 Plugin output: `herdr plugin log list --plugin <id>`. Tests for `herdr-task` and
 `herdr-status` (fake herdr, no server): `bash herdr/tests/herdr-task.test.sh`.
@@ -162,14 +164,18 @@ and the TUI keeps working as before. Pick the **Tasks** layout (Settings, or
 `ctrl-b z` zoom, `ctrl-b w` picker, `ctrl-b a` next agent, `ctrl-b ( )` spaces, and the rest.
 `ctrl-b ctrl-b` sends Ctrl+B to the program. Press the second key within a second (the app's
 limit for key sequences). `herdr-app/check-keys` (in `./test config`) fails when the two keymaps
-drift apart. The keys that run herdr-task or herdr-github (`t`, `f`, `o`, `m`, `y`, `u`,
-`alt+t`) stay TUI-only until herdr-task learns the app, and so do a few with no app
-equivalent; its `TUI_ONLY` list says which and why.
+drift apart. The task keys work in both: `ctrl-b t` start, `f` projects, `o` links (the same
+`herdr-task links` as the TUI), `m` herdr-github's app mod, `i` herdr-recap's app mod, plus
+`ctrl-b shift-m` (app only) for a PR's worktree with the ticket remembered. Review, ship and
+prune (`y`, `u`, `alt+t`) stay TUI-only until herdr-task learns the app, and so do a few with no
+app equivalent; its `TUI_ONLY` list says which and why. The app mods of herdr-github and
+herdr-recap are copied at the refs pinned in `herdr-app/install` (`EXTERNAL_MODS`), not linked;
+only their popup-scoped keys are taken, never their Cmd shortcuts.
 
 Agents in the app run in herdr-core. Claude Code and Codex report working, blocked and done to
 it themselves (OSC 7501), so no hooks are needed. `herdr-app check ~/.config/herdr-app/mods/task-status`
-checks the mod on the Mac. `node --test herdr-app/tests/task-status.test.mjs` runs its logic
-here against stand-in app modules.
+checks the mod on the Mac. `node --test herdr-app/tests/*.test.mjs` runs the mods' logic, the
+installer and check-keys here against stand-ins.
 
 ## Versions
 

@@ -3,8 +3,9 @@
 
 Fails when:
   - a TUI prefix key has no `ctrl-b <key>` in keys.json and is not in TUI_ONLY below
-  - a `ctrl-b` key in keys.json is neither a TUI key nor one of Herdr's TUI defaults
-  - an action names an app command, a mod or a send that does not exist
+  - a `ctrl-b` key in keys.json is neither a TUI key, one of Herdr's TUI defaults nor in APP_ONLY
+  - an action names an app command, a mod or a send that does not exist, or a `<mod>.<command>`
+    of one of our mods whose main.js never names that command
 Run by ./test config.
 """
 import json
@@ -29,6 +30,10 @@ TUI_ONLY = {
     "e": "no scrollback-in-editor command in the app",
     "alt-1..9": "the app exposes no sidebar agent order to mods; prefix+a / shift+a step through agents",
 }
+# App prefix keys the TUI has no counterpart for, and why.
+APP_ONLY = {
+    "shift-m": "task-prs: herdr-github has prefix+m in both UIs",
+}
 # Herdr TUI defaults the user did not rebind, mirrored in the app too.
 TUI_DEFAULTS = {"shift-n", "shift-w", "n", "p", "b", "shift-h", "shift-j", "shift-k", "shift-l", "ctrl-b"}
 # App commands (herdr-app commands); mods are folders in herdr-app/mods or shipped ones.
@@ -45,6 +50,18 @@ app.show_all window.close window.minimize window.maximize
 """.split())
 SHIPPED_MODS = {"picker", "worktree", "files", "changes"}
 OUR_MODS = {p.name for p in (root / "herdr-app/mods").iterdir() if p.is_dir()}
+# Mods installed from elsewhere (herdr-app/install), and the commands their keys may send.
+EXTERNAL_MODS = {
+    "github": {"escape"},  # herdr-github's app mod (its app/keys.json)
+    "recap": {"reply", "rename", "ignore", "escape"},  # herdr-recap's; its ctrl-t needs herdr-teleport
+}
+
+
+def handles(mod, command):
+    """Whether our mod's main.js names `command` as a string, as its nextCommand() loop must."""
+    main = root / "herdr-app/mods" / mod / "main.js"
+    text = main.read_text() if main.is_file() else ""
+    return re.search(r"""(["'`])""" + re.escape(command) + r"\1", text) is not None
 
 
 def tui_keys():
@@ -81,11 +98,15 @@ for section, bindings in gui.items():
             continue
         base = name.split(":", 1)[0]
         if base in COMMANDS:
-            if base == "mod.open" and ":" in name and name.split(":", 1)[1] not in SHIPPED_MODS | OUR_MODS:
+            if base == "mod.open" and ":" in name and name.split(":", 1)[1] not in SHIPPED_MODS | OUR_MODS | set(EXTERNAL_MODS):
                 errors.append(f"{section} {keys}: mod.open of an unknown mod {name}")
             continue
-        mod = base.split(".", 1)[0]
-        if "." in base and mod in OUR_MODS:
+        mod, _, command = base.partition(".")
+        if command and mod in OUR_MODS:
+            if not handles(mod, command):
+                errors.append(f"{section} {keys}: herdr-app/mods/{mod}/main.js has no command {command!r}")
+            continue
+        if command in EXTERNAL_MODS.get(mod, ()):
             continue
         errors.append(f"{section} {keys}: unknown action {name!r}")
 
@@ -96,7 +117,7 @@ for key in sorted(tui_keys()):
         if k not in gui_prefix:
             errors.append(f"TUI prefix+{k} has no ctrl-b {k} in herdr-app/keys.json (add it, or to TUI_ONLY with why)")
 
-known = {k for key in tui_keys() for k in expand(key)} | TUI_DEFAULTS
+known = {k for key in tui_keys() for k in expand(key)} | TUI_DEFAULTS | set(APP_ONLY)
 for key in sorted(gui_prefix):
     if key not in known:
         errors.append(f"herdr-app/keys.json ctrl-b {key} is not a TUI key")

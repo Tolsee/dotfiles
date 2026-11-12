@@ -4,6 +4,8 @@
 # review and CI state, e.g.  (alert) 2 blocked · (draft PR) #123 · (diff) changes · (x) CI
 # Herdr runs it on the server with the active pane's context, keeps only the last line and
 # strips escape sequences, so no colour and no clickable links: prefix+o opens the PR.
+# The PR and its CI come from `herdr-task links` (the cache and rules prefix+o and the Herdr
+# app use), asking gh at most every 20 s, this bar's pace.
 # Every lookup degrades to printing less, never an error.
 
 set -uo pipefail
@@ -40,26 +42,18 @@ cwd=""
 [[ -n "$pane" ]] && cwd=$("$herdr_bin" pane get "$pane" 2>/dev/null | jq -r '.result.pane.foreground_cwd // .result.pane.cwd // empty' 2>/dev/null)
 cwd=${cwd:-$PWD}
 
-repo=$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null)
-branch=""
-[[ -n "$repo" ]] && branch=$(git -C "$repo" symbolic-ref --short -q HEAD 2>/dev/null)
-base=""
-[[ -n "$repo" ]] && base=$(git -C "$repo" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##')
-
-if [[ -n "$branch" && "$branch" != "${base:-main}" ]] && command -v gh >/dev/null 2>&1; then
-    pr=$(cd "$repo" && gh pr view "$branch" --json number,state,isDraft,reviewDecision,statusCheckRollup 2>/dev/null)
-    if [[ -z "$pr" ]]; then
-        parts+=("$i_pr no PR")
-    else
-        parts+=("$(jq -r \
-            --arg pr "$i_pr" --arg draft "$i_draft" --arg merged "$i_merged" --arg closed "$i_closed" \
-            --arg approved "$i_approved" --arg changes "$i_changes" --arg review "$i_review" \
-            --arg ok "$i_ok" --arg fail "$i_fail" --arg pending "$i_pending" '
-            def check_state:
-                if (.conclusion // "") != "" then .conclusion
-                elif (.state // "") != "" then .state
-                else (.status // "") end | ascii_upcase;
-            [.statusCheckRollup[]? | check_state] as $s
+task="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/herdr-task"
+facts=""
+[[ -x "$task" ]] && facts=$("$task" links --cwd "$cwd" --no-status --max-age 20 2>/dev/null)
+if [[ -n "$facts" ]] && jq -e '.branch' >/dev/null 2>&1 <<<"$facts"; then
+    parts+=("$(jq -r \
+        --arg pr "$i_pr" --arg draft "$i_draft" --arg merged "$i_merged" --arg closed "$i_closed" \
+        --arg approved "$i_approved" --arg changes "$i_changes" --arg review "$i_review" \
+        --arg ok "$i_ok" --arg fail "$i_fail" --arg pending "$i_pending" '
+        if .pr == null then "\($pr) no PR"
+        else
+            ([.links[] | select(.kind == "checks") | .ci][0] // null) as $ci
+            | .pr
             | [
                 (if .state == "MERGED" then $merged elif .state == "CLOSED" then $closed
                  elif .isDraft then $draft else $pr end) + " #\(.number)",
@@ -68,12 +62,10 @@ if [[ -n "$branch" && "$branch" != "${base:-main}" ]] && command -v gh >/dev/nul
                     ({"APPROVED": "\($approved) approved", "CHANGES_REQUESTED": "\($changes) changes",
                       "REVIEW_REQUIRED": "\($review) review"}[.reviewDecision // ""] // empty)
                  end),
-                (if .state != "OPEN" or ($s | length) == 0 then empty
-                 elif any($s[]; IN("FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE")) then "\($fail) CI"
-                 elif any($s[]; IN("SUCCESS", "NEUTRAL", "SKIPPED") | not) then "\($pending) CI"
-                 else "\($ok) CI" end)
-              ] | join(" · ")' <<<"$pr" 2>/dev/null)")
-    fi
+                (if .state != "OPEN" or $ci == null then empty
+                 else {"fail": "\($fail) CI", "pending": "\($pending) CI", "pass": "\($ok) CI"}[$ci] end)
+              ] | join(" · ")
+        end' <<<"$facts" 2>/dev/null)")
 fi
 
 [[ ${#parts[@]} -gt 0 ]] || exit 0
