@@ -38,11 +38,107 @@ unset CODEX_COMPANION_APP_SERVER_ENDPOINT
 export CODEX_HOME="$review_home"
 export CLAUDE_PLUGIN_DATA="$review_home/companion"
 
+# Run node through its unresolved PATH entry (/opt/homebrew/bin/node, an nvm
+# shim dir, ...), never the versioned Cellar path, and make the plugin's
+# spawn(process.execPath) use it too, so a `brew upgrade node` mid-run cannot
+# strand the broker spawn. NODE_OPTIONS carries the preload into the broker.
+node_bin="$(command -v node || true)"
+if [ -z "$node_bin" ]; then
+  echo "codex-review: node not found on PATH" >&2
+  exit 1
+fi
+script_dir="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+export CODEX_REVIEW_NODE="$node_bin"
+export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--import=\"$script_dir/stable-execpath.mjs\""
+
+broker_pids() {
+  pgrep -f 'app-server-broker\.mjs serve' 2>/dev/null || true
+}
+
+# A broker belongs to this wrapper when it carries our CLAUDE_PLUGIN_DATA.
+is_our_broker() {
+  case "$(ps eww -o command= -p "$1" 2>/dev/null || true) " in
+    *" CLAUDE_PLUGIN_DATA=$CLAUDE_PLUGIN_DATA "*) return 0 ;;
+  esac
+  return 1
+}
+
+# A companion run whose cwd is the broker's workspace may still be using it.
+broker_in_use() {
+  local broker_cwd="$1" pid cwd
+  for pid in $(pgrep -f 'codex-companion\.mjs' 2>/dev/null || true); do
+    cwd="$(lsof -a -d cwd -Fn -p "$pid" 2>/dev/null | sed -n 's/^n//p')"
+    case "$cwd" in
+      "$broker_cwd" | "$broker_cwd"/*) return 0 ;;
+    esac
+  done
+  return 1
+}
+
+# The broker's SIGTERM handler can hang in its async shutdown, so escalate to
+# SIGKILL on the whole process group (the broker and its `codex app-server`).
+kill_broker() {
+  local pid="$1"
+  kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || return 0
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    kill -0 "$pid" 2>/dev/null || return 0
+    sleep 0.2
+  done
+  kill -KILL -- "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true
+}
+
+# Reap our brokers that can never serve again, when no companion run is using
+# them: the socket is gone (teardown removed it but the process survived), or
+# the node binary it runs from was deleted by an upgrade. The in-use check
+# also spares a broker still starting, which has no socket until it connects
+# to its app server.
+reap_stale_brokers() {
+  local pid args exe sock broker_cwd reason state live_pid session_dir
+  for pid in $(broker_pids); do
+    is_our_broker "$pid" || continue
+    args="$(ps -o command= -p "$pid" 2>/dev/null)" || continue
+    exe="${args%% *}"
+    sock="$(sed -n 's/.*--endpoint unix:\([^ ]*\).*/\1/p' <<<"$args")"
+    broker_cwd="$(sed -n 's/.*--cwd \(.*\) --pid-file .*/\1/p' <<<"$args")"
+    if [ -n "$sock" ] && [ ! -S "$sock" ]; then
+      reason="socket gone"
+    elif [ ! -x "$exe" ]; then
+      reason="node binary $exe no longer exists"
+    else
+      continue
+    fi
+    broker_in_use "$broker_cwd" && continue
+    echo "codex-review: reaping broker $pid ($reason)" >&2
+    kill_broker "$pid"
+    if [ -n "$sock" ]; then rm -rf "$(dirname "$sock")"; fi
+  done
+
+  # Drop broker.json files whose pid is no longer one of our brokers (a reused
+  # pid is left alone), with their session dirs. Never signal from here.
+  for state in "$CLAUDE_PLUGIN_DATA"/state/*/broker.json; do
+    [ -f "$state" ] || continue
+    live_pid="$(sed -n 's/.*"pid": *\([0-9][0-9]*\).*/\1/p' "$state")"
+    if [ -n "$live_pid" ]; then
+      case "$(ps -o command= -p "$live_pid" 2>/dev/null || true)" in
+        *app-server-broker.mjs\ serve*) is_our_broker "$live_pid" && continue ;;
+      esac
+    fi
+    session_dir="$(sed -n 's/.*"sessionDir": *"\([^"]*\)".*/\1/p' "$state")"
+    case "$session_dir" in */cxc-*) rm -rf "$session_dir" ;; esac
+    rm -f "$state"
+  done
+}
+
+reap_stale_brokers
+
 # The review leaves its broker running, and the plugin's own SessionEnd hook
-# only cleans the main plugin data dir, so run that teardown for ours.
+# only cleans the main plugin data dir, so run that teardown for ours. The hook
+# deletes the broker's socket even when the broker ignores SIGTERM, so reap
+# whatever survives it, or it lingers holding the review home's sqlite files.
 teardown() {
   printf '{"cwd":"%s","hook_event_name":"SessionEnd"}' "$PWD" |
-    node "$plugin_root/scripts/session-lifecycle-hook.mjs" SessionEnd >/dev/null 2>&1 || true
+    "$node_bin" "$plugin_root/scripts/session-lifecycle-hook.mjs" SessionEnd >/dev/null 2>&1 || true
+  reap_stale_brokers
 }
 trap teardown EXIT
-node "$plugin_root/scripts/codex-companion.mjs" review "$@"
+"$node_bin" "$plugin_root/scripts/codex-companion.mjs" review "$@"

@@ -33,6 +33,10 @@ The `claude-code` and `codex` targets also set up `~/.codex-review`: a Codex
 home with a cheaper config (medium effort, standard tier) that shares the main
 login. Agents run local reviews with `~/.codex-review/codex-review`, which wraps
 the Codex Claude Code plugin's native review; interactive Codex is unchanged.
+The wrapper runs node through its PATH symlink rather than the versioned
+Homebrew Cellar path (`stable-execpath.mjs`), so `brew upgrade node` mid-review
+cannot strand the broker spawn, and it reaps review brokers left orphaned or
+running on a deleted node binary.
 
 Pi is an opt-in coding trial: run `./ai/pi/install`. It reuses the shared skills
 and adds `/codex-review` for native Codex reviews. See [pi/README.md](pi/README.md).
