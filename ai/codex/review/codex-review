@@ -57,7 +57,10 @@ broker_pids() {
 
 # A broker belongs to this wrapper when it carries our CLAUDE_PLUGIN_DATA.
 is_our_broker() {
-  printf '%s \n' "$(ps eww -o command= -p "$1" 2>/dev/null)" | grep -qF "CLAUDE_PLUGIN_DATA=$CLAUDE_PLUGIN_DATA "
+  case "$(ps eww -o command= -p "$1" 2>/dev/null || true) " in
+    *" CLAUDE_PLUGIN_DATA=$CLAUDE_PLUGIN_DATA "*) return 0 ;;
+  esac
+  return 1
 }
 
 # A companion run whose cwd is the broker's workspace may still be using it.
@@ -84,12 +87,13 @@ kill_broker() {
   kill -KILL -- "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true
 }
 
-# Reap our brokers that can never serve again: the socket is gone (teardown
-# removed it but the process survived), or the node binary it runs from was
-# deleted by an upgrade and no companion run is using it. Then drop broker.json
-# files that point at a dead broker or socket, with their session dirs.
+# Reap our brokers that can never serve again, when no companion run is using
+# them: the socket is gone (teardown removed it but the process survived), or
+# the node binary it runs from was deleted by an upgrade. The in-use check
+# also spares a broker still starting, which has no socket until it connects
+# to its app server.
 reap_stale_brokers() {
-  local pid args exe sock broker_cwd state live_pid endpoint session_dir
+  local pid args exe sock broker_cwd reason state live_pid session_dir
   for pid in $(broker_pids); do
     is_our_broker "$pid" || continue
     args="$(ps -o command= -p "$pid" 2>/dev/null)" || continue
@@ -97,26 +101,30 @@ reap_stale_brokers() {
     sock="$(sed -n 's/.*--endpoint unix:\([^ ]*\).*/\1/p' <<<"$args")"
     broker_cwd="$(sed -n 's/.*--cwd \(.*\) --pid-file .*/\1/p' <<<"$args")"
     if [ -n "$sock" ] && [ ! -S "$sock" ]; then
-      echo "codex-review: reaping orphaned broker $pid (socket gone)" >&2
-    elif [ ! -x "$exe" ] && ! broker_in_use "$broker_cwd"; then
-      echo "codex-review: reaping broker $pid (node binary $exe no longer exists)" >&2
+      reason="socket gone"
+    elif [ ! -x "$exe" ]; then
+      reason="node binary $exe no longer exists"
     else
       continue
     fi
+    broker_in_use "$broker_cwd" && continue
+    echo "codex-review: reaping broker $pid ($reason)" >&2
     kill_broker "$pid"
     if [ -n "$sock" ]; then rm -rf "$(dirname "$sock")"; fi
   done
 
+  # Drop broker.json files whose pid is no longer one of our brokers (a reused
+  # pid is left alone), with their session dirs. Never signal from here.
   for state in "$CLAUDE_PLUGIN_DATA"/state/*/broker.json; do
     [ -f "$state" ] || continue
     live_pid="$(sed -n 's/.*"pid": *\([0-9][0-9]*\).*/\1/p' "$state")"
-    endpoint="$(sed -n 's/.*"endpoint": *"unix:\([^"]*\)".*/\1/p' "$state")"
-    session_dir="$(sed -n 's/.*"sessionDir": *"\([^"]*\)".*/\1/p' "$state")"
-    if [ -n "$live_pid" ] && kill -0 "$live_pid" 2>/dev/null && [ -S "$endpoint" ]; then
-      continue
+    if [ -n "$live_pid" ]; then
+      case "$(ps -o command= -p "$live_pid" 2>/dev/null || true)" in
+        *app-server-broker.mjs\ serve*) is_our_broker "$live_pid" && continue ;;
+      esac
     fi
-    [ -n "$live_pid" ] && kill -0 "$live_pid" 2>/dev/null && kill_broker "$live_pid"
-    [ -n "$session_dir" ] && case "$session_dir" in */cxc-*) rm -rf "$session_dir" ;; esac
+    session_dir="$(sed -n 's/.*"sessionDir": *"\([^"]*\)".*/\1/p' "$state")"
+    case "$session_dir" in */cxc-*) rm -rf "$session_dir" ;; esac
     rm -f "$state"
   done
 }
