@@ -10,6 +10,21 @@
 command -v jq >/dev/null 2>&1 || exit 0
 input=$(cat)
 
+# Only the pane's own interactive Claude claims the record: a headless `claude -p` (a helper,
+# or one run from another agent in this pane) inherits REX_BLOCK too. Walk up to the claude
+# process and read its arguments.
+pid=$PPID
+for _ in 1 2 3 4 5 6; do
+    [ -n "$pid" ] && [ "$pid" -gt 1 ] 2>/dev/null || break
+    if [ "$(ps -o comm= -p "$pid" 2>/dev/null | sed 's#.*/##')" = claude ]; then
+        case " $(ps -o args= -p "$pid" 2>/dev/null) " in
+            *" -p "*|*" --print "*|*" --print="*) exit 0 ;;
+        esac
+        break
+    fi
+    pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
+done
+
 state=${REX_CLAUDE_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/rex-claude}
 file="$state/${REX_BLOCK#block:}"
 event=$(jq -r '.hook_event_name // empty' <<<"$input")
