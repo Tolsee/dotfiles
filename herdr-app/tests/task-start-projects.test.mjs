@@ -85,17 +85,26 @@ test("start popup: previews with parse, starts with prepare in the picked projec
   };
   state.exec = async (_cmd, args) => ({ code: 0, stdout: JSON.stringify(replies[args[3]]), stderr: "" });
   const tasks = [];
-  const cx = { notify() {}, spawn(f) { tasks.push(f(cx)); }, timer: { after() {} }, read_from_clipboard: () => "ABC-1" };
+  const cx = { notify() {}, spawn(f) { tasks.push(f(cx)); }, timer: { after() {} }, read_from_clipboard: () => "ABC-1", focus_handle: () => ({ focus() {} }), stop_propagation() {} };
   const m = new start.default();
   m.init({}, cx);
   await Promise.all(tasks);
   assert.deepEqual(taskArgs(state.calls.find((c) => c[0] === "exec")), ["parse", "ABC-1", "--cwd", "/r/dotfiles"]);
   assert.equal(m.preview.ticket_id, "ABC-1");
-  m.key({ key: "down", modifiers: {} });
-  m.start(cx);
+  m.next(cx); // step 1 -> type of work, asking Jev meanwhile
   await Promise.all(tasks);
-  const prepare = state.calls.filter((c) => c[0] === "exec")[1];
-  assert.deepEqual(taskArgs(prepare), ["prepare", "ABC-1", "--project", "/r/dotfiles"]);
+  assert.deepEqual(taskArgs(state.calls.filter((c) => c[0] === "exec")[1]), ["parse", "ABC-1", "--jev", "--cwd", "/r/dotfiles"]);
+  assert.equal(m.step, "kind");
+  assert.ok(m.key({ key: "down", modifiers: {} }, cx), "down moves on the type of work");
+  assert.equal(m.kind, 1);
+  m.key({ key: "r", modifiers: {} }, cx); // r picks Review and moves on
+  assert.equal(m.step, "project");
+  assert.equal(m.key({ key: "j", modifiers: {} }, cx), false, "letters type into the search");
+  m.key({ key: "n", modifiers: { control: true } }, cx);
+  assert.ok(m.key({ key: "enter", modifiers: {} }, cx), "Enter starts whichever element has the keyboard");
+  await Promise.all(tasks);
+  const prepare = state.calls.filter((c) => c[0] === "exec")[2];
+  assert.deepEqual(taskArgs(prepare), ["prepare", "ABC-1", "--project", "/r/dotfiles", "--kind", "review"]);
   assert.equal(prepare[3]?.timeout, 300000, "prepare may fetch and make a worktree: more than exec's 30 s");
   assert.equal(runs()[0][0], "space.new");
   assert.ok(state.calls.some((c) => c[0] === "close"));
@@ -107,7 +116,7 @@ test("start popup: herdr-task's error shows, popup stays", async () => {
     ? { code: 0, stdout: JSON.stringify({ kind: "branch", branch: "b", projects: ["/r/a"] }), stderr: "" }
     : { code: 1, stdout: "", stderr: "fatal: x\nherdr-task: git worktree add failed\n" };
   const tasks = [];
-  const cx = { notify() {}, spawn(f) { tasks.push(f(cx)); }, timer: { after() {} }, read_from_clipboard: () => "ABC-2" };
+  const cx = { notify() {}, spawn(f) { tasks.push(f(cx)); }, timer: { after() {} }, read_from_clipboard: () => "ABC-2", focus_handle: () => ({ focus() {} }) };
   const m = new start.default();
   m.init({}, cx);
   await Promise.all(tasks);
@@ -171,7 +180,7 @@ test("start popup: Enter before the new text is parsed waits for its project", a
   const pending = [];
   state.exec = (_c, args) => new Promise((resolve) => pending.push({ args: args.slice(3), resolve }));
   const tasks = [];
-  const cx = { notify() {}, spawn(f) { tasks.push(f(cx)); }, timer: { after() {} }, read_from_clipboard: () => "ABC-1" };
+  const cx = { notify() {}, spawn(f) { tasks.push(f(cx)); }, timer: { after() {} }, read_from_clipboard: () => "ABC-1", focus_handle: () => ({ focus() {} }) };
   const m = new start.default();
   m.init({}, cx);
   const answer = (projects) => pending.shift().resolve({ code: 0, stdout: JSON.stringify({ kind: "ticket", branch: "x", projects }), stderr: "" });
@@ -183,5 +192,48 @@ test("start popup: Enter before the new text is parsed waits for its project", a
   assert.deepEqual(pending.map((p) => p.args[0]), ["parse"]);
   answer(["/r/web"]);
   while (!pending.length) await new Promise((r) => setImmediate(r));
-  assert.deepEqual(pending[0].args, ["prepare", "XYZ-9", "--project", "/r/web"]);
+  assert.deepEqual(pending[0].args, ["prepare", "XYZ-9", "--project", "/r/web", "--kind", "groom"]);
+});
+
+test("start: project search narrows the rows, Jev's chances keep a hand pick", () => {
+  assert.deepEqual(start.filtered(["/r/api", "/r/dotfiles", "/r/hobby/dot-tools"], "dtf"), ["/r/dotfiles"]);
+  assert.deepEqual(start.filtered(["/r/api", "/r/dotfiles"], ""), ["/r/api", "/r/dotfiles"]);
+  const cx = { notify() {}, spawn() {}, timer: { after() {} }, read_from_clipboard: () => "", focus_handle: () => ({ focus() {} }) };
+  const m = new start.default();
+  m.init({}, cx);
+  m.take({ projects: ["/r/api", "/r/dotfiles", "/r/web"] }, "x");
+  assert.equal(m.project(), "/r/api");
+  m.search.set_value("web");
+  m.pickFirst();
+  assert.equal(m.project(), "/r/web");
+  m.take({ projects: ["/r/dotfiles", "/r/api", "/r/web"], chances: { "/r/dotfiles": 0.8 } }, "x");
+  assert.equal(m.project(), "/r/web", "a searched pick survives Jev's reorder");
+});
+
+test("start popup: a Jev answer that comes first survives the plain parse; going back drops a pending Enter", async () => {
+  reset();
+  const pending = [];
+  state.exec = (_c, args) => new Promise((resolve) => pending.push({ args: args.slice(3), resolve }));
+  const tasks = [];
+  const cx = { notify() {}, spawn(f) { tasks.push(f(cx)); }, timer: { after() {} }, read_from_clipboard: () => "ABC-1", focus_handle: () => ({ focus() {} }) };
+  const m = new start.default();
+  m.init({}, cx);
+  m.next(cx); // to the type of work, Jev asked while the plain parse is still out
+  const reply = (p, chances) => p.resolve({ code: 0, stdout: JSON.stringify({ kind: "ticket", projects: chances ? ["/r/web", "/r/api"] : ["/r/api", "/r/web"], chances: chances ?? {} }), stderr: "" });
+  reply(pending[1], { "/r/web": 0.9 });
+  await tasks[1];
+  reply(pending[0]);
+  await tasks[0];
+  assert.equal(m.project(), "/r/web");
+  assert.deepEqual(m.preview.chances, { "/r/web": 0.9 });
+
+  m.input.set_value("XYZ-2");
+  m.parse(cx);
+  m.step = "project";
+  m.start(cx); // XYZ-2 not parsed yet: waits
+  assert.ok(m.waiting);
+  m.back(cx);
+  reply(pending[2]);
+  await Promise.all(tasks);
+  assert.ok(!state.calls.some((c) => c[0] === "exec" && c[2][3] === "prepare"), "no start after going back");
 });

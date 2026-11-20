@@ -57,12 +57,15 @@
 #                                         push the branch and open a draft PR directly
 #   herdr-task projects [--cwd DIR]       Herdr app (task mods), JSON, no herdr server: the
 #                                         repositories under the roots, the focused one first
-#   herdr-task parse <ref> [--cwd DIR]    what <ref> would start: kind, ticket, branch, title,
-#                                         projects with the best guess first (prefix+t preview)
-#   herdr-task prepare <ref> --project DIR [--title T] [--agent KIND] [--branch NAME]
+#   herdr-task parse <ref> [--cwd DIR] [--jev]
+#                                         what <ref> would start: kind, ticket, branch, title,
+#                                         projects with the best guess first (prefix+t preview);
+#                                         --jev puts Jev's picks first, with their chances
+#   herdr-task prepare <ref> --project DIR [--kind groom|short|review] [--title T] [--agent KIND] [--branch NAME]
 #                                         the worktree and saved ticket for <ref>; prints the
-#                                         path, space label and agent prompt for the mod;
-#                                         --branch NAME takes NAME as the branch, never a ticket
+#                                         path, space label and agent prompt (by kind, default
+#                                         groom) for the mod; --branch NAME takes NAME as the
+#                                         branch, never a ticket
 #   herdr-task open-file <url> [--pane P] open a file:// link in $EDITOR in a split beside the
 #                                         pane, at the line the link carries (#L12 or :12)
 #
@@ -356,7 +359,7 @@ cmd_start() {
             -a|--agent) agent=$2; shift 2 ;;
             --prompt) prompt=$2; shift 2 ;;
             --async-agent) agent_async=true; shift ;;
-            -*) die "unknown option: $1" ;;
+            -[a-z]|--[a-z]*) die "unknown option: $1" ;;  # option-shaped only: "- fix x" is a task
             *) [[ -z "$ref" ]] || die "unexpected argument: $1"; ref=$1; shift ;;
         esac
     done
@@ -1393,42 +1396,83 @@ cmd_projects() {
     jq -nc --argjson p "$(json_projects "$here")" '{projects: $p}'
 }
 
-# parse <ref> [--cwd DIR]: what prefix+t would start, for the popup's preview: kind (ticket,
-# branch or task), ticket id and link, branch, title (free text), and the projects with the
-# best guess first (this ticket's team's last repository, then the focused one).
+# jev_rank <ref>: reads repository paths on stdin and prints "path<TAB>probability" for the
+# ones TypeSafe's Jev thinks the task belongs in (5% or more, likeliest first). Silent without
+# TYPESAFE_API_KEY, with HERDR_TASK_JEV=0, or when Jev doesn't answer within 3 seconds.
+# The same question rex-task asks.
+jev_rank() {
+    [[ -n "${TYPESAFE_API_KEY:-}" && "${HERDR_TASK_JEV:-1}" != 0 ]] || return 0
+    command -v curl >/dev/null 2>&1 || return 0
+    local body
+    body=$(jq -R -s --arg task "${1:0:500}" '
+        split("\n") | map(select(. != "")) as $paths
+        | { model: "jev-latest",
+            state: { task: $task },
+            questions: { project: {
+                type: "choice",
+                instructions: "The task is a Linear ticket link, a branch name or a short description. Which repository is it most likely to be done in?",
+                criteria: ($paths | map({ key: ., value: "Repository \(split("/")[-1]) in \(split("/")[-2])" }) | from_entries) } } }')
+    curl -fsS -m 3 "${TYPESAFE_BASE_URL:-https://api.typesafe.ai}/v1/systemone" \
+        -H 'content-type: application/json' -H "authorization: Bearer $TYPESAFE_API_KEY" -d "$body" 2>/dev/null \
+        | jq -r '.answers.project.probabilities // {} | to_entries | map(select(.value >= 0.05))
+                 | sort_by(-.value)[] | "\(.key)\t\(.value)"' 2>/dev/null || true
+}
+
+# parse <ref> [--cwd DIR] [--jev]: what prefix+t would start, for the popup's preview: kind
+# (ticket, branch or task), ticket id and link, branch, title (free text), and the projects with
+# the best guess first (this ticket's team's last repository, then the focused one). --jev asks
+# Jev too (up to 3 s): its picks go first and chances maps each to its probability.
 cmd_parse() {
-    local ref=${1:?ticket link, id, branch or task} cwd="" kind title="" team="" here=""
+    local ref="" cwd="" jev="" kind title="" team="" here="" projects chances="{}" ranked
     local ticket_id ticket_url ticket_slug branch ref_kind
-    [[ "${2:-}" == --cwd ]] && cwd=${3:-}
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --cwd) cwd=${2:-}; shift 2 ;;
+            --jev) jev=1; shift ;;
+            -[a-z]|--[a-z]*) die "unknown option: $1" ;;  # option-shaped only: "- fix x" is a task
+            *) [[ -z "$ref" ]] || die "unexpected argument: $1"; ref=$1; shift ;;
+        esac
+    done
+    [[ -n "$ref" ]] || die "usage: herdr-task parse <ticket | branch | task> [--cwd DIR] [--jev]"
     parse_ticket "$ref"
     kind=$ref_kind
     [[ "$kind" == ticket ]] && team=$(team_repo "${ticket_id%%-*}")
     [[ "$kind" == task ]] && title=$ref
     [[ -n "$cwd" ]] && here=$(repo_of "$cwd")
+    projects=$(json_projects "$team" "$here")
+    if [[ -n "$jev" ]]; then
+        ranked=$(jq -r '.[]' <<<"$projects" | jev_rank "$ref" || true)  # jev_rank may not read: SIGPIPE
+        if [[ -n "$ranked" ]]; then
+            chances=$(jq -R -s 'split("\n") | map(select(. != "") | split("\t") | {key: .[0], value: (.[1] | tonumber)}) | from_entries' <<<"$ranked")
+            projects=$(jq -c --argjson c "$chances" '($c | to_entries | sort_by(-.value) | map(.key)) + . | reduce .[] as $p ([]; if index([$p]) then . else . + [$p] end)' <<<"$projects")
+        fi
+    fi
     jq -nc --arg kind "$kind" --arg id "$ticket_id" --arg url "$ticket_url" --arg branch "$branch" \
-        --arg title "$title" --argjson projects "$(json_projects "$team" "$here")" \
-        '{kind: $kind, ticket_id: $id, ticket_url: $url, branch: $branch, title: $title, projects: $projects}'
+        --arg title "$title" --argjson projects "$projects" --argjson chances "$chances" \
+        '{kind: $kind, ticket_id: $id, ticket_url: $url, branch: $branch, title: $title, projects: $projects, chances: $chances}'
 }
 
-# prepare <ref> --project DIR [--title T] [--agent KIND]: the worktree for a ticket, branch or
+# prepare <ref> --project DIR [--kind K] [--title T] [--agent KIND]: the worktree for a ticket, branch or
 # task (the branch's own worktree if it has one), the ticket saved on its branch as start
 # does, env files copied. Prints {path, branch, label, existing, agent, prompt, ticket_id,
 # ticket_url}; the mod opens or focuses the space and starts the agent.
 # prepare --branch NAME ...: NAME is the branch as it is, never read as a ticket (a PR's head:
 # pr-5 or fix-123 are not Linear tickets).
 cmd_prepare() {
-    local ref="" project="" title="" agent="$default_agent" ticket_id ticket_url ticket_slug branch literal="" ref_kind
+    local ref="" project="" title="" agent="$default_agent" ticket_id ticket_url ticket_slug branch literal="" ref_kind kind=groom
     while [[ $# -gt 0 ]]; do
         case "$1" in
             -p|--project) project=$2; shift 2 ;;
+            -k|--kind) kind=$2; shift 2 ;;
             -t|--title) title=$2; shift 2 ;;
             -a|--agent) agent=$2; shift 2 ;;
             -b|--branch) literal=$2; ref=$2; shift 2 ;;
-            -*) die "unknown option: $1" ;;
+            -[a-z]|--[a-z]*) die "unknown option: $1" ;;  # option-shaped only: "- fix x" is a task
             *) [[ -z "$ref" ]] || die "unexpected argument: $1"; ref=$1; shift ;;
         esac
     done
     [[ -n "$ref" && -n "$project" ]] || die "usage: herdr-task prepare <ticket | branch | task> --project DIR"
+    case "$kind" in groom|short|review) ;; *) die "unknown kind: $kind (groom, short or review)" ;; esac
     project=$(repo_of "$project")
     [[ -n "$project" ]] || die "not a git repository"
     if [[ -n "$literal" ]]; then
@@ -1494,14 +1538,16 @@ cmd_prepare() {
 
     local prompt=""
     if [[ "$agent" != none ]]; then
-        if [[ -n "$ticket_id" ]]; then
-            prompt="Work on ${ticket_url:-$ticket_id}. Groom it first (groom skill)."
-            if [[ -z "$title" ]]; then
-                # shellcheck disable=SC2016
-                prompt+=' After reading it, name this Herdr space after it: herdr-app do space.rename --id "$(herdr-app ls | jq -r --arg t "$HC_TERMINAL_ID" '\''.spaces[] | select(any(.tabs[].terminals[]; .terminal == $t)) | .id'\'')" --name "'"$ticket_id"' <ticket title>".'
-            fi
-        else
-            prompt="Task: ${title:-$b}. Groom it first (groom skill)."
+        local what
+        if [[ -n "$ticket_id" ]]; then what=${ticket_url:-$ticket_id}; else what=${title:-$b}; fi
+        case "$kind" in
+            groom) prompt="Work on $what. Groom it first (groom skill)." ;;
+            short) prompt="Work on $what. It is a small change: skip grooming, make it, then ship it." ;;
+            review) prompt="Review $what with the pr-review skill." ;;
+        esac
+        if [[ -n "$ticket_id" && -z "$title" ]]; then
+            # shellcheck disable=SC2016
+            prompt+=' After reading it, name this Herdr space after it: herdr-app do space.rename --id "$(herdr-app ls | jq -r --arg t "$HC_TERMINAL_ID" '\''.spaces[] | select(any(.tabs[].terminals[]; .terminal == $t)) | .id'\'')" --name "'"$ticket_id"' <ticket title>".'
         fi
     fi
     jq -nc --arg path "$path" --arg branch "$b" --arg label "$label" --argjson existing "$existing" \

@@ -350,6 +350,9 @@ check "start: a local branch is checked out as it is" 0 "$(grep -c -- '--base' "
 FAKE_WT="$tmp/wt5" HERDR_SOCKET_PATH=x bash "$task" start "2fa login bug" --project "$tmp/repo" --title "2fa login bug" >/dev/null 2>&1
 check "start: agent names start with a letter" 1 "$(grep -c '^agent start t2fa-login-bug-8 --kind claude --pane w8:p1' "$FAKE_LOG")"
 : > "$FAKE_LOG"
+FAKE_WT="$tmp/wt5" HERDR_SOCKET_PATH=x bash "$task" start "- keep the rule" --project "$tmp/repo" --title "- keep the rule" >/dev/null 2>&1
+check "start: a task starting with a dash is not an option" 1 "$(grep -c '^agent start keep-the-rule' "$FAKE_LOG")"
+: > "$FAKE_LOG"
 FAKE_ALREADY_OPEN=true FAKE_WT="$tmp/wt5" HERDR_SOCKET_PATH=x bash "$task" start brand-new --project "$tmp/repo" >/dev/null 2>&1
 check "start: an already open workspace gets no second agent" "1|0" \
     "$(grep -c '^worktree create' "$FAKE_LOG")|$(grep -c '^agent ' "$FAKE_LOG")"
@@ -382,7 +385,7 @@ unset FAKE_WORKSPACES FAKE_PANES FAKE_AGENTS
 # --- Herdr app: projects, parse, prepare (JSON, no herdr server) ---
 # git answers with physical paths (/private/var on macOS).
 ptmp=$(cd "$tmp" && pwd -P)
-app_env=(env -u HERDR_BIN_PATH HERDR_BIN_PATH= PATH="$tmp/nobin:/usr/bin:/bin:/opt/homebrew/bin" XDG_CACHE_HOME="$tmp/appcache"
+app_env=(env -u HERDR_BIN_PATH -u TYPESAFE_API_KEY HERDR_BIN_PATH= PATH="$tmp/nobin:/usr/bin:/bin:/opt/homebrew/bin" XDG_CACHE_HOME="$tmp/appcache"
     HERDR_TASK_WORKTREES="$ptmp/appwt" HERDR_TASK_PROJECT_ROOTS="$ptmp")
 mkdir -p "$tmp/nobin"
 git -C "$ptmp/repo" checkout -q main
@@ -391,6 +394,8 @@ check "parse: ticket link" "ticket ABC-7 abc-7-fix-login" "$(jq -r '"\(.kind) \(
 check "parse: focused repo first" "$ptmp/repo" "$(jq -r '.projects[0]' <<<"$out")"
 check "parse: free text is a task" "task fix-flaky-test|fix flaky test" \
     "$("${app_env[@]}" bash "$task" parse "fix flaky test" | jq -r '"\(.kind) \(.branch)|\(.title)"')"
+check "parse: text starting with a dash is a task" "task|- fix the x" \
+    "$("${app_env[@]}" bash "$task" parse "- fix the x" | jq -r '"\(.kind)|\(.title)"')"
 check "parse: a branch name" "branch" "$("${app_env[@]}" bash "$task" parse feat/x | jq -r .kind)"
 
 out=$("${app_env[@]}" bash "$task" prepare https://linear.app/acme/issue/ABC-7/fix-login --project "$ptmp/repo" 2>/dev/null)
@@ -405,6 +410,18 @@ check "prepare: keeps the saved link" "https://linear.app/acme/issue/ABC-7/fix-l
 check "parse: team repo remembered" "$ptmp/repo" "$("${app_env[@]}" bash "$task" parse ABC-8 | jq -r '.projects[0]')"
 out=$("${app_env[@]}" bash "$task" prepare "fix flaky test" --project "$ptmp/repo" --agent none 2>/dev/null)
 check "prepare: task title, no agent" "fix flaky test|null|" "$(jq -r '"\(.label)|\(.agent)|\(.prompt)"' <<<"$out")"
+out=$("${app_env[@]}" bash "$task" prepare "fix flaky test" --project "$ptmp/repo" --kind short 2>/dev/null)
+check "prepare --kind short: no grooming" 1 "$(jq -r .prompt <<<"$out" | grep -c 'skip grooming')"
+out=$("${app_env[@]}" bash "$task" prepare ABC-7 --project "$ptmp/repo" --kind review 2>/dev/null)
+check "prepare --kind review: pr-review" 1 "$(jq -r .prompt <<<"$out" | grep -c 'pr-review skill')"
+check "prepare: unknown kind fails" 1 "$("${app_env[@]}" bash "$task" prepare x --project "$ptmp/repo" --kind huge >/dev/null 2>&1; echo $?)"
+check "parse --jev: no key, no chances" "{}" "$("${app_env[@]}" bash "$task" parse ABC-8 --jev | jq -c .chances)"
+mkdir -p "$tmp/jevbin"
+printf '#!/bin/sh\nprintf %%s %s\n' "'{\"answers\":{\"project\":{\"probabilities\":{\"$ptmp/other\":0.7,\"$ptmp/repo\":0.02}}}}'" > "$tmp/jevbin/curl"
+chmod +x "$tmp/jevbin/curl"
+out=$(env -u HERDR_BIN_PATH HERDR_BIN_PATH= PATH="$tmp/jevbin:$tmp/nobin:/usr/bin:/bin:/opt/homebrew/bin" XDG_CACHE_HOME="$tmp/appcache" \
+    HERDR_TASK_PROJECT_ROOTS="$ptmp" TYPESAFE_API_KEY=x bash "$task" parse ABC-8 --jev)
+check "parse --jev: Jev's pick first, under 5% dropped" "$ptmp/other|{\"$ptmp/other\":0.7}" "$(jq -r '.projects[0]' <<<"$out")|$(jq -c .chances <<<"$out")"
 git -C "$ptmp/repo" push -q origin abc-1-fix:remote-only 2>/dev/null
 "${app_env[@]}" bash "$task" prepare remote-only --project "$ptmp/repo" --agent none >/dev/null 2>&1
 check "prepare: a branch only on origin keeps its commits" "$(git -C "$ptmp/repo" rev-parse abc-1-fix)" \

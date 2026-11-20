@@ -6,6 +6,7 @@
   "theme": "tokyo-night-moon",
   "font": "JetBrains Mono",
   "font_size": 14,
+  "font_weight": 400,
   "background": "canvas",
   "terminal_padding": [6, 8],
   "divider": { "width": 1, "color": "border" },
