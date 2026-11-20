@@ -815,10 +815,14 @@ def failed: ["FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "S
 def passed: ["SUCCESS", "NEUTRAL", "SKIPPED", "COMPLETED"];
 def st: ([.conclusion, .state, .status] | map(select(. != null and . != "")) | (.[0] // "")) | ascii_upcase;
 def nonempty: select(. != null and . != "");
+# GitHub keeps every run of a check (a cancelled one, then its re-run): the latest run of each
+# workflow/check name stands for it, as in gh pr checks and the PR page.
+def latest: group_by([.workflowName, .name, .context] | map(. // "") | join("\u0000"))
+  | map(max_by([.startedAt, .completedAt] | map(. // "") | join(" ")));
 . + {links: [
   (if (.ticket.url // "") != "" then {kind: "ticket", label: .ticket.id, detail: (.ticket.title // ""), url: .ticket.url} else empty end),
   (if (.pr.url // "") != "" then
-     .pr as $pr | ($pr.statusCheckRollup // []) as $c
+     .pr as $pr | ($pr.statusCheckRollup // [] | latest) as $c
      | [$c[] | select(st as $s | failed | index($s))] as $failed
      | [$c[] | select(st as $s | passed | index($s))] as $passed
      | {kind: "pr", label: "#\($pr.number)", detail: ($pr.title // ""), url: $pr.url},

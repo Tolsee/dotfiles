@@ -250,6 +250,19 @@ check "links: the next read is the cached PR, without gh" "#7|0" \
 check "pr: younger than --max-age, from the cache" "7|0" \
     "$(bash "$task" pr --cwd "$lr" --max-age 60 | jq -r .number)|$(grep -c . "$FAKE_GH_LOG")"
 check "pr: --max-age 0 asks gh" "7|1" "$(bash "$task" pr --cwd "$lr" --max-age 0 | jq -r .number)|$(grep -c . "$FAKE_GH_LOG")"
+# A re-run check: its cancelled first run is history, not a failure (PR #9511's stamp / assess).
+cp "$FAKE_GH_OUT" "$FAKE_GH_OUT.keep"
+printf '%s\n' '{"number":7,"url":"https://github.com/o/r/pull/7","title":"Fix login","state":"OPEN","statusCheckRollup":[
+  {"name":"assess","workflowName":"Stamp","conclusion":"CANCELLED","startedAt":"2026-11-20T05:56:10Z"},
+  {"name":"assess","workflowName":"Stamp","conclusion":"SUCCESS","startedAt":"2026-11-20T05:59:13Z"},
+  {"name":"build","workflowName":"CI","conclusion":"SUCCESS","startedAt":"2026-11-20T05:56:00Z"},
+  {"name":"build","workflowName":"CI","conclusion":"FAILURE","startedAt":"2026-11-20T06:10:00Z","detailsUrl":"https://ci/build/2"},
+  {"context":"buildkite/r","state":"SUCCESS"}]}' > "$FAKE_GH_OUT"
+out=$(bash "$task" links --cwd "$lr" --fresh)
+check "links: only the latest run of each check counts" "fail|2/3 passed|build" \
+    "$(jq -r '[(.links[] | select(.kind == "checks") | .ci, .detail), ([.links[] | select(.kind == "failing") | .label] | join(","))] | join("|")' <<<"$out")"
+mv "$FAKE_GH_OUT.keep" "$FAKE_GH_OUT"
+bash "$task" links --cwd "$lr" --fresh >/dev/null
 # --stale-ok: a stale answer at once, gh in the background (the Claude status line).
 touch -t 202001010000 "$(pr_cache_file "$(git -C "$lr" rev-parse --show-toplevel)" abc-1-fix)"
 sed 's/"number":7/"number":8/' "$FAKE_GH_OUT" > "$FAKE_GH_OUT.8" && mv "$FAKE_GH_OUT" "$FAKE_GH_OUT.7" && mv "$FAKE_GH_OUT.8" "$FAKE_GH_OUT"
