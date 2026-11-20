@@ -196,3 +196,16 @@ fi
 
 # Added by Antigravity CLI installer
 export PATH="$HOME/.local/bin:$PATH"
+
+# rex-claude-resume: a pane Rex restored after an update or crash reopens the Claude
+# conversation it held (recorded by ai/claude/hooks/rex-claude-resume.sh). Quitting Claude on
+# purpose forgets it; REX_CLAUDE_RESUME=0 turns this off.
+if [[ -o interactive && -n "${REX_BLOCK:-}" && -z "${CLAUDECODE:-}" && "${REX_CLAUDE_RESUME:-1}" != 0 ]]; then
+  _rcr_file="${REX_CLAUDE_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/rex-claude}/${REX_BLOCK#block:}"
+  if [[ -r "$_rcr_file" ]] && IFS=$'\t' read -r _rcr_id _rcr_dir < "$_rcr_file" && [[ -n "$_rcr_id" ]]; then
+    if [[ -d "$_rcr_dir" ]] && (( $+commands[claude] )); then
+      cd "$_rcr_dir" && print -P "%F{8}rex: resuming Claude conversation $_rcr_id%f" && claude --resume "$_rcr_id"
+    fi
+  fi
+  unset _rcr_file _rcr_id _rcr_dir
+fi
