@@ -319,16 +319,32 @@ pr_fetch() {
     git -C "$1" config "branch.$branch.merge" "refs/pull/$pr_number/head"
 }
 
+# origin_slug <dir>: owner/name of the checkout's GitHub origin, lowercased; empty otherwise.
+origin_slug() {
+    local remote
+    remote=$(git -C "$1" remote get-url origin 2>/dev/null) || return 0
+    [[ "$remote" == *github.com[:/]* ]] || return 0
+    remote=${remote%.git}
+    printf '%s' "${remote#*github.com[:/]}" | tr '[:upper:]' '[:lower:]'
+}
+
+# pr_check_repo <dir>: fail unless the checkout is the PR's repository; another one would make
+# the PR's branch from the wrong code, or fetch another repository's PR of that number.
+pr_check_repo() {
+    local slug want
+    slug=$(origin_slug "$1") want=$(printf '%s' "$pr_slug" | tr '[:upper:]' '[:lower:]')
+    [[ "$slug" == "$want" ]] || die "$pr_url is in $pr_slug, but $1's origin is ${slug:-not on GitHub}; clone it under HERDR_TASK_PROJECT_ROOTS"
+}
+
 # repo_for_slug <owner/name>: the checkout under the project roots whose origin is that repo.
 repo_for_slug() {
     local -a roots=()
-    local dir remote
+    local dir want
     [[ -n "$project_roots" ]] || return 0
+    want=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
     IFS=: read -r -a roots <<<"$project_roots"
     while read -r dir; do
-        remote=$(git -C "$dir" remote get-url origin 2>/dev/null) || continue
-        remote=${remote%.git}
-        if [[ "$(printf '%s' "${remote#*github.com[:/]}" | tr '[:upper:]' '[:lower:]')" == "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" ]]; then
+        if [[ "$(origin_slug "$dir")" == "$want" ]]; then
             printf '%s\n' "$dir"
             return 0
         fi
@@ -417,6 +433,7 @@ cmd_start() {
     local ticket_id ticket_url ticket_slug branch label ref_kind pr_slug pr_number pr_url pr_title="" pr_fork=""
     parse_ticket "$ref"
     if [[ "$ref_kind" == pr ]]; then
+        pr_check_repo "$project"
         pr_resolve
         pr_fetch "$project"
         title=${title:-"#$pr_number $pr_title"}
@@ -1556,6 +1573,7 @@ cmd_prepare() {
     [[ "$ref_kind" != task ]] || title=${title:-$ref}
     # A PR link: its head branch (a fork's fetched as pr-<n>), titled "#<n> <title>", reviewed.
     if [[ "$ref_kind" == pr ]]; then
+        pr_check_repo "$project"
         pr_resolve
         pr_fetch "$project"
         title=${title:-"#$pr_number $pr_title"}

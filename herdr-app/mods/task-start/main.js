@@ -169,7 +169,6 @@ export default class TaskStart extends View {
   next(cx) {
     if (this.step === "task") {
       if (!this.text() || (this.error && !this.preview)) return;
-      if (this.preview?.kind === "pr" && !this.kindPicked) this.kind = KINDS.findIndex((x) => x.id === "review");
       this.rank(cx);
       this.go("kind", cx);
     } else if (this.step === "kind") {
@@ -186,6 +185,8 @@ export default class TaskStart extends View {
   // Take a parse answer for `ref`: keep a project picked by hand, else the best guess.
   take(preview, ref) {
     this.preview = { ...preview, ref };
+    // A PR is reviewed unless a type of work was picked by hand, also when Enter came first.
+    if (preview.kind === "pr" && !this.kindPicked) this.kind = KINDS.findIndex((x) => x.id === "review");
     const list = preview.projects ?? [];
     if (!(this.picked && list.includes(this.sel))) {
       this.sel = filtered(list, this.search.value())[0] ?? null;
