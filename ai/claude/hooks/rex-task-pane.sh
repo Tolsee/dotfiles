@@ -4,7 +4,8 @@
 # shows it for any Claude started here, by rex-task or by hand:
 # - SessionStart: "claude · ABC-123 title" from the branch's ticket (saved by rex-task or
 #   herdr-task as git config branch.<b>.linear-*, or an id at the start of the branch name),
-#   else "claude · <branch>", else "claude".
+#   else "claude · <branch>", else "claude". With a ticket, the tab is named "ABC-123 title"
+#   too, unless you named the tab yourself.
 # - SessionEnd: the pane goes back to "shell" if it still has the label set here.
 [ -n "${REX_BLOCK:-}" ] && [ -n "${REX_SESSION:-}" ] || exit 0
 command -v jq >/dev/null 2>&1 || exit 0
@@ -51,6 +52,18 @@ case "$(jq -r '.hook_event_name // empty' <<<"$input")" in
             fi
         fi
         "$rex_bin" block rename -s "$REX_SESSION" "$REX_BLOCK" "${label:0:128}" >/dev/null 2>&1
+        # The tab bar shows the ticket without hovering. Only a tab still on Rex's default name
+        # ("Window 1a2b3c4d") or on a ticket name from here is renamed, never one you named.
+        if [ -n "${id:-}" ]; then
+            window=$("$rex_bin" block ls -s "$REX_SESSION" --json 2>/dev/null \
+                | jq -r --arg b "$REX_BLOCK" '.blocks[] | select(.block_id == $b) | .window_id // empty')
+            tab=$("$rex_bin" window ls -s "$REX_SESSION" --json 2>/dev/null \
+                | jq -r --arg w "$window" '.windows[] | select(.window_id == $w) | .label // empty')
+            if [ -n "$window" ] && [[ "$tab" =~ ^Window\ [0-9a-f]{8}$ || "$tab" =~ ^[A-Z][A-Z0-9]*-[0-9]+(\ |$) ]]; then
+                tab_label="$id${title:+ $title}"
+                "$rex_bin" window rename -s "$REX_SESSION" "$window" "${tab_label:0:128}" >/dev/null 2>&1
+            fi
+        fi
         ;;
     SessionEnd)
         case "$(label_now)" in
