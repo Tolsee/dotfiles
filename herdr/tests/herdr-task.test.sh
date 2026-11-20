@@ -447,6 +447,34 @@ check "prepare: a branch only on origin keeps its commits" "$(git -C "$ptmp/repo
 check "projects: from the worktree, its repo first" "$ptmp/repo" \
     "$("${app_env[@]}" bash "$task" projects --cwd "$ptmp/appwt/repo/abc-7-fix-login" | jq -r '.projects[0]')"
 
+# --- PR links: the PR's head in the checkout of its repository, reviewed ---
+parse_ticket "https://github.com/Acme/proj/pull/7/files"
+check "parse_ticket: a PR link" "pr Acme/proj 7 https://github.com/Acme/proj/pull/7" "$ref_kind $pr_slug $pr_number $pr_url"
+git init -q -b main "$ptmp/proj" && git -C "$ptmp/proj" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
+git -C "$ptmp/proj" remote add origin https://github.com/Acme/Proj.git
+git -C "$ptmp/proj" branch feat/x
+mkdir -p "$tmp/ghbin"
+cat > "$tmp/ghbin/gh" <<'EOF'
+#!/bin/sh
+[ "$1 $2" = "pr view" ] || exit 1
+case $3 in
+    */pull/7) echo '{"headRefName":"feat/x","title":"Fix it","isCrossRepository":false}' ;;
+    *) exit 1 ;;
+esac
+EOF
+chmod +x "$tmp/ghbin/gh"
+pr_env=(env -u HERDR_BIN_PATH -u TYPESAFE_API_KEY HERDR_BIN_PATH= GIT_TERMINAL_PROMPT=0 PATH="$tmp/ghbin:$tmp/nobin:/usr/bin:/bin:/opt/homebrew/bin"
+    XDG_CACHE_HOME="$tmp/appcache" HERDR_TASK_WORKTREES="$ptmp/appwt" HERDR_TASK_PROJECT_ROOTS="$ptmp")
+out=$("${pr_env[@]}" bash "$task" parse https://github.com/acme/proj/pull/7 --cwd "$ptmp/repo" --jev)
+check "parse: a PR link is its head branch in its repo" "pr|7|feat/x|Fix it|$ptmp/proj" \
+    "$(jq -r '"\(.kind)|\(.pr)|\(.branch)|\(.title)|\(.projects[0])"' <<<"$out")"
+out=$("${pr_env[@]}" bash "$task" prepare https://github.com/acme/proj/pull/7 --project "$ptmp/proj" 2>/dev/null)
+check "prepare: a PR link opens its branch, titled and reviewed" "feat/x|#7 Fix it|1" \
+    "$(jq -r '"\(.branch)|\(.label)|\(.prompt | test("^Review https://github.com/acme/proj/pull/7 with the pr-review skill") | if . then 1 else 0 end)"' <<<"$out")"
+check "prepare: a PR in another repository fails" 1 \
+    "$("${pr_env[@]}" bash "$task" prepare https://github.com/acme/proj/pull/7 --project "$ptmp/repo" >/dev/null 2>&1; echo $?)"
+check "prepare: a PR saves no ticket" "" "$(git -C "$ptmp/proj" config --get branch.feat/x.linear-id)"
+
 # prepare --branch: a PR's head as it is, even one an older prepare took for team PR.
 git -C "$ptmp/repo" branch pr-5 main
 printf 'PR\t%s\n' "$ptmp/repo" >> "$tmp/appcache/herdr-task/team-repos"

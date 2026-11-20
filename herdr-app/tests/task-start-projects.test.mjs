@@ -237,3 +237,17 @@ test("start popup: a Jev answer that comes first survives the plain parse; going
   await Promise.all(tasks);
   assert.ok(!state.calls.some((c) => c[0] === "exec" && c[2][3] === "prepare"), "no start after going back");
 });
+
+test("start: a PR link is reviewed unless a type of work was picked by hand", () => {
+  const cx = { notify() {}, spawn() {}, timer: { after() {} }, read_from_clipboard: () => "", focus_handle: () => ({ focus() {} }) };
+  const m = new start.default();
+  m.init({}, cx);
+  m.take({ kind: "pr", pr: "7", projects: ["/r/api"] }, "https://github.com/o/api/pull/7");
+  assert.equal(start.KINDS[m.kind].id, "review");
+  const n = new start.default();
+  n.init({}, cx);
+  n.step = "kind";
+  n.key({ key: "s", modifiers: {} }, cx);
+  n.take({ kind: "pr", pr: "7", projects: ["/r/api"] }, "x");
+  assert.equal(start.KINDS[n.kind].id, "short");
+});
