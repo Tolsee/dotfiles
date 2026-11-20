@@ -7,12 +7,22 @@
 #                                 or free text; suggested from the clipboard. Creates (or
 #                                 reopens) the worktree, opens a Rex session named
 #                                 "ABC-123 title" there and starts the agent with the ticket.
-#   rex-task start <ticket> [-p DIR] [-t TITLE] [-a claude|codex|none] [--prompt TEXT]
+#   rex-task start <ticket> [-p DIR] [-t TITLE] [-a claude|codex|none] [-k KIND] [--prompt TEXT]
+#                                 KIND is the type of work the agent starts on: groom (default,
+#                                 groom the ticket first), short (a small change, no grooming)
+#                                 or review (the pr-review skill: a skim, then detail on request)
 #   rex-task open [DIR]           (ctrl+b>o) the ticket, PR, changed files, checks and branch for
 #                                 the checkout at DIR (default: the current directory); opens
 #                                 one, or picks between several with fzf
 #   rex-task project [DIR]        (ctrl+b>f) open or focus a session for a project under
 #                                 HERDR_TASK_PROJECT_ROOTS
+#
+# For Rex's built-in prompts (init.lua asks, these answer without prompting):
+#   rex-task suggest              a Linear link or id on the clipboard, or nothing
+#   rex-task projects [REF]       repositories to start REF in: Jev's picks (with their
+#                                 probability), the ticket team's last one, the current one, the rest
+#   rex-task links [DIR]          the links open offers, as "label<TAB>url" lines
+#   rex-task project --list       the directories project offers
 #
 # REX_TASK_WORKTREES is where worktrees go (default ~/.herdr/worktrees, Herdr's directory).
 # Switching the app to the new session needs Settings > Server > Client Info > Remote Control;
@@ -28,6 +38,9 @@ for dependency in git jq; do
 done
 rex_bin=$(command -v rex || true)
 [[ -n "$rex_bin" || -z "${REX_BIN_DIR:-}" ]] || rex_bin="$REX_BIN_DIR/rex"
+# Rex actions run without the shell's PATH; the app installs the CLI here.
+mac_rex="$HOME/Library/Application Support/com.superlogical.rex/RexServer/Versions/Current/Rex Server.app/Contents/MacOS/rex"
+[[ -n "$rex_bin" || ! -x "$mac_rex" ]] || rex_bin=$mac_rex
 [[ -n "$rex_bin" ]] || die "rex is required"
 if [[ -z "${FZF_DEFAULT_OPTS_FILE:-}" && -f "$HOME/.config/fzf/fzfrc" ]]; then
     export FZF_DEFAULT_OPTS_FILE="$HOME/.config/fzf/fzfrc"
@@ -124,40 +137,42 @@ open_session() {
     show_session "$session" "$label"
 }
 
+# HERDR_TASK_PROJECT_ROOTS: folders of repositories, or a repository itself (such as dotfiles).
 project_roots() {
     [[ -n "${HERDR_TASK_PROJECT_ROOTS:-}" ]] || return 0
     local -a roots
+    local r
     IFS=: read -r -a roots <<<"$HERDR_TASK_PROJECT_ROOTS"
-    find "${roots[@]}" -mindepth 2 -maxdepth 2 -name .git 2>/dev/null | sed 's#/\.git$##' | sort
-}
-
-# pick_project [preferred]: the preferred repository first, then every one under the roots.
-pick_project() {
-    local list
-    list=$( { [[ -z "${1:-}" ]] || printf '%s\n' "$1"; project_roots; } | awk 'NF && !seen[$0]++')
-    [[ -n "$list" ]] || { git rev-parse --show-toplevel 2>/dev/null || die "set HERDR_TASK_PROJECT_ROOTS or pass --project"; return; }
-    command -v fzf >/dev/null 2>&1 || { head -n1 <<<"$list"; return; }
-    fzf --prompt='Project > ' <<<"$list"
+    for r in "${roots[@]}"; do
+        if [[ -e "$r/.git" ]]; then printf '%s\n' "$r"
+        else find "$r" -mindepth 2 -maxdepth 2 -name .git 2>/dev/null | sed 's#/\.git$##' | sort; fi
+    done
 }
 
 cmd_start() {
-    local ref="" project="" title="" agent="$default_agent" prompt=""
+    local ref="" project="" title="" agent="$default_agent" prompt="" kind=groom
     while [[ $# -gt 0 ]]; do
         case "$1" in
             -p|--project) project=$2; shift 2 ;;
             -t|--title) title=$2; shift 2 ;;
             -a|--agent) agent=$2; shift 2 ;;
+            -k|--kind) kind=$2; shift 2 ;;
             --prompt) prompt=$2; shift 2 ;;
             -*) die "unknown option: $1" ;;
             *) [[ -z "$ref" ]] || die "unexpected argument: $1"; ref=$1; shift ;;
         esac
     done
     [[ -n "$ref" ]] || die "usage: rex-task start <ticket link | id | branch> [options]"
+    case "$kind" in groom|short|review) ;; *) die "unknown kind: $kind (groom, short or review)" ;; esac
     project=${project:-$(git rev-parse --show-toplevel 2>/dev/null || die "not inside a repository; pass --project")}
     project=$(cd "$project" && pwd -P)
 
     local ticket_id ticket_url ticket_slug branch label path
     parse_ticket "$ref"
+    # Free text is a task: keep it as the title and first prompt, with the slug as the branch.
+    if [[ -z "$ticket_id" && -z "$title" ]] && ! git check-ref-format --branch "$ref" >/dev/null 2>&1; then
+        title=$ref
+    fi
     if [[ -n "$ticket_id" ]]; then
         label="$ticket_id ${title:-${ticket_slug//-/ }}"
     else
@@ -224,11 +239,15 @@ cmd_start() {
     local command=""
     if [[ "$agent" != none ]]; then
         if [[ -z "$prompt" ]]; then
-            if [[ -n "$ticket_id" ]]; then
-                prompt="Work on ${ticket_url:-$ticket_id}. Groom it first (groom skill)."
-                [[ -n "$title" ]] || prompt="$prompt After reading it, name this Rex session after it: rex session rename \"\$REX_SESSION\" \"$ticket_id <ticket title>\"."
-            else
-                prompt="Task: ${title:-$branch}. Groom it first (groom skill)."
+            local what
+            if [[ -n "$ticket_id" ]]; then what=${ticket_url:-$ticket_id}; else what=${title:-$branch}; fi
+            case "$kind" in
+                groom) prompt="Work on $what. Groom it first (groom skill)." ;;
+                short) prompt="Work on $what. It is a small change: skip grooming, make it, then ship it." ;;
+                review) prompt="Review $what with the pr-review skill." ;;
+            esac
+            if [[ -n "$ticket_id" && -z "$title" ]]; then
+                prompt="$prompt After reading it, name this Rex session after it: rex session rename \"\$REX_SESSION\" \"$ticket_id <ticket title>\"."
             fi
         fi
         command="$agent $(printf '%q' "$prompt")"
@@ -236,33 +255,74 @@ cmd_start() {
     open_session "$label" "$path" "$command" "$ticket_id"
 }
 
-cmd_interactive() {
-    local ref suggestion clip ticket_id ticket_url ticket_slug branch project team_repo=""
+# A Linear link or id on the clipboard, offered as the default answer.
+clipboard_ticket() {
+    local clip
     clip=$(pbpaste 2>/dev/null | head -n1 | tr -d '[:space:]' || true)
-    suggestion=""
     if [[ "$clip" =~ ^https?://[^/]*linear\.app/[^/]+/issue/ || "$clip" =~ ^[A-Za-z][A-Za-z0-9]*-[0-9]+$ ]]; then
-        suggestion=$clip
+        printf '%s\n' "$clip"
     fi
+}
+
+# team_repo <ref>: the repository the ticket's team last started a task in.
+team_repo() {
+    local ticket_id ticket_url ticket_slug branch
+    parse_ticket "$1"
+    [[ -n "$ticket_id" && -f "$cache_dir/team-repos" ]] || return 0
+    awk -F'\t' -v t="${ticket_id%%-*}" '$1 == t { r = $2 } END { if (r != "") print r }' "$cache_dir/team-repos"
+}
+
+# jev_rank <ref>: reads repository paths on stdin and prints "path<TAB>probability" for the
+# ones TypeSafe's Jev thinks the task belongs in (5% or more, likeliest first). Silent without
+# TYPESAFE_API_KEY, with REX_TASK_JEV=0, or when Jev doesn't answer within 3 seconds.
+jev_rank() {
+    [[ -n "${TYPESAFE_API_KEY:-}" && "${REX_TASK_JEV:-1}" != 0 ]] || return 0
+    command -v curl >/dev/null 2>&1 || return 0
+    local body
+    body=$(jq -R -s --arg task "${1:0:500}" '
+        split("\n") | map(select(. != "")) as $paths
+        | { model: "jev-latest",
+            state: { task: $task },
+            questions: { project: {
+                type: "choice",
+                instructions: "The task is a Linear ticket link, a branch name or a short description. Which repository is it most likely to be done in?",
+                criteria: ($paths | map({ key: ., value: "Repository \(split("/")[-1]) in \(split("/")[-2])" }) | from_entries) } } }')
+    curl -fsS -m 3 "${TYPESAFE_BASE_URL:-https://api.typesafe.ai}/v1/systemone" \
+        -H 'content-type: application/json' -H "authorization: Bearer $TYPESAFE_API_KEY" -d "$body" 2>/dev/null \
+        | jq -r '.answers.project.probabilities // {} | to_entries | map(select(.value >= 0.05))
+                 | sort_by(-.value)[] | "\(.key)\t\(.value)"' 2>/dev/null || true
+}
+
+# cmd_projects [REF]: repositories to start REF in, as "path" or "path<TAB>Jev's probability":
+# Jev's picks for REF, then the ticket team's last repository, then the current directory's main
+# checkout (a task worktree counts as its repository), then every one under the roots.
+cmd_projects() {
+    local here list
+    here=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null | sed 's#/\.git$##' || true)
+    list=$( { [[ -z "${1:-}" ]] || team_repo "$1"; [[ -z "$here" ]] || printf '%s\n' "$here"; project_roots; } | awk 'NF && !seen[$0]++')
+    { [[ -z "${1:-}" ]] || jev_rank "$1" <<<"$list"; printf '%s\n' "$list"; } | awk -F'\t' 'NF && !seen[$1]++'
+}
+
+cmd_interactive() {
+    local ref suggestion project
+    suggestion=$(clipboard_ticket)
     set -o vi
     read -e -r -p "Ticket link, id, branch, or task${suggestion:+ [$suggestion]}: " ref || exit 0
     ref=${ref:-$suggestion}
     [[ -n "$ref" ]] || exit 0
-    parse_ticket "$ref"
-    if [[ -n "$ticket_id" && -f "$cache_dir/team-repos" ]]; then
-        team_repo=$(awk -F'\t' -v t="${ticket_id%%-*}" '$1 == t { r = $2 } END { print r }' "$cache_dir/team-repos")
+    local kind=groom
+    if command -v fzf >/dev/null 2>&1; then
+        kind=$(printf 'groom\tgroom the ticket first\nshort\ta small change, no grooming\nreview\tread and report, no edits\n' \
+            | fzf --delimiter=$'\t' --prompt='Work > ' | cut -f1) || exit 0
     fi
-    project=$(pick_project "$team_repo") || exit 0
+    project=$(cmd_projects "$ref" | cut -f1 | { command -v fzf >/dev/null 2>&1 && fzf --prompt='Project > ' || head -n1; }) || exit 0
     [[ -n "$project" ]] || exit 0
-    # Free text is a task: keep it as the title and first prompt, with the slug as the branch.
-    if [[ -z "$ticket_id" ]] && ! git check-ref-format --branch "$ref" >/dev/null 2>&1; then
-        cmd_start "$ref" --project "$project" --title "$ref"
-    else
-        cmd_start "$ref" --project "$project"
-    fi
+    cmd_start "$ref" --project "$project" --kind "$kind"
 }
 
-cmd_open() {
-    local dir=${1:-$PWD} branch slug base pr_json="" links id url title choice
+# cmd_links [DIR]: "label<TAB>url" for the ticket, PR, changed files, checks and branch.
+cmd_links() {
+    local dir=${1:-$PWD} branch slug base pr_json="" id url title
     git -C "$dir" rev-parse --git-dir >/dev/null 2>&1 || die "$dir is not a git checkout"
     branch=$(git -C "$dir" symbolic-ref --short -q HEAD || true)
     slug=$(git -C "$dir" remote get-url origin 2>/dev/null | sed -E 's#\.git$##' | sed -nE 's#^.*github\.com[:/]([^/]+/[^/]+)$#\1#p' || true)
@@ -281,7 +341,7 @@ cmd_open() {
         [[ -z "$org" ]] || url="https://linear.app/$org/issue/$id"
     fi
 
-    links=$( {
+    {
         [[ -z "$url" ]] || printf '%s  %s  %s\t%s\n' "$linear_glyph" "$id" "$title" "$url"
         if [[ -n "$pr_json" ]]; then
             jq -r '.url as $u
@@ -296,8 +356,12 @@ cmd_open() {
             printf 'compare %s\thttps://github.com/%s/compare/%s...%s\n' "$branch" "$slug" "${base:-main}" "$branch"
         fi
         [[ -z "$slug" || -z "$branch" ]] || printf 'branch %s\thttps://github.com/%s/tree/%s\n' "$branch" "$slug" "$branch"
-    } | awk -F'\t' 'NF == 2 && $2 != "" && !seen[$2]++')
+    } | awk -F'\t' 'NF == 2 && $2 != "" && !seen[$2]++'
+}
 
+cmd_open() {
+    local dir=${1:-$PWD} links choice
+    links=$(cmd_links "$dir")
     [[ -n "$links" ]] || { note "no ticket, PR or GitHub branch for $dir"; sleep 2; exit 1; }
     if [[ $(wc -l <<<"$links") -eq 1 ]] || ! command -v fzf >/dev/null 2>&1; then
         choice=$(head -n1 <<<"$links")
@@ -307,14 +371,24 @@ cmd_open() {
     open "${choice#*$'\t'}"
 }
 
+# Every directory directly under HERDR_TASK_PROJECT_ROOTS, and the roots that are repositories.
+project_dirs() {
+    [[ -n "${HERDR_TASK_PROJECT_ROOTS:-}" ]] || die "set HERDR_TASK_PROJECT_ROOTS"
+    local -a roots
+    IFS=: read -r -a roots <<<"$HERDR_TASK_PROJECT_ROOTS"
+    local r
+    for r in "${roots[@]}"; do
+        if [[ -e "$r/.git" ]]; then printf '%s\n' "$r"
+        else find "$r" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort; fi
+    done | awk '!seen[$0]++'
+}
+
 cmd_project() {
     local dir=${1:-}
+    [[ "$dir" != --list ]] || { project_dirs; return; }
     if [[ -z "$dir" ]]; then
-        [[ -n "${HERDR_TASK_PROJECT_ROOTS:-}" ]] || die "set HERDR_TASK_PROJECT_ROOTS"
         command -v fzf >/dev/null 2>&1 || die "fzf is required"
-        local -a roots
-        IFS=: read -r -a roots <<<"$HERDR_TASK_PROJECT_ROOTS"
-        dir=$(find "${roots[@]}" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort | fzf --prompt='Project > ') || exit 0
+        dir=$(project_dirs | fzf --prompt='Project > ') || exit 0
     fi
     dir=$(cd "$dir" && pwd -P)
     open_session "$(basename "$dir")" "$dir"
@@ -325,6 +399,9 @@ case "${1:-}" in
     start) shift; cmd_start "$@" ;;
     open) shift; cmd_open "$@" ;;
     project) shift; cmd_project "$@" ;;
-    -h|--help) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//' ;;
+    suggest) clipboard_ticket ;;
+    projects) shift; cmd_projects "$@" ;;
+    links) shift; cmd_links "$@" ;;
+    -h|--help) sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//' ;;
     *) die "unknown command: $1 (see rex-task --help)" ;;
 esac
