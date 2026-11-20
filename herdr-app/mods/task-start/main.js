@@ -1,9 +1,10 @@
 // prefix+t (keys.json "mod.open:task-start"): the app's version of the TUI's herdr-task popup
 // and of Rex's Start Task, in three steps:
-//   1. Task: a Linear link or id, a branch or the task in words; a Linear link or id on the
-//      clipboard is filled in. The chip under it (`herdr-task parse`) says what it is.
+//   1. Task: a Linear link or id, a GitHub PR link, a branch or the task in words; a Linear link
+//      or id on the clipboard is filled in. A PR link opens the PR's branch in its repository. The chip under it (`herdr-task parse`) says what it is.
 //   2. Type of work: Groom (groom the ticket first), Short (no grooming, make it and ship it)
-//      or Review (pr-review). It sets the agent's first prompt (`herdr-task prepare --kind`).
+//      or Review (pr-review), Review first for a PR link. It sets the agent's first prompt
+//      (`herdr-task prepare --kind`).
 //   3. Project: Jev's picks first with their chances (`parse --jev`, asked once on step 1's
 //      Enter), then the ticket team's last repository, the focused one and the rest. Type to
 //      search (letters in order: "dtf" finds dotfiles).
@@ -112,7 +113,7 @@ export default class TaskStart extends View {
     this.error = null;
     this.cwd = focused()?.cwd ?? null;
     this.handle = cx.focus_handle();
-    this.input = InputState.new({ placeholder: "Linear link or id, branch, or the task in words…" });
+    this.input = InputState.new({ placeholder: "Linear link or id, PR link, branch, or the task in words…" });
     this.input.on("change", (_e, cx) => this.parse(cx));
     this.input.on("submit", (_e, cx) => this.next(cx));
     this.search = InputState.new({ placeholder: "Search projects…" });
@@ -168,6 +169,7 @@ export default class TaskStart extends View {
   next(cx) {
     if (this.step === "task") {
       if (!this.text() || (this.error && !this.preview)) return;
+      if (this.preview?.kind === "pr" && !this.kindPicked) this.kind = KINDS.findIndex((x) => x.id === "review");
       this.rank(cx);
       this.go("kind", cx);
     } else if (this.step === "kind") {
@@ -287,6 +289,7 @@ export default class TaskStart extends View {
   move(d) {
     if (this.step === "kind") {
       this.kind = (this.kind + KINDS.length + d) % KINDS.length;
+      this.kindPicked = true;
       return;
     }
     const rows = this.rows(), n = rows.length;
@@ -308,6 +311,7 @@ export default class TaskStart extends View {
     else if (this.step === "kind" && k === "backspace") this.back(cx);
     else if (this.step === "kind" && !mod && KINDS.some((x) => x.key === k)) {
       this.kind = KINDS.findIndex((x) => x.key === k);
+      this.kindPicked = true;
       this.next(cx);
     } else return false;
     return true;
@@ -327,6 +331,10 @@ export default class TaskStart extends View {
     const label = (text) => div().px(10).text_size(11).font_semibold().text_color(t.dim).child(text);
     const chip = () => {
       if (!p) return div();
+      if (p.kind === "pr") {
+        return h_flex().gap(6).items_center().text_color(t.foreground).font_semibold()
+          .child(icon("git-compare")).child(`PR #${p.pr}`);
+      }
       if (p.kind === "ticket") {
         return h_flex().gap(6).items_center().text_color(LINEAR).font_semibold()
           .child(svg("mods/task-status/linear.svg").size(13)).child(p.ticket_id);
@@ -345,7 +353,7 @@ export default class TaskStart extends View {
       const on = i === this.kind;
       return h_flex().id(`tk-${i}`).h(34).px(10).gap(10).items_center().rounded(7).cursor_pointer()
         .when(on, (el) => el.bg(t.hover)).hover((s) => s.bg(t.hover))
-        .on_click((_e, cx) => { this.kind = i; this.next(cx); })
+        .on_click((_e, cx) => { this.kind = i; this.kindPicked = true; this.next(cx); })
         .child(icon(k.icon).text_color(on ? t.accent : t.dim))
         .child(div().flex_none().w(56).text_color(t.foreground).when(on, (d) => d.font_semibold()).child(k.title))
         .child(div().flex_1().truncate().text_size(11.5).text_color(t.dim).child(k.detail))

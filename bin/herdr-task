@@ -262,11 +262,18 @@ cut_text() {
     perl -CSA -e 'print substr($ARGV[1], 0, $ARGV[0])' "$1" "$2" 2>/dev/null || printf '%s' "${2:0:$1}"
 }
 
-# Sets ticket_id, ticket_url, ticket_slug, branch and ref_kind (ticket, branch or task) from a
-# link, an id, a branch name or free text.
+# Sets ticket_id, ticket_url, ticket_slug, branch and ref_kind (ticket, branch, task or pr) from
+# a link, an id, a branch name or free text. A GitHub PR link sets pr_slug, pr_number and pr_url
+# with pr-<n> as a stand-in branch: pr_resolve asks gh for the real one.
 parse_ticket() {
     local ref=$1
-    ticket_id="" ticket_url="" ticket_slug=""
+    ticket_id="" ticket_url="" ticket_slug="" pr_slug="" pr_number="" pr_url=""
+    if [[ "$ref" =~ ^https?://(www\.)?github\.com/([^/]+/[^/]+)/pull/([0-9]+) ]]; then
+        pr_slug=${BASH_REMATCH[2]} pr_number=${BASH_REMATCH[3]}
+        pr_url="https://github.com/$pr_slug/pull/$pr_number"
+        branch="pr-$pr_number" ref_kind=pr
+        return
+    fi
     if [[ "$ref" =~ ^https?://[^/]*linear\.app/[^/]+/issue/([A-Za-z][A-Za-z0-9]*-[0-9]+)(/([^/?#]*))? ]]; then
         ticket_id=$(printf '%s' "${BASH_REMATCH[1]}" | tr '[:lower:]' '[:upper:]')
         ticket_slug=${BASH_REMATCH[3]:-}
@@ -290,6 +297,44 @@ parse_ticket() {
 }
 
 # Gitignored env files the worktree needs that git does not carry over.
+# pr_resolve: after parse_ticket on a PR link, sets branch to the PR's head (pr-<n> for a fork's,
+# which is not on origin), pr_fork and pr_title, from gh.
+pr_resolve() {
+    local j
+    command -v gh >/dev/null 2>&1 || die "gh is required to open a pull request"
+    j=$(GH_NO_UPDATE_NOTIFIER=1 gh pr view "$pr_url" --json headRefName,title,isCrossRepository 2>/dev/null) \
+        || die "gh pr view $pr_url failed (gh auth status?)"
+    pr_title=$(jq -r .title <<<"$j")
+    pr_fork=$(jq -r .isCrossRepository <<<"$j")
+    if [[ "$pr_fork" == true ]]; then branch="pr-$pr_number"; else branch=$(jq -r .headRefName <<<"$j"); fi
+}
+
+# pr_fetch <repo>: a fork's head into its local pr-<n> branch, tracking the PR as gh pr checkout
+# does; kept as it is once fetched (it may hold review commits). Same-repo heads come from origin.
+pr_fetch() {
+    [[ "$pr_fork" == true ]] || return 0
+    git -C "$1" show-ref -q --verify "refs/heads/$branch" && return 0
+    git -C "$1" fetch -q origin "pull/$pr_number/head:$branch" >&2 || die "git fetch of $pr_url failed"
+    git -C "$1" config "branch.$branch.remote" origin
+    git -C "$1" config "branch.$branch.merge" "refs/pull/$pr_number/head"
+}
+
+# repo_for_slug <owner/name>: the checkout under the project roots whose origin is that repo.
+repo_for_slug() {
+    local -a roots=()
+    local dir remote
+    [[ -n "$project_roots" ]] || return 0
+    IFS=: read -r -a roots <<<"$project_roots"
+    while read -r dir; do
+        remote=$(git -C "$dir" remote get-url origin 2>/dev/null) || continue
+        remote=${remote%.git}
+        if [[ "$(printf '%s' "${remote#*github.com[:/]}" | tr '[:upper:]' '[:lower:]')" == "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" ]]; then
+            printf '%s\n' "$dir"
+            return 0
+        fi
+    done < <(find "${roots[@]}" -mindepth 2 -maxdepth 2 -name .git 2>/dev/null | sed 's#/\.git$##' | sort)
+}
+
 copy_env_files() {
     local source_root=$1 target_root=$2 file
     git -C "$source_root" ls-files --others --ignored --exclude-standard -- '.env' '.env.*' 'app/.env' 'app/.env.*' 2>/dev/null \
@@ -369,8 +414,13 @@ cmd_start() {
     git -C "$project" rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "$project is not a git repository"
     server_running || die "herdr server is not running; start herdr first"
 
-    local ticket_id ticket_url ticket_slug branch label
+    local ticket_id ticket_url ticket_slug branch label ref_kind pr_slug pr_number pr_url pr_title="" pr_fork=""
     parse_ticket "$ref"
+    if [[ "$ref_kind" == pr ]]; then
+        pr_resolve
+        pr_fetch "$project"
+        title=${title:-"#$pr_number $pr_title"}
+    fi
     [[ -n "$url_opt" ]] && ticket_url=$url_opt
     # The sidebar's $linear token carries the ticket id, so the label is the title alone.
     if [[ -n "$ticket_id" ]]; then
@@ -441,7 +491,9 @@ cmd_start() {
         # Herdr agent names start with a letter (^[a-z][a-z0-9_-]{0,31}$): "2fa login bug".
         [[ "$agent_name" =~ ^[a-z] ]] || agent_name="t${agent_name:0:31}"
         if [[ -z "$prompt" ]]; then
-            if [[ -n "$ticket_id" ]]; then
+            if [[ -n "$pr_url" ]]; then
+                prompt="Review $pr_url with the pr-review skill."
+            elif [[ -n "$ticket_id" ]]; then
                 prompt="Work on ${ticket_url:-$ticket_id}. Groom it first (groom skill)."
                 [[ -z "$title" ]] && prompt="$prompt After reading it, name this Herdr workspace after its title, without the ticket id (the sidebar shows that already): herdr workspace rename \"\$HERDR_WORKSPACE_ID\" \"<ticket title>\"."
             else
@@ -526,7 +578,7 @@ cmd_tag() {
 }
 
 cmd_interactive() {
-    local project ref suggestion ticket_id ticket_url ticket_slug branch
+    local project ref suggestion ticket_id ticket_url ticket_slug branch ref_kind pr_slug pr_number pr_url
     suggestion=$(clipboard_ticket)
     # readline (-e) does its own line editing, so backspace works in the popup pty whatever
     # its erase setting; vi keys like everywhere else (Esc for normal mode). No -i: macOS
@@ -541,7 +593,12 @@ cmd_interactive() {
     [[ -n "$ref" ]] || exit 0
     parse_ticket "$ref"
     # Best guess first: the repo this ticket's team was last started in, then the focused one.
-    project=$(pick_project "$(team_repo "${ticket_id%%-*}")" "$(focused_repo)") || exit 0
+    # A PR link: the checkout of its repository first.
+    if [[ "$ref_kind" == pr ]]; then
+        project=$(pick_project "$(repo_for_slug "$pr_slug")" "$(focused_repo)") || exit 0
+    else
+        project=$(pick_project "$(team_repo "${ticket_id%%-*}")" "$(focused_repo)") || exit 0
+    fi
     # Free text is the title and first prompt; a ticket or a branch name passes through.
     if [[ "$ref_kind" == task ]]; then
         cmd_start "$ref" --project "$project" --title "$ref" --async-agent
@@ -1431,7 +1488,7 @@ jev_rank() {
 # Jev too (up to 3 s): its picks go first and chances maps each to its probability.
 cmd_parse() {
     local ref="" cwd="" jev="" kind title="" team="" here="" projects chances="{}" ranked
-    local ticket_id ticket_url ticket_slug branch ref_kind
+    local ticket_id ticket_url ticket_slug branch ref_kind pr_slug pr_number pr_url pr_title="" pr_fork=""
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --cwd) cwd=${2:-}; shift 2 ;;
@@ -1445,9 +1502,13 @@ cmd_parse() {
     kind=$ref_kind
     [[ "$kind" == ticket ]] && team=$(team_repo "${ticket_id%%-*}")
     [[ "$kind" == task ]] && title=$ref
+    if [[ "$kind" == pr ]]; then
+        pr_resolve
+        title=$pr_title team=$(repo_for_slug "$pr_slug")
+    fi
     [[ -n "$cwd" ]] && here=$(repo_of "$cwd")
     projects=$(json_projects "$team" "$here")
-    if [[ -n "$jev" ]]; then
+    if [[ -n "$jev" && "$kind" != pr ]]; then
         ranked=$(jq -r '.[]' <<<"$projects" | jev_rank "$ref" || true)  # jev_rank may not read: SIGPIPE
         if [[ -n "$ranked" ]]; then
             chances=$(jq -R -s 'split("\n") | map(select(. != "") | split("\t") | {key: .[0], value: (.[1] | tonumber)}) | from_entries' <<<"$ranked")
@@ -1456,7 +1517,9 @@ cmd_parse() {
     fi
     jq -nc --arg kind "$kind" --arg id "$ticket_id" --arg url "$ticket_url" --arg branch "$branch" \
         --arg title "$title" --argjson projects "$projects" --argjson chances "$chances" \
-        '{kind: $kind, ticket_id: $id, ticket_url: $url, branch: $branch, title: $title, projects: $projects, chances: $chances}'
+        --arg pr "$pr_number" --arg pr_url "$pr_url" \
+        '{kind: $kind, ticket_id: $id, ticket_url: $url, branch: $branch, title: $title, projects: $projects, chances: $chances,
+          pr: $pr, pr_url: $pr_url}'
 }
 
 # prepare <ref> --project DIR [--kind K] [--title T] [--agent KIND]: the worktree for a ticket, branch or
@@ -1466,7 +1529,8 @@ cmd_parse() {
 # prepare --branch NAME ...: NAME is the branch as it is, never read as a ticket (a PR's head:
 # pr-5 or fix-123 are not Linear tickets).
 cmd_prepare() {
-    local ref="" project="" title="" agent="$default_agent" ticket_id ticket_url ticket_slug branch literal="" ref_kind kind=groom
+    local ref="" project="" title="" agent="$default_agent" ticket_id ticket_url ticket_slug branch literal="" ref_kind kind=""
+    local pr_slug="" pr_number="" pr_url="" pr_title="" pr_fork=""
     while [[ $# -gt 0 ]]; do
         case "$1" in
             -p|--project) project=$2; shift 2 ;;
@@ -1479,7 +1543,7 @@ cmd_prepare() {
         esac
     done
     [[ -n "$ref" && -n "$project" ]] || die "usage: herdr-task prepare <ticket | branch | task> --project DIR"
-    case "$kind" in groom|short|review) ;; *) die "unknown kind: $kind (groom, short or review)" ;; esac
+    case "$kind" in ""|groom|short|review) ;; *) die "unknown kind: $kind (groom, short or review)" ;; esac
     project=$(repo_of "$project")
     [[ -n "$project" ]] || die "not a git repository"
     if [[ -n "$literal" ]]; then
@@ -1490,6 +1554,13 @@ cmd_prepare() {
     fi
     # Free text is the title and the first prompt; its slug is the branch.
     [[ "$ref_kind" != task ]] || title=${title:-$ref}
+    # A PR link: its head branch (a fork's fetched as pr-<n>), titled "#<n> <title>", reviewed.
+    if [[ "$ref_kind" == pr ]]; then
+        pr_resolve
+        pr_fetch "$project"
+        title=${title:-"#$pr_number $pr_title"}
+    fi
+    [[ -n "$kind" ]] || { [[ "$ref_kind" == pr ]] && kind=review || kind=groom; }
 
     local path existing=false bare=""
     [[ -n "$ticket_id" && -z "$ticket_slug" ]] && bare=1
@@ -1546,7 +1617,9 @@ cmd_prepare() {
     local prompt=""
     if [[ "$agent" != none ]]; then
         local what
-        if [[ -n "$ticket_id" ]]; then what=${ticket_url:-$ticket_id}; else what=${title:-$b}; fi
+        if [[ -n "$pr_url" ]]; then what=$pr_url
+        elif [[ -n "$ticket_id" ]]; then what=${ticket_url:-$ticket_id}
+        else what=${title:-$b}; fi
         case "$kind" in
             groom) prompt="Work on $what. Groom it first (groom skill)." ;;
             short) prompt="Work on $what. It is a small change: skip grooming, make it, then ship it." ;;
