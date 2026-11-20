@@ -261,6 +261,11 @@ printf '%s\n' '{"number":7,"url":"https://github.com/o/r/pull/7","title":"Fix lo
 out=$(bash "$task" links --cwd "$lr" --fresh)
 check "links: only the latest run of each check counts" "fail|2/3 passed|build" \
     "$(jq -r '[(.links[] | select(.kind == "checks") | .ci, .detail), ([.links[] | select(.kind == "failing") | .label] | join(","))] | join("|")' <<<"$out")"
+printf '%s\n' '{"number":7,"url":"https://github.com/o/r/pull/7","title":"Fix login","state":"OPEN","statusCheckRollup":[
+  {"name":"assess","workflowName":"Stamp","conclusion":"SUCCESS","startedAt":"2026-11-20T05:59:13Z"},
+  {"name":"assess","workflowName":"Stamp","status":"QUEUED","conclusion":"","startedAt":"0001-01-01T00:00:00Z"}]}' > "$FAKE_GH_OUT"
+check "links: a queued re-run is the latest, so CI is pending" "pending|0/1 passed" \
+    "$(bash "$task" links --cwd "$lr" --fresh | jq -r '[.links[] | select(.kind == "checks") | .ci, .detail] | join("|")')"
 mv "$FAKE_GH_OUT.keep" "$FAKE_GH_OUT"
 bash "$task" links --cwd "$lr" --fresh >/dev/null
 # --stale-ok: a stale answer at once, gh in the background (the Claude status line).
