@@ -165,7 +165,7 @@ done
 herdr_bin="${HERDR_BIN_PATH:-$(command -v herdr || true)}"
 # The Herdr app's task mods and the Claude status line call projects, parse, prepare, links and
 # pr (and the sidebar's stream, streams), which need no herdr TUI.
-case "${1:-}" in projects | parse | prepare | links | pr | stream | streams) ;; *) [[ -n "$herdr_bin" ]] || die "herdr is required" ;; esac
+case "${1:-}" in projects | parse | prepare | links | pr | stream | streams | doing) ;; *) [[ -n "$herdr_bin" ]] || die "herdr is required" ;; esac
 
 server_running() {
     "$herdr_bin" status server --json | jq -e '.running == true' >/dev/null
