@@ -77,7 +77,7 @@
 #   herdr-task streams [--jev] --task DIR=TITLE [--task ...]
 #                                         Herdr app (sidebar mod), JSON: {"tasks": {DIR:
 #                                         {stream, source, merged}}}; merged comes from the PR
-#                                         cache (never gh); --jev files a task with no stream
+#                                         cache (refreshed by gh in the background); --jev files a task with no stream
 #                                         under an existing stream Jev picks (50% or more), else
 #                                         under its own title
 #   herdr-task open-file <url> [--pane P] open a file:// link in $EDITOR in a split beside the
@@ -1750,7 +1750,7 @@ jev_stream() {
 }
 
 # streams [--jev] --task DIR=TITLE [--task ...]: {"tasks": {DIR: {stream, source, merged}}} for
-# the sidebar. merged reads the PR cache only, never gh. --jev files each task with no stream:
+# the sidebar. merged reads the PR cache, which a background gh refreshes when missing or a day old. --jev files each task with no stream:
 # under the existing stream Jev picks with 50% or more, else under its own title (so it is not
 # asked again); with no key, Jev off or no answer, it stays unset.
 cmd_streams() {
@@ -1796,12 +1796,10 @@ cmd_streams() {
             stream=$(git -C "$dir" config --get "branch.$b.herdr-stream" 2>/dev/null || true)
             source=$(git -C "$dir" config --get "branch.$b.herdr-stream-source" 2>/dev/null || true)
             top=$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null || true)
-            if [[ -n "$top" ]]; then
-                local file
-                file=$(pr_cache_file "$top" "$b")
-                if [[ -s "$file" ]] && [[ "$(jq -r '.state // ""' "$file" 2>/dev/null || true)" == MERGED ]]; then
-                    merged=true
-                fi
+            # The PR cache answers at once; a missing or day-old one is refreshed from gh in the
+            # background for the next read (a merged PR stays merged, so an old answer is fine).
+            if [[ -n "$top" ]] && [[ "$(pr_get "$top" "$b" 86400 stale | jq -r '.state // ""' 2>/dev/null || true)" == MERGED ]]; then
+                merged=true
             fi
         fi
         result=$(jq -c --arg d "$dir" --arg s "$stream" --arg src "$source" --argjson m "$merged" \

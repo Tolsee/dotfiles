@@ -20,8 +20,8 @@ function el() {
 }
 `);
 writeFileSync(join(dir, "herdr.mjs"), `
-export const state = { calls: [], spaces: [], agents: [], panes: [], shared: {}, exec: async () => ({ code: 1, stdout: "", stderr: "" }) };
-export const spaces = () => state.spaces, agents = () => state.agents, panes = () => state.panes;
+export const state = { calls: [], spaces: [], agents: [], panes: [], terminals: [], shared: {}, exec: async () => ({ code: 1, stdout: "", stderr: "" }) };
+export const spaces = () => state.spaces, agents = () => state.agents, panes = () => state.panes, terminals = () => state.terminals;
 export const theme = () => new Proxy({}, { get: (_, k) => "#" + String(k) });
 export const run = (...a) => state.calls.push(["run", ...a]);
 export const exec = (...a) => { state.calls.push(["exec", ...a]); return state.exec(...a); };
@@ -132,11 +132,26 @@ test("place: a space is where its first terminal is now, not where it was made",
   assert.deepEqual(g.flatMap((x) => x.tasks.map((t) => [t.space.id, t.stream])), [["s2", "Herdr"], ["s1", "Profiles"]]);
 });
 
-test("groups: a stream of one task has no header, after the real streams", () => {
+test("groups: every stream has a header, a stream of one too; no stream last", () => {
   const sp = [{ id: "a", name: "Solo", folder: "/a" }, { id: "b", name: "B", folder: "/b" }, { id: "c", name: "C", folder: "/c" }, { id: "d", name: "D", folder: "/d" }];
   const g = list.groups(sp, [], { "/a": { stream: "Solo" }, "/b": { stream: "Net" }, "/c": { stream: "Net" } });
-  assert.deepEqual(g.map((x) => [x.name, x.tasks.map((t) => t.space.id)]), [["Net", ["b", "c"]], [null, ["a"]], ["", ["d"]]]);
-  assert.equal(g[1].tasks[0].stream, "Solo", "a drop on it joins its stream");
+  assert.deepEqual(g.map((x) => [x.name, x.tasks.map((t) => t.space.id)]), [["Solo", ["a"]], ["Net", ["b", "c"]], ["", ["d"]]]);
+});
+
+test("sub-agents an agent started with hc nest under its task, depth first, live only", () => {
+  const terms = [
+    { address: "t12", parent: "t9", state: "live", name: "dev-16449", title: "\u2733 DEV-16449 monolith gate", status: "done" },
+    { address: "t13", parent: "t9", state: "live", name: "dev-16450", title: "Gateway memory", status: { app: "claude-code", state: "working" } },
+    { address: "t14", parent: "t13", state: "live", title: "helper", status: "error" },
+    { address: "t15", parent: "t9", state: "finished", name: "old", status: "done" },
+  ];
+  assert.deepEqual(list.subAgents(terms, ["t9"]).map((k) => [k.address, k.name, k.title, k.status]), [
+    ["t12", "dev-16449", "DEV-16449 monolith gate", "idle"],
+    ["t13", "dev-16450", "Gateway memory", "working"],
+    ["t14", "t14", "helper", "blocked"],
+  ]);
+  const g = list.groups([{ id: "s9", name: "Check", folder: "/p", tabs: [] }], [{ space: "s9", address: "t9", status: "working" }], {}, [], terms);
+  assert.equal(g[0].tasks[0].subs.length, 3);
 });
 
 test("a slow stream read loses to a newer read or a drag", async () => {
