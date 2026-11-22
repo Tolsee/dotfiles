@@ -447,6 +447,65 @@ check "prepare: a branch only on origin keeps its commits" "$(git -C "$ptmp/repo
 check "projects: from the worktree, its repo first" "$ptmp/repo" \
     "$("${app_env[@]}" bash "$task" projects --cwd "$ptmp/appwt/repo/abc-7-fix-login" | jq -r '.projects[0]')"
 
+# --- streams: set, precedence, merged, Jev ---
+git -C "$ptmp/repo" worktree add -q -b stream-a "$ptmp/appwt/repo/stream-a" main 2>/dev/null
+git -C "$ptmp/repo" worktree add -q -b stream-b "$ptmp/appwt/repo/stream-b" main 2>/dev/null
+sa="$ptmp/appwt/repo/stream-a" sb="$ptmp/appwt/repo/stream-b"
+sget() { "${app_env[@]}" bash "$task" streams --task "$1=t" | jq -r --arg d "$1" '.tasks[$d] | "\(.stream)|\(.source)|\(.merged)"'; }
+check "streams: unset" "||false" "$(sget "$sa")"
+"${app_env[@]}" bash "$task" stream set "Onboarding" --cwd "$sa" --source jev 2>/dev/null
+check "stream set: jev fills an unset stream" "Onboarding|jev|false" "$(sget "$sa")"
+"${app_env[@]}" bash "$task" stream set "Other" --cwd "$sa" --source jev 2>/dev/null
+check "stream set: jev never overwrites" "Onboarding|jev|false" "$(sget "$sa")"
+"${app_env[@]}" bash "$task" stream set "Billing" --cwd "$sa" --source ticket 2>/dev/null
+check "stream set: ticket overwrites jev" "Billing|ticket|false" "$(sget "$sa")"
+"${app_env[@]}" bash "$task" stream set "Mine" --cwd "$sa"
+check "stream set: hand overwrites a ticket's" "Mine|hand|false" "$(sget "$sa")"
+check "stream set: ticket refused on hand, exit 0" "0|Mine|hand|false" \
+    "$("${app_env[@]}" bash "$task" stream set "Billing" --cwd "$sa" --source ticket 2>/dev/null; echo -n "$?|"; sget "$sa")"
+"${app_env[@]}" bash "$task" stream set "Other" --cwd "$sa" --source jev 2>/dev/null
+check "stream set: jev refused on hand" "Mine|hand|false" "$(sget "$sa")"
+check "stream set: the worktree's branch, shared config" "Mine" "$(git -C "$ptmp/repo" config --get branch.stream-a.herdr-stream)"
+check "stream set: bad source fails" 1 "$("${app_env[@]}" bash "$task" stream set x --cwd "$sa" --source bogus >/dev/null 2>&1; echo $?)"
+"${app_env[@]}" bash "$task" stream set "" --cwd "$sa" --source ticket 2>/dev/null
+check "stream set: empty ticket name does not clear" "Mine|hand|false" "$(sget "$sa")"
+"${app_env[@]}" bash "$task" stream set "" --cwd "$sa"
+check "stream set: empty hand name clears" "||false" "$(sget "$sa")"
+check "streams: no git dir, no stream" "||false" "$(sget "$ptmp/nobin")"
+
+mkdir -p "$tmp/appcache/herdr-task/prs"
+mcf=$(pr_cache_file "$sb" stream-b)
+printf '{"state":"MERGED","number":3}\n' > "$tmp/appcache/herdr-task/prs/${mcf##*/}"
+check "streams: merged from the PR cache" "true false" \
+    "$("${app_env[@]}" bash "$task" streams --task "$sb=b" --task "$sa=a" | jq -r --arg a "$sa" --arg b "$sb" '"\(.tasks[$b].merged) \(.tasks[$a].merged)"')"
+
+# Jev: a fake curl answers the stream question.
+streams_jev() { # streams_jev <curl answer> <task args...>
+    local answer=$1; shift
+    printf '#!/bin/sh\nprintf %%s %s\n' "'$answer'" > "$tmp/jevbin/curl"
+    env -u HERDR_BIN_PATH HERDR_BIN_PATH= PATH="$tmp/jevbin:$tmp/nobin:/usr/bin:/bin:/opt/homebrew/bin" XDG_CACHE_HOME="$tmp/appcache" \
+        TYPESAFE_API_KEY=x bash "$task" streams --jev "$@"
+}
+"${app_env[@]}" bash "$task" stream set "Checkout" --cwd "$sb"
+out=$(streams_jev '{"answers":{"stream":{"probabilities":{"Checkout":0.8,"A stream of its own":0.2}}}}' --task "$sa=Fix cart" --task "$sb=Pay")
+check "streams --jev: joins an existing stream" "Checkout|jev|Checkout|hand" \
+    "$(jq -r --arg a "$sa" --arg b "$sb" '"\(.tasks[$a].stream)|\(.tasks[$a].source)|\(.tasks[$b].stream)|\(.tasks[$b].source)"' <<<"$out")"
+"${app_env[@]}" bash "$task" stream set "" --cwd "$sa"
+out=$(streams_jev '{"answers":{"stream":{"probabilities":{"Checkout":0.4,"A stream of its own":0.6}}}}' --task "$sa=Fix cart" --task "$sb=Pay")
+check "streams --jev: an own stream takes the task's title" "Fix cart|jev" "$(jq -r --arg a "$sa" '"\(.tasks[$a].stream)|\(.tasks[$a].source)"' <<<"$out")"
+"${app_env[@]}" bash "$task" stream set "" --cwd "$sa"
+out=$(streams_jev '{"answers":{"stream":{"probabilities":{"Checkout":0.4,"Other":0.45}}}}' --task "$sa=Fix cart")
+check "streams --jev: under 50% takes the title" "Fix cart" "$(jq -r --arg a "$sa" '.tasks[$a].stream' <<<"$out")"
+"${app_env[@]}" bash "$task" stream set "" --cwd "$sa"
+out=$(streams_jev 'not json' --task "$sa=Fix cart")
+check "streams --jev: a failed answer leaves it unset" "" "$(jq -r --arg a "$sa" '.tasks[$a].stream' <<<"$out")"
+out=$("${app_env[@]}" bash "$task" streams --jev --task "$sa=Fix cart")
+check "streams --jev: no key leaves it unset" "" "$(jq -r --arg a "$sa" '.tasks[$a].stream' <<<"$out")"
+out=$("${app_env[@]}" bash "$task" prepare ABC-9 --project "$ptmp/repo" 2>/dev/null)
+check "prepare: a ticket prompt files it under its parent" 1 "$(jq -r .prompt <<<"$out" | grep -c 'herdr-task stream set')"
+check "prepare: a free-text prompt has no stream line" 0 \
+    "$("${app_env[@]}" bash "$task" prepare "fix other thing" --project "$ptmp/repo" 2>/dev/null | jq -r .prompt | grep -c 'herdr-task stream set')"
+
 # --- PR links: the PR's head in the checkout of its repository, reviewed ---
 parse_ticket "https://github.com/Acme/proj/pull/7/files"
 check "parse_ticket: a PR link" "pr Acme/proj 7 https://github.com/Acme/proj/pull/7" "$ref_kind $pr_slug $pr_number $pr_url"
