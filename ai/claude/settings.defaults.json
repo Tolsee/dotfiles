@@ -79,6 +79,15 @@
             "command": "codegraph prompt-hook"
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$HOME/.claude/hooks/herdr-task-doing.sh\"",
+            "timeout": 5
+          }
+        ]
       }
     ],
     "SessionStart": [
