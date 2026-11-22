@@ -492,6 +492,25 @@ check "doing hook: asks with the current line" 'Herdr sidebar line for this task
     "$(cd "$sa" && HERDR_ENV=1 HOME="$tmp/hookhome" sh "$root/ai/claude/hooks/herdr-task-doing.sh" </dev/null | cut -d" " -f1-8)"
 check "doing hook: silent outside Herdr" "" \
     "$(cd "$sa" && env -u HERDR_ENV -u HC_TERMINAL_ID HOME="$tmp/hookhome" sh "$root/ai/claude/hooks/herdr-task-doing.sh" </dev/null)"
+# --- related: where a task's Claude sessions worked, from their logs ---
+cl="$ptmp/claude" agent_dir="$ptmp/appwt/repo/stream-b"
+logdir="$cl/projects/$(printf '%s' "$agent_dir" | sed 's/[^A-Za-z0-9]/-/g')"
+mkdir -p "$logdir"
+{
+    printf '{"type":"user","cwd":"%s"}\n' "$agent_dir"
+    printf '{"type":"user","cwd":"%s/sub"}\n' "$sa"
+    printf '{"type":"user","cwd":"%s"}\n' "$ptmp/no-such-folder"
+    printf '{"type":"pr-link","prNumber":5,"prUrl":"https://github.com/o/r/pull/5","prRepository":"o/r","timestamp":"2026-01-01T00:00:00Z"}\n'
+    printf '{"type":"pr-link","prNumber":6,"prUrl":"https://github.com/o/r/pull/6","prRepository":"o/r","timestamp":"2026-01-02T00:00:00Z"}\n'
+    printf '{"type":"pr-link","prNumber":5,"prUrl":"https://github.com/o/r/pull/5","prRepository":"o/r","timestamp":"2026-01-03T00:00:00Z"}\n'
+} > "$logdir/s1.jsonl"
+mkdir -p "$sa/sub"
+rel=$(CLAUDE_CONFIG_DIR="$cl" "${app_env[@]}" bash "$task" related --agent "$agent_dir@0")
+check "related: each checkout once, top level, gone ones left out" "$agent_dir|$sa" "$(jq -r '.folders | join("|")' <<<"$rel")"
+check "related: PRs once, newest first" "5|6" "$(jq -r '.prs | map(.number) | join("|")' <<<"$rel")"
+check "related: no log, nothing" '{"folders":[],"prs":[]}' "$(CLAUDE_CONFIG_DIR="$cl" "${app_env[@]}" bash "$task" related --agent /nowhere@0)"
+check "related: an old log counts when it is the only one" "5|6" \
+    "$(CLAUDE_CONFIG_DIR="$cl" "${app_env[@]}" bash "$task" related --agent "$agent_dir@99999999999999" | jq -r '.prs | map(.number) | join("|")')"
 
 mkdir -p "$tmp/appcache/herdr-task/prs"
 mcf=$(pr_cache_file "$sb" stream-b)

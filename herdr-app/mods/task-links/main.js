@@ -9,12 +9,17 @@
 // prefix+o and the status bar, so every UI shows the same links and shares one PR cache on disk.
 // Opens on what git knows and the cached PR (tens of ms), then fills in gh's answer (~1 s).
 //
+// Below them, a section for each other checkout the task's Claude sessions worked in (its agent
+// and the helpers it started with hc, `herdr-task related` reads their logs): that branch's PR,
+// failing checks and checks, or the branch when it has no PR. Then the PRs they opened that no
+// section shows. Local spaces only.
+//
 // Keys: j/k or ↑/↓ move, 1-9 pick, Enter opens, y copies the link, d opens the diff
 // (uncommitted changes), r reloads, Esc closes.
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { focused, spaces, theme, exec, props, closeOverlay, openOverlay, notify, window } from "herdr";
+import { focused, spaces, agents, terminals, theme, exec, props, closeOverlay, openOverlay, notify, window } from "herdr";
 
 const LINEAR = "#7a88cf"; // the TUI sidebar's ticket color
 const VISIBLE = 9; // rows shown at once; the window follows the selection
@@ -37,6 +42,42 @@ export async function taskLinks({ cwd, on, fresh }) {
 // The rows for one answer of taskLinks; the PR row carries the PR for its badges.
 export const rowsOf = (facts) => (facts.links ?? []).map((l) => (l.kind === "pr" ? { ...l, pr: facts.pr } : l));
 
+// Where each Claude session of a space started: its agents' terminals and every live terminal
+// they started (hc's parent), depth first. `claude -w NAME` works in <cwd>/.claude/worktrees/NAME.
+// "DIR@created_ms" for `herdr-task related --agent`.
+export function sessionDirs(spaceId, ag, terms) {
+  const out = [], seen = new Set();
+  const byAddr = new Map(terms.map((k) => [k.address, k]));
+  const add = (k) => {
+    if (!k || seen.has(k.address) || !k.cwd) return;
+    seen.add(k.address);
+    const argv = k.argv ?? [];
+    let wt = null;
+    for (let i = 0; i < argv.length; i++) {
+      if ((argv[i] === "-w" || argv[i] === "--worktree") && argv[i + 1] && !argv[i + 1].startsWith("-")) wt = argv[i + 1];
+      else if (argv[i]?.startsWith("--worktree=")) wt = argv[i].slice(11);
+    }
+    out.push(`${wt ? `${k.cwd}/.claude/worktrees/${wt}` : k.cwd}@${k.created_ms ?? 0}`);
+    for (const c of terms) if (c.parent === k.address && c.state === "live") add(c);
+  };
+  for (const a of ag) if (a.space === spaceId) add(byAddr.get(a.address));
+  return out;
+}
+
+// One section's rows for another checkout: its PR with failing checks and checks, else its branch.
+export function sectionRows(facts) {
+  const name = facts.branch ?? facts.cwd?.split("/").pop();
+  const rows = rowsOf(facts).filter((l) => (facts.pr ? ["pr", "failing", "checks"] : ["branch", "compare"]).includes(l.kind));
+  return rows.map((l) => ({ ...l, group: name }));
+}
+
+// PRs the sessions opened that no row shows yet.
+export function otherPrs(prs, rows) {
+  const shown = new Set(rows.filter((l) => l.kind === "pr").map((l) => l.url));
+  return prs.filter((p) => p.url && !shown.has(p.url))
+    .map((p) => ({ kind: "pr-link", label: `#${p.number}`, detail: p.repo ?? "", url: p.url, group: "Other PRs" }));
+}
+
 export default class TaskLinks extends View {
   init(_props, cx) {
     this.handle = cx.focus_handle();
@@ -56,38 +97,73 @@ export default class TaskLinks extends View {
   where() {
     const f = focused();
     const space = spaces().find((s) => s.id === f?.space) ?? spaces().find((s) => s.active);
-    return { cwd: f?.cwd || space?.folder || null, on: space?.machine ?? null };
+    return { cwd: f?.cwd || space?.folder || null, on: space?.machine ?? null, space: space?.id ?? null };
   }
 
-  show(facts) {
-    this.facts = facts;
+  show(facts, extra = this.extra ?? []) {
+    if (facts) this.facts = facts;
+    this.extra = extra;
     // Keep the selection on the same link while rows arrive above it.
     const was = this.links[this.at]?.url ?? this.links[this.at]?.kind;
-    this.links = rowsOf(facts);
+    this.links = [...(this.facts ? rowsOf(this.facts) : []), ...extra];
     const i = this.links.findIndex((l) => (l.url ?? l.kind) === was);
     this.at = i >= 0 ? i : Math.min(this.at, Math.max(0, this.links.length - 1));
   }
 
-  // What git knows and the cached PR first (instant), then gh's answer.
+  // What git knows and the cached PR first (instant), then the other checkouts' sections, then
+  // gh's answers.
   reload(cx) {
     this.loading = true;
     this.error = null;
     cx.spawn(async (cx) => {
+      const { cwd, on, space } = this.where();
+      let facts = null;
       try {
-        const { cwd, on } = this.where();
         if (cwd) {
-          const facts = { ...(await taskLinks({ cwd, on })), cwd };
+          facts = { ...(await taskLinks({ cwd, on })), cwd };
           this.show(facts);
           cx.notify();
-          if (facts.branch) this.show({ ...(await taskLinks({ cwd, on, fresh: true })), cwd });
         }
       } catch (e) {
         this.error = String(e?.message ?? e);
+      }
+      const others = on === null && space ? await this.related(space, facts?.top ?? null, cx) : [];
+      try {
+        if (facts?.branch) this.show({ ...(await taskLinks({ cwd, on, fresh: true })), cwd });
+        if (others.length) this.show(null, await this.sections(others, true));
+      } catch (e) {
+        this.error ??= String(e?.message ?? e);
       }
       this.loading = false;
       if (!this.error && !this.links.length) this.error = "No ticket, PR or GitHub branch here. Start the task with prefix+t.";
       cx.notify();
     });
+  }
+
+  // The other checkouts the space's sessions worked in, drawn from cached PRs; returns them for
+  // the gh pass. Nothing when the logs can't be read.
+  async related(space, top, cx) {
+    try {
+      const dirs = sessionDirs(space, agents(), terminals());
+      if (!dirs.length) return [];
+      const r = await exec("sh", ["-c", 'exec "$HOME/bin/herdr-task" "$@"', "herdr-task", "related", ...dirs.flatMap((d) => ["--agent", d])]);
+      if (r.code !== 0) return [];
+      const { folders = [], prs = [] } = JSON.parse(r.stdout);
+      const others = folders.filter((f) => f !== top);
+      this.prs = prs;
+      this.show(null, await this.sections(others, false));
+      cx.notify();
+      return others;
+    } catch {
+      return [];
+    }
+  }
+
+  async sections(folders, fresh) {
+    const all = await Promise.all(folders.map((cwd) => taskLinks({ cwd, on: null, fresh: fresh || undefined }).then((f) => ({ ...f, cwd })).catch(() => null)));
+    // A checkout on its default branch with no PR is not work of this task.
+    const rows = all.filter((f) => f && (f.branch || f.pr)).flatMap(sectionRows);
+    return [...rows, ...otherPrs(this.prs ?? [], [...(this.facts ? rowsOf(this.facts) : []), ...rows])];
   }
 
   open(link) {
@@ -151,7 +227,7 @@ export default class TaskLinks extends View {
   glyph(t, link) {
     switch (link.kind) {
       case "ticket": return svg("mods/task-status/linear.svg").size(13).flex_none().text_color(LINEAR);
-      case "pr": return icon("git-compare").text_color(t.foreground);
+      case "pr": case "pr-link": return icon("git-compare").text_color(t.foreground);
       case "failing": return icon("x").text_color(t.blocked);
       case "checks": return icon(link.ci === "pass" ? "circle-check" : link.ci === "fail" ? "x" : "clock")
         .text_color(link.ci === "pass" ? t.done : link.ci === "fail" ? t.blocked : t.working ?? t.muted);
@@ -207,7 +283,12 @@ export default class TaskLinks extends View {
       .child(v_flex().gap(2)
         .when(this.loading && !this.links.length, (el) => el.child(div().px(10).py(8).text_color(t.dim).child("Loading ticket, PR and checks…")))
         .when(!this.loading && this.error, (el) => el.child(div().px(10).py(8).text_color(t.dim).child(this.error)))
-        .children(this.links.map(row).slice(this.first(), this.first() + VISIBLE))
+        .children(this.links.slice(this.first(), this.first() + VISIBLE).flatMap((l, j) => {
+          const i = this.first() + j, prev = i > 0 ? this.links[i - 1].group : undefined;
+          const head = l.group && (j === 0 || l.group !== prev)
+            ? [div().px(10).pt(8).pb(2).truncate().text_size(11).font_semibold().text_color(t.dim).child(l.group)] : [];
+          return [...head, row(l, i)];
+        }))
         .when(this.links.length > VISIBLE, (el) => el.child(div().px(10).text_size(11).text_color(t.dim)
           .child(`${this.at + 1} of ${this.links.length}`))))
       .child(h_flex().pt(6).gap(14).border_t(1).border_color(t.border).text_size(11).text_color(t.dim)
