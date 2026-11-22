@@ -16,7 +16,3 @@ agent rules, Claude defaults, MCP definitions, and reusable skills. Run
 the aws and mcps tests. `./test herdr fzf` runs some. Checks whose tool is missing are
 skipped locally; CI (`.github/workflows/test.yml`) installs everything and runs with
 `TEST_STRICT=1`, so nothing is skipped there.
-
-## Inspiration
-
-- NVIM: https://github.com/ThePrimeagen/.dotfiles
