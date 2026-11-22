@@ -182,3 +182,14 @@ test("sections: a checkout's PR rows under its branch, else its branch; PRs no r
   const prs = [{ url: PR.url, number: 7, repo: "o/r" }, { url: "https://github.com/o/r/pull/9", number: 9, repo: "o/r" }];
   assert.deepEqual(otherPrs(prs, sectionRows(withPr)).map((l) => [l.kind, l.label, l.group]), [["pr-link", "#9", "Other PRs"]]);
 });
+
+test("a PR the fresh lookup finds for the focused checkout leaves Other PRs", async () => {
+  const m = new TaskLinks();
+  m.links = []; m.at = 0;
+  m.prs = [{ url: PR.url, number: 7, repo: "o/r" }];
+  m.show({ cwd: "/repo", links: [] }, await m.sections([], false));
+  assert.deepEqual(m.links.map((l) => l.kind), ["pr-link"]);
+  m.show({ cwd: "/repo", pr: PR, links: [{ kind: "pr", url: PR.url }] });
+  m.show(null, await m.sections([], true));
+  assert.deepEqual(m.links.map((l) => l.kind), ["pr"]);
+});

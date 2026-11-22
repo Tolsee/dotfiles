@@ -130,7 +130,8 @@ export default class TaskLinks extends View {
       const others = on === null && space ? await this.related(space, facts?.top ?? null, cx) : [];
       try {
         if (facts?.branch) this.show({ ...(await taskLinks({ cwd, on, fresh: true })), cwd });
-        if (others.length) this.show(null, await this.sections(others, true));
+        // Also with no other checkouts: the focused one's fresh PR may be one listed under Other PRs.
+        if (others.length || this.prs?.length) this.show(null, await this.sections(others, true));
       } catch (e) {
         this.error ??= String(e?.message ?? e);
       }
