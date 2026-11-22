@@ -4,7 +4,7 @@
 // where you dragged it. Each row: the agent's state, the task's title (ticket id on the right),
 // and what the agent is doing now (its terminal title). Other agents in the space nest under it.
 // Tasks waiting on you are tinted and counted up top; the count jumps to them in turn. Merged
-// tasks dim until pruned. No PR or CI here: prefix+o and prefix+m have those.
+// tasks dim until pruned and never count as waiting on you. No PR or CI here: prefix+o and prefix+m have those.
 //
 // Click a row to go to its space, right-click for the space menu, drag a row onto another
 // stream (or the "new stream" line) to move it there.
@@ -151,7 +151,7 @@ export default class TaskList extends View {
   }
 
   row(task, stream, t) {
-    const s = task.space, on = s.active, need = needsYou(s.status);
+    const s = task.space, on = s.active, need = needsYou(s.status) && !task.merged; // merged: finished work, not a call for you
     const extra = task.agents.slice(1);
     const second = task.doing || (task.agents.length ? "" : task.folder?.split("/").pop() ?? "");
     return v_flex().id(`task-${s.id}`).px(8).py(5).gap(1).rounded(7).flex_none()
@@ -207,7 +207,8 @@ export default class TaskList extends View {
     const sp = spaces(), ag = agents();
     const list = groups(sp, ag, this.streams, panes());
     const order = list.flatMap((g) => g.tasks.map((k) => k.space.id));
-    const waiting = ag.filter((a) => needsYou(a.status)).sort((a, b) => order.indexOf(a.space) - order.indexOf(b.space));
+    const merged = new Set(list.flatMap((g) => g.tasks.filter((k) => k.merged).map((k) => k.space.id)));
+    const waiting = ag.filter((a) => needsYou(a.status) && !merged.has(a.space)).sort((a, b) => order.indexOf(a.space) - order.indexOf(b.space));
     const dragging = this.pressed !== null;
     return v_flex().size_full().min_h(0).bg(t.chrome).text_size(13)
       .child(h_flex().h(31).pl(16).pr(10).items_center().justify_between().text_size(11.5).text_color(t.dim)
