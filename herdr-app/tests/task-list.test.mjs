@@ -102,18 +102,20 @@ test("drag: dropping a row on another stream files it there by hand; a click sel
   m.init({}, c);
   await Promise.all(tasks);
   m.streams = { "/w/a": { stream: "Old", source: "jev" } };
+  state.exec = async (_c, args) => (args[3] === "streams" ? { code: 1, stdout: "", stderr: "" } : { code: 0, stdout: "", stderr: "" });
   m.pressed = "s1";
   m.drop("Network", null, c);
   await Promise.all(tasks);
   assert.equal(m.streams["/w/a"].stream, "Network");
   assert.equal(m.streams["/w/a"].source, "hand");
-  const set = state.calls.filter((x) => x[0] === "exec").pop();
+  const set = state.calls.find((x) => x[0] === "exec" && x[2][3] === "stream");
   assert.deepEqual(set[2].slice(3), ["stream", "set", "Network", "--cwd", "/w/a", "--source", "hand"]);
 
   m.pressed = "s1";
   m.drop("\u0000new", null, c);
   assert.equal(m.streams["/w/a"].stream, "One", "a stream of its own is named after the task");
 
+  await Promise.all(tasks);
   state.calls = [];
   m.pressed = "s1";
   m.drop("One", state.spaces[0], c);
@@ -135,4 +137,20 @@ test("groups: a stream of one task has no header, after the real streams", () =>
   const g = list.groups(sp, [], { "/a": { stream: "Solo" }, "/b": { stream: "Net" }, "/c": { stream: "Net" } });
   assert.deepEqual(g.map((x) => [x.name, x.tasks.map((t) => t.space.id)]), [["Net", ["b", "c"]], [null, ["a"]], ["", ["d"]]]);
   assert.equal(g[1].tasks[0].stream, "Solo", "a drop on it joins its stream");
+});
+
+test("a slow stream read loses to a newer read or a drag", async () => {
+  state.calls = []; state.shared = {}; state.panes = [];
+  state.spaces = [{ id: "s1", name: "DEV-1 One", folder: "/w/a" }];
+  const pending = [];
+  state.exec = (_c, args) => new Promise((resolve) => pending.push({ args: args.slice(3), resolve }));
+  const tasks = [];
+  const c = cx(tasks);
+  const m = new list.default();
+  m.init({}, c);
+  m.pressed = "s1";
+  m.drop("Mine", null, c);
+  pending.find((p) => p.args[0] === "streams").resolve({ code: 0, stdout: JSON.stringify({ tasks: { "/w/a": { stream: "Old", source: "jev" } } }), stderr: "" });
+  await new Promise((r) => setImmediate(r));
+  assert.equal(m.streams["/w/a"].stream, "Mine", "the read started before the drag is dropped");
 });

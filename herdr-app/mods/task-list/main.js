@@ -90,6 +90,7 @@ export default class TaskList extends View {
     this.jump = 0;
     this.asked = "";
     this.at = 0;
+    this.gen = 0; // stream reads and drags in order: only the latest one's answer is kept
     this.refresh(cx);
     cx.timer.every(REFRESH, () => this.refresh(cx, true));
   }
@@ -107,10 +108,12 @@ export default class TaskList extends View {
     const list = this.tasks(), key = list.join("\n");
     if (!list.length || (!force && key === this.asked)) return;
     this.asked = key;
+    const gen = ++this.gen;
     cx.spawn(async (cx) => {
       try {
         const r = await herdrTask(["streams", "--jev", ...list.flatMap((t) => ["--task", t])], { timeout: 60000 });
-        if (r.code !== 0) return;
+        // A newer read, or a drag since, is newer than this answer (Jev can make an old read slow).
+        if (r.code !== 0 || gen !== this.gen) return;
         this.streams = JSON.parse(r.stdout).tasks ?? {};
         setShared(CACHE, this.streams);
         cx.notify();
@@ -122,10 +125,13 @@ export default class TaskList extends View {
   move(space, stream, cx) {
     const name = stream === NEW ? splitName(space.name).title : stream;
     const folder = place(space, panes());
+    this.gen++;
+    this.asked = ""; // read again after the drag is saved
     this.streams = { ...this.streams, [folder]: { ...(this.streams[folder] ?? {}), stream: name, source: "hand" } };
     setShared(CACHE, this.streams);
-    cx.spawn(async () => {
+    cx.spawn(async (cx) => {
       try { await herdrTask(["stream", "set", name, "--cwd", folder, "--source", "hand"]); } catch {}
+      this.refresh(cx);
     });
   }
 
@@ -154,7 +160,7 @@ export default class TaskList extends View {
       .when(!on && !need, (el) => el.hover((h) => h.bg(t.hover)))
       .when(task.merged, (el) => el.opacity(0.45))
       .when(this.pressed === s.id, (el) => el.opacity(0.5))
-      .on_mouse_down("left", () => { this.pressed = s.id; this.over = stream; })
+      .on_mouse_down("left", (_e, cx) => { this.pressed = s.id; this.over = stream; cx.notify(); })
       .on_mouse_move((_e, cx) => {
         if (this.pressed !== null && this.over !== stream) { this.over = stream; cx.notify(); }
       })
