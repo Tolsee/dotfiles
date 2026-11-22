@@ -66,6 +66,20 @@
 #                                         path, space label and agent prompt (by kind, default
 #                                         groom) for the mod; --branch NAME takes NAME as the
 #                                         branch, never a ticket
+#   herdr-task stream set <name> [--cwd DIR] [--source ticket|hand|jev]
+#                                         file DIR's branch under a stream of work (the sidebar
+#                                         groups task spaces by it; usually the Linear parent
+#                                         ticket's title), saved on the branch in git config.
+#                                         hand (default) overwrites anything, ticket never
+#                                         overwrites hand, jev only fills an unset stream; a
+#                                         refused write exits 0 with a note. An empty name with
+#                                         hand clears it
+#   herdr-task streams [--jev] --task DIR=TITLE [--task ...]
+#                                         Herdr app (sidebar mod), JSON: {"tasks": {DIR:
+#                                         {stream, source, merged}}}; merged comes from the PR
+#                                         cache (never gh); --jev files a task with no stream
+#                                         under an existing stream Jev picks (50% or more), else
+#                                         under its own title
 #   herdr-task open-file <url> [--pane P] open a file:// link in $EDITOR in a split beside the
 #                                         pane, at the line the link carries (#L12 or :12)
 #
@@ -145,8 +159,8 @@ for dependency in jq git; do
 done
 herdr_bin="${HERDR_BIN_PATH:-$(command -v herdr || true)}"
 # The Herdr app's task mods and the Claude status line call projects, parse, prepare, links and
-# pr, which need no herdr TUI.
-case "${1:-}" in projects | parse | prepare | links | pr) ;; *) [[ -n "$herdr_bin" ]] || die "herdr is required" ;; esac
+# pr (and the sidebar's stream, streams), which need no herdr TUI.
+case "${1:-}" in projects | parse | prepare | links | pr | stream | streams) ;; *) [[ -n "$herdr_bin" ]] || die "herdr is required" ;; esac
 
 server_running() {
     "$herdr_bin" status server --json | jq -e '.running == true' >/dev/null
@@ -512,6 +526,7 @@ cmd_start() {
                 prompt="Review $pr_url with the pr-review skill."
             elif [[ -n "$ticket_id" ]]; then
                 prompt="Work on ${ticket_url:-$ticket_id}. Groom it first (groom skill)."
+                prompt="$prompt If the ticket has a parent issue, file this task under it: herdr-task stream set \"<parent issue title>\" --source ticket."
                 [[ -z "$title" ]] && prompt="$prompt After reading it, name this Herdr workspace after its title, without the ticket id (the sidebar shows that already): herdr workspace rename \"\$HERDR_WORKSPACE_ID\" \"<ticket title>\"."
             else
                 prompt="Task: ${title:-$branch}. Groom it first (groom skill)."
@@ -1643,6 +1658,9 @@ cmd_prepare() {
             short) prompt="Work on $what. It is a small change: skip grooming, make it, then ship it." ;;
             review) prompt="Review $what with the pr-review skill." ;;
         esac
+        if [[ -n "$ticket_id" && "$kind" != review ]]; then
+            prompt+=' If the ticket has a parent issue, file this task under it: herdr-task stream set "<parent issue title>" --source ticket.'
+        fi
         if [[ -n "$ticket_id" && -z "$title" ]]; then
             # shellcheck disable=SC2016
             prompt+=' After reading it, name this Herdr space after it: herdr-app do space.rename --id "$(herdr-app ls | jq -r --arg t "$HC_TERMINAL_ID" '\''.spaces[] | select(any(.tabs[].terminals[]; .terminal == $t)) | .id'\'')" --name "'"$ticket_id"' <ticket title>".'
@@ -1652,6 +1670,144 @@ cmd_prepare() {
         --arg agent "$agent" --arg prompt "$prompt" --arg id "$ticket_id" --arg url "$ticket_url" \
         '{path: $path, branch: $branch, label: $label, existing: $existing,
           agent: (if $agent == "none" then null else $agent end), prompt: $prompt, ticket_id: $id, ticket_url: $url}'
+}
+
+# --- Streams of work -----------------------------------------------------------------------
+# The Herdr app's sidebar groups task spaces by stream. A stream is saved per branch in the
+# repository's git config (shared by its worktrees): branch.<b>.herdr-stream (the name) and
+# branch.<b>.herdr-stream-source (ticket, jev or hand: who set it, for precedence).
+
+# stream_branch <dir>: DIR's branch; nothing when detached or not a git directory.
+stream_branch() {
+    git -C "$1" symbolic-ref --short -q HEAD 2>/dev/null || true
+}
+
+# stream_set <dir> <name> <source>: hand overwrites anything (an empty name clears it), ticket
+# overwrites jev or unset but never hand, jev only fills an unset stream. A refused write is
+# a note, not a failure.
+stream_set() {
+    local dir=$1 name=$2 source=$3 b cur cur_src
+    b=$(stream_branch "$dir")
+    [[ -n "$b" ]] || { note "no branch in $dir, stream not saved"; return 0; }
+    if [[ -z "$name" ]]; then
+        if [[ "$source" == hand ]]; then
+            git -C "$dir" config --unset-all "branch.$b.herdr-stream" 2>/dev/null || true
+            git -C "$dir" config --unset-all "branch.$b.herdr-stream-source" 2>/dev/null || true
+        fi
+        return 0
+    fi
+    cur=$(git -C "$dir" config --get "branch.$b.herdr-stream" 2>/dev/null || true)
+    cur_src=$(git -C "$dir" config --get "branch.$b.herdr-stream-source" 2>/dev/null || true)
+    if [[ -n "$cur" ]]; then
+        case "$source" in
+            jev) note "$b is already in stream \"$cur\", kept"; return 0 ;;
+            ticket) [[ "$cur_src" != hand ]] || { note "$b was filed by hand under \"$cur\", kept"; return 0; } ;;
+        esac
+    fi
+    git -C "$dir" config "branch.$b.herdr-stream" "$name"
+    git -C "$dir" config "branch.$b.herdr-stream-source" "$source"
+}
+
+# stream <set> <name> [--cwd DIR] [--source ticket|hand|jev]
+cmd_stream() {
+    local sub=${1:-} name="" cwd=$PWD source=hand have_name=""
+    [[ "$sub" == set ]] || die "usage: herdr-task stream set <name> [--cwd DIR] [--source ticket|hand|jev]"
+    shift
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --cwd) cwd=${2:?--cwd needs a directory}; shift 2 ;;
+            --source) source=${2:?--source needs a value}; shift 2 ;;
+            --*) die "unknown option: $1" ;;
+            *) [[ -z "$have_name" ]] || die "unexpected argument: $1"; name=$1 have_name=1; shift ;;
+        esac
+    done
+    [[ -n "$have_name" ]] || die "usage: herdr-task stream set <name> [--cwd DIR] [--source ticket|hand|jev]"
+    case "$source" in ticket | hand | jev) ;; *) die "unknown source: $source (ticket, hand or jev)" ;; esac
+    stream_set "$cwd" "$name" "$source"
+}
+
+# jev_stream <title> <own-option>: reads existing stream names on stdin and prints
+# "choice<TAB>probability" for the likeliest stream of the task titled <title>, <own-option>
+# standing for a stream of its own. Silent without TYPESAFE_API_KEY, with HERDR_TASK_JEV=0,
+# or when Jev doesn't answer within 3 seconds. Follows jev_rank.
+jev_stream() {
+    [[ -n "${TYPESAFE_API_KEY:-}" && "${HERDR_TASK_JEV:-1}" != 0 ]] || return 0
+    command -v curl >/dev/null 2>&1 || return 0
+    local body
+    body=$(jq -R -s --arg title "${1:0:500}" --arg own "$2" '
+        split("\n") | map(select(. != "")) as $names
+        | { model: "jev-latest",
+            state: { task: $title },
+            questions: { stream: {
+                type: "choice",
+                instructions: "The task is a piece of work in a git repository. Which stream of work (a group of related tasks) does it belong to? Choose the stream of its own when none of the others fits.",
+                criteria: (($names | map({ key: ., value: "Stream \(.)" }) | from_entries)
+                           + { ($own): "A stream of its own, none of the others" }) } } }') || return 0
+    curl -fsS -m 3 "${TYPESAFE_BASE_URL:-https://api.typesafe.ai}/v1/systemone" \
+        -H 'content-type: application/json' -H "authorization: Bearer $TYPESAFE_API_KEY" -d "$body" 2>/dev/null \
+        | jq -r '.answers.stream.probabilities // {} | to_entries | sort_by(-.value) | .[0] // empty
+                 | "\(.key)\t\(.value)"' 2>/dev/null || true
+}
+
+# streams [--jev] --task DIR=TITLE [--task ...]: {"tasks": {DIR: {stream, source, merged}}} for
+# the sidebar. merged reads the PR cache only, never gh. --jev files each task with no stream:
+# under the existing stream Jev picks with 50% or more, else under its own title (so it is not
+# asked again); with no key, Jev off or no answer, it stays unset.
+cmd_streams() {
+    local jev="" t dir title b top="" stream source merged result='{"tasks":{}}'
+    local -a dirs=() titles=() names=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --jev) jev=1; shift ;;
+            --task) [[ "${2:-}" == *=* ]] || die "--task needs DIR=TITLE"; t=$2; dirs+=("${t%%=*}"); titles+=("${t#*=}"); shift 2 ;;
+            *) die "unknown option: $1" ;;
+        esac
+    done
+    local i own="A stream of its own" answer pick prob
+    if [[ -n "$jev" ]]; then
+        for i in "${!dirs[@]}"; do
+            b=$(stream_branch "${dirs[$i]}")
+            [[ -n "$b" ]] || continue
+            stream=$(git -C "${dirs[$i]}" config --get "branch.$b.herdr-stream" 2>/dev/null || true)
+            [[ -z "$stream" ]] || names+=("$stream")
+        done
+        for i in "${!dirs[@]}"; do
+            dir=${dirs[$i]} title=${titles[$i]}
+            b=$(stream_branch "$dir")
+            [[ -n "$b" && -n "$title" ]] || continue
+            [[ -z "$(git -C "$dir" config --get "branch.$b.herdr-stream" 2>/dev/null || true)" ]] || continue
+            # jev_stream may return without reading stdin: SIGPIPE under pipefail.
+            answer=$(printf '%s\n' "${names[@]+"${names[@]}"}" | jev_stream "$title" "$own" || true)
+            [[ -n "$answer" ]] || continue
+            pick=${answer%%$'\t'*} prob=${answer#*$'\t'}
+            if [[ "$pick" != "$own" && -n "$pick" ]] && awk -v p="$prob" 'BEGIN { exit !(p >= 0.5) }'; then
+                stream_set "$dir" "$pick" jev
+            else
+                stream_set "$dir" "$title" jev
+                names+=("$title")
+            fi
+        done
+    fi
+    for i in "${!dirs[@]}"; do
+        dir=${dirs[$i]}
+        b=$(stream_branch "$dir")
+        stream="" source="" merged=false
+        if [[ -n "$b" ]]; then
+            stream=$(git -C "$dir" config --get "branch.$b.herdr-stream" 2>/dev/null || true)
+            source=$(git -C "$dir" config --get "branch.$b.herdr-stream-source" 2>/dev/null || true)
+            top=$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null || true)
+            if [[ -n "$top" ]]; then
+                local file
+                file=$(pr_cache_file "$top" "$b")
+                if [[ -s "$file" ]] && [[ "$(jq -r '.state // ""' "$file" 2>/dev/null || true)" == MERGED ]]; then
+                    merged=true
+                fi
+            fi
+        fi
+        result=$(jq -c --arg d "$dir" --arg s "$stream" --arg src "$source" --argjson m "$merged" \
+            '.tasks[$d] = {stream: $s, source: $src, merged: $m}' <<<"$result")
+    done
+    printf '%s\n' "$result"
 }
 
 # Sourced for tests: define the functions and stop.
@@ -1678,6 +1834,8 @@ case "${1:-}" in
     projects) shift; cmd_projects "$@" ;;
     parse) shift; cmd_parse "$@" ;;
     prepare) shift; cmd_prepare "$@" ;;
+    stream) shift; cmd_stream "$@" ;;
+    streams) shift; cmd_streams "$@" ;;
     -h|--help) awk 'NR > 1 && !/^#/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "$0" ;;
-    *) die "unknown command: $1 (start, tag, open, links, pr, review, ship, open-file, open-ticket, retag, prune, prune-worktree, projects, parse, prepare; --help)" ;;
+    *) die "unknown command: $1 (start, tag, open, links, pr, review, ship, open-file, open-ticket, retag, prune, prune-worktree, projects, parse, prepare, stream, streams; --help)" ;;
 esac
