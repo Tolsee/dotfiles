@@ -233,7 +233,7 @@ export default class TaskList extends View {
     const order = list.flatMap((g) => g.tasks.map((k) => k.space.id));
     const merged = new Set(list.flatMap((g) => g.tasks.filter((k) => k.merged).map((k) => k.space.id)));
     // A blocked sub-agent waits on you too (its done goes to its parent, so it doesn't count).
-    const kids = list.flatMap((g) => g.tasks.flatMap((k) => k.subs.filter((x) => x.status === "blocked").map((x) => ({ space: k.space.id, peek: x.address }))));
+    const kids = list.flatMap((g) => g.tasks.filter((k) => !k.merged).flatMap((k) => k.subs.filter((x) => x.status === "blocked").map((x) => ({ space: k.space.id, peek: x.address }))));
     const waiting = [...ag.filter((a) => needsYou(a.status) && !merged.has(a.space)), ...kids].sort((a, b) => order.indexOf(a.space) - order.indexOf(b.space));
     const dragging = this.pressed !== null;
     return v_flex().size_full().min_h(0).bg(t.chrome).text_size(13)
