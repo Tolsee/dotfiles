@@ -2,7 +2,8 @@
 // over an Agents list. Rows are grouped by stream of work (`herdr-task streams`): the ticket's
 // parent, which the task's agent files with `herdr-task stream set`, else Jev's pick, else
 // where you dragged it. Each row: the agent's state, the task's title (ticket id on the right),
-// and what the agent is doing now (its terminal title). Other agents in the space nest under it.
+// and what the agent is doing now (its terminal title). Other agents in the space nest under it,
+// and so do sub-agents its agent started with hc (no pane; click to peek).
 // Tasks waiting on you are tinted and counted up top; the count jumps to them in turn. Merged
 // tasks dim until pruned and never count as waiting on you. No PR or CI here: prefix+o and prefix+m have those.
 //
@@ -11,7 +12,7 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, ScrollHandle } from "gpui-base";
-import { spaces, agents, panes, run, exec, openOverlay, theme, shared, setShared } from "herdr";
+import { spaces, agents, panes, terminals, run, exec, openOverlay, theme, shared, setShared } from "herdr";
 
 const CACHE = "task-list.streams"; // folder -> { stream, source, merged }, so a reopen draws at once
 const REFRESH = 60000; // ms between stream reads when nothing changed (Jev and git config only)
@@ -42,6 +43,26 @@ function doing(a) {
 
 export const needsYou = (status) => status === "blocked" || status === "done";
 
+// A terminal's status word, whether reported as "done" or { state: "done" }.
+const word = (st) => (typeof st === "object" && st ? st.state : st) ?? "";
+
+// Live sub-agents an agent started with hc (no pane, so not in agents()), depth first.
+// A sub-agent's done reports to its parent, so it counts as idle; error counts as blocked.
+export function subAgents(terms, addresses) {
+  const out = [], seen = new Set();
+  const walk = (addr) => {
+    for (const k of terms) {
+      if (k.parent !== addr || k.state !== "live" || seen.has(k.address)) continue;
+      seen.add(k.address);
+      const st = word(k.status);
+      out.push({ address: k.address, name: k.name ?? k.address, title: clean(k.title), status: st === "error" ? "blocked" : st === "done" ? "idle" : st });
+      walk(k.address);
+    }
+  };
+  for (const a of addresses) walk(a);
+  return out;
+}
+
 // Where a space works now: its first terminal's live folder, else where it was made (a space
 // made in one worktree may have moved on to another repository).
 export function place(s, ps) {
@@ -49,9 +70,9 @@ export function place(s, ps) {
   return ps.find((p) => tabs.has(p.tab) && p.cwd)?.cwd || s.folder;
 }
 
-// Spaces as tasks, grouped by stream in the order each stream first appears; streams of one
-// task, then tasks with no stream yet, come last. Local spaces only (a remote one's folder is not this machine's).
-export function groups(sp, ag, streams, ps = []) {
+// Spaces as tasks, grouped by stream in the order each stream first appears; tasks with no
+// stream yet come last. Local spaces only (a remote one's folder is not this machine's).
+export function groups(sp, ag, streams, ps = [], terms = []) {
   const byStream = new Map();
   for (const s of sp) {
     if ((s.machine ?? null) !== null) continue;
@@ -61,6 +82,7 @@ export function groups(sp, ag, streams, ps = []) {
     const { id, title } = splitName(s.name);
     const task = {
       space: s, folder, id, title, agents: mine, merged: Boolean(info.merged), source: info.source ?? "",
+      subs: subAgents(terms, mine.map((a) => a.address)),
       doing: doing(mine[0]),
     };
     const key = info.stream ?? "";
@@ -68,17 +90,11 @@ export function groups(sp, ag, streams, ps = []) {
     if (!byStream.has(key)) byStream.set(key, []);
     byStream.get(key).push(task);
   }
-  // A stream of one task is just that task: no header repeating its title. Those come after
-  // the real streams, together, headerless (name null); a drop on one still joins its stream.
-  const real = [], solo = [];
-  for (const [name, tasks] of byStream) {
-    if (name === "") continue;
-    if (tasks.length === 1) solo.push(tasks[0]);
-    else real.push({ name, tasks });
-  }
-  if (solo.length) real.push({ name: null, tasks: solo });
-  if (byStream.has("")) real.push({ name: "", tasks: byStream.get("") });
-  return real;
+  // Every stream has a header, a stream of one too: the grouping always shows and every header
+  // takes a drop.
+  const out = [...byStream].filter(([k]) => k !== "").map(([name, tasks]) => ({ name, tasks }));
+  if (byStream.has("")) out.push({ name: "", tasks: byStream.get("") });
+  return out;
 }
 
 export default class TaskList extends View {
@@ -141,7 +157,8 @@ export default class TaskList extends View {
     const a = waiting[this.jump % waiting.length];
     this.jump++;
     run("space.select", { id: a.space });
-    run("pane.focus", { pane: a.pane });
+    if (a.peek) run("terminal.peek", { terminal: a.peek });
+    else run("pane.focus", { pane: a.pane });
   }
 
   glyph(t, status) {
@@ -153,6 +170,7 @@ export default class TaskList extends View {
   row(task, stream, t) {
     const s = task.space, on = s.active, need = needsYou(s.status) && !task.merged; // merged: finished work, not a call for you
     const extra = task.agents.slice(1);
+    const subs = task.subs ?? [];
     const second = task.doing || (task.agents.length ? "" : task.folder?.split("/").pop() ?? "");
     return v_flex().id(`task-${s.id}`).px(8).py(5).gap(1).rounded(7).flex_none()
       .when(on, (el) => el.bg(t.selected))
@@ -174,7 +192,13 @@ export default class TaskList extends View {
       .children(extra.map((a, i) => h_flex().id(`sub-${s.id}-${i}`).pl(19).gap(6).items_center().text_size(11).text_color(t.dim)
         .on_mouse_down("left", (_e, cx) => { cx.stop_propagation(); run("space.select", { id: s.id }); run("pane.focus", { pane: a.pane }); })
         .child(this.glyph(t, a.status))
-        .child(div().flex_1().min_w(0).truncate().child([a.app ?? a.program?.name, doing(a)].filter(Boolean).join(" · ")))));
+        .child(div().flex_1().min_w(0).truncate().child([a.app ?? a.program?.name, doing(a)].filter(Boolean).join(" · ")))))
+      // Sub-agents have no pane: a click peeks at the terminal.
+      .children(subs.map((k) => h_flex().id(`kid-${k.address}`).pl(19).gap(6).items_center().text_size(11).text_color(t.dim)
+        .when(k.status === "blocked", (el) => el.text_color(t.blocked))
+        .on_mouse_down("left", (_e, cx) => { cx.stop_propagation(); run("terminal.peek", { terminal: k.address }); })
+        .child(this.glyph(t, k.status))
+        .child(div().flex_1().min_w(0).truncate().child([k.name, k.title].filter(Boolean).join(" · ")))));
   }
 
   // Mouse released over `stream` (row s, or a header when s is null).
@@ -205,10 +229,12 @@ export default class TaskList extends View {
     const t = theme();
     this.refresh(cx);
     const sp = spaces(), ag = agents();
-    const list = groups(sp, ag, this.streams, panes());
+    const list = groups(sp, ag, this.streams, panes(), terminals());
     const order = list.flatMap((g) => g.tasks.map((k) => k.space.id));
     const merged = new Set(list.flatMap((g) => g.tasks.filter((k) => k.merged).map((k) => k.space.id)));
-    const waiting = ag.filter((a) => needsYou(a.status) && !merged.has(a.space)).sort((a, b) => order.indexOf(a.space) - order.indexOf(b.space));
+    // A blocked sub-agent waits on you too (its done goes to its parent, so it doesn't count).
+    const kids = list.flatMap((g) => g.tasks.flatMap((k) => k.subs.filter((x) => x.status === "blocked").map((x) => ({ space: k.space.id, peek: x.address }))));
+    const waiting = [...ag.filter((a) => needsYou(a.status) && !merged.has(a.space)), ...kids].sort((a, b) => order.indexOf(a.space) - order.indexOf(b.space));
     const dragging = this.pressed !== null;
     return v_flex().size_full().min_h(0).bg(t.chrome).text_size(13)
       .child(h_flex().h(31).pl(16).pr(10).items_center().justify_between().text_size(11.5).text_color(t.dim)
