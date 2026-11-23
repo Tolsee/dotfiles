@@ -79,14 +79,16 @@ export function filtered(projects, query) {
 
 // The Clone rows for the project step, as "clone:owner/name" (or "clone:name"): the PR's
 // repository when it is not cloned (`parse`'s clone) and the search allows it, then the search
-// itself when it reads as a repository and no checkout has exactly that name.
+// itself when it reads as a repository: a bare name no checkout has, or any owner/name (the
+// checkouts' owners are not known here; herdr-task clone finds one already cloned).
 const REPO = /^[A-Za-z0-9_.-]+(\/[A-Za-z0-9_.-]+)?$/;
 export const CLONE = "clone:";
 export function cloneRows(clone, query, projects) {
   const q = query.trim(), out = [];
   if (clone && (!q || score(q, clone) !== null)) out.push(clone);
   const name = (x) => x.split("/").pop().toLowerCase(), want = q.toLowerCase();
-  const taken = projects.some((p) => name(p) === name(want)) || out.some((c) => c.toLowerCase() === want || name(c) === want);
+  const taken = out.some((c) => c.toLowerCase() === want || (!want.includes("/") && name(c) === want))
+    || (!want.includes("/") && projects.some((p) => name(p) === want));
   if (q && REPO.test(q) && !taken) out.push(q);
   return out.map((c) => CLONE + c);
 }

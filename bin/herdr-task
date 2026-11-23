@@ -1618,7 +1618,8 @@ default_owner() {
     local dir
     [[ -n "$project_roots" ]] || return 0
     IFS=: read -r -a roots <<<"$project_roots"
-    find "${roots[@]}" -mindepth 2 -maxdepth 2 -name .git 2>/dev/null | sed 's#/\.git$##' \
+    # A missing root fails find; the other roots still count.
+    { find "${roots[@]}" -mindepth 2 -maxdepth 2 -name .git 2>/dev/null || true; } | sed 's#/\.git$##' \
         | while read -r dir; do printf '%s\n' "$(origin_slug "$dir")"; done \
         | awk -F/ 'NF == 2 { n[$1]++ } END { for (o in n) print n[o], o }' | sort -k1,1nr -k2 | awk 'NR == 1 { print $2 }'
 }

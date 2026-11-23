@@ -258,6 +258,7 @@ test("start: Clone rows for a PR's repository and for a searched name", () => {
   assert.deepEqual(start.cloneRows("", "docker-ecr", list), ["clone:docker-ecr"]);
   assert.deepEqual(start.cloneRows("", "acme/docker-ecr", list), ["clone:acme/docker-ecr"]);
   assert.deepEqual(start.cloneRows("", "api", list), [], "a checkout with that name");
+  assert.deepEqual(start.cloneRows("", "other/api", list), ["clone:other/api"], "owner/name: another owner's api may not be cloned");
   assert.deepEqual(start.cloneRows("", "two words", list), [], "not a repository name");
   assert.deepEqual(start.cloneRows("misha/fork", "fork", list), ["clone:misha/fork"], "the PR's row covers its name");
   assert.deepEqual(start.cloneRows("misha/fork", "zzz", list), ["clone:zzz"], "a search that misses the PR hides its row");

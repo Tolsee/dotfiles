@@ -450,7 +450,7 @@ check "projects: from the worktree, its repo first" "$ptmp/repo" \
 
 # clone: an existing checkout as it is, else gh repo clone into the first root.
 git -C "$ptmp/repo" remote set-url origin https://github.com/acme/repo.git
-mkdir -p "$tmp/clonebin" "$tmp/croot"
+mkdir -p "$tmp/clonebin"  # no croot yet: a missing first root is made on the first clone
 cat > "$tmp/clonebin/gh" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$FAKE_GH_LOG"
