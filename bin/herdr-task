@@ -6,7 +6,9 @@
 #                                         reopens) a worktree workspace for it, tags the
 #                                         workspace with the ticket for the sidebar, and
 #                                         starts an agent there with the ticket as its
-#                                         first prompt.
+#                                         first prompt. In the desktop app (HC_TERMINAL_ID
+#                                         set, HERDR_ENV not) it opens an app space with the
+#                                         agent instead, as the app's prefix+t does.
 #       -p, --project DIR     repository to branch from (default: the current repository)
 #       -t, --title TEXT      ticket title, used for the workspace label
 #       -u, --url URL         ticket link, when <ticket> is a bare id
@@ -163,6 +165,7 @@ for dependency in jq git; do
     command -v "$dependency" >/dev/null 2>&1 || die "$dependency is required"
 done
 herdr_bin="${HERDR_BIN_PATH:-$(command -v herdr || true)}"
+herdr_app_bin="${HERDR_APP_BIN:-herdr-app}"
 # The Herdr app's task mods and the Claude status line call projects, parse, prepare, links and
 # pr (and the sidebar's stream, streams), which need no herdr TUI.
 case "${1:-}" in projects | parse | prepare | links | pr | stream | streams | doing | related) ;; *) [[ -n "$herdr_bin" ]] || die "herdr is required" ;; esac
@@ -429,6 +432,38 @@ new_branch_base() {
     fi
 }
 
+# In the Herdr desktop app (herdr-core), not a TUI pane: there is no herdr server to make a
+# workspace in, and nothing to attach.
+in_app() {
+    [[ -n "${HC_TERMINAL_ID:-}" && -z "${HERDR_ENV:-}" ]]
+}
+
+# app_start <ref> <project> <title> <agent> <prompt>: start for the desktop app, the same as
+# its prefix+t (herdr-app/mods/task-start): prepare the worktree, then go to the space already
+# open there or open one with the agent on the task. The space is not focused: an agent
+# starting a sibling task carries on in its own.
+app_start() {
+    local ref=$1 project=$2 title=$3 agent=$4 prompt=$5 p path label space
+    local -a args=(--project "$project" --agent "$agent")
+    [[ -n "$title" ]] && args+=(--title "$title")
+    p=$(cmd_prepare "$ref" "${args[@]}") || exit 1
+    path=$(jq -r .path <<<"$p")
+    label=$(jq -r .label <<<"$p")
+    [[ -n "$prompt" ]] || prompt=$(jq -r .prompt <<<"$p")
+    space=$("$herdr_app_bin" ls 2>/dev/null | jq -r --arg d "$path" \
+        '[.spaces[]? | select(.machine == null and .folder == $d) | .id][0] // empty' || true)
+    if [[ -n "$space" ]]; then
+        note "a space is already open at $path ($space), no new agent"
+    elif [[ "$agent" == none ]]; then
+        "$herdr_app_bin" do space.new --name "$label" --folder "$path" --focus false >/dev/null
+        note "opened space '$label' at $path"
+    else
+        "$herdr_app_bin" do space.new --name "$label" --folder "$path" --tab "$agent" \
+            --argv "$(jq -nc --arg a "$agent" '[$a]')" --task "$prompt" --focus false >/dev/null
+        note "opened space '$label' at $path with $agent on the task"
+    fi
+}
+
 cmd_start() {
     local ref="" project="" title="" url_opt="" agent="$default_agent" prompt="" agent_async=false
     while [[ $# -gt 0 ]]; do
@@ -444,6 +479,10 @@ cmd_start() {
         esac
     done
     [[ -n "$ref" ]] || die "usage: herdr-task start <ticket link | id | branch> [options]"
+    if in_app; then
+        app_start "$ref" "${project:-$PWD}" "$title" "$agent" "$prompt"
+        return
+    fi
     project=${project:-$(current_repo)}
     project=$(cd "$project" && pwd -P)
     git -C "$project" rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "$project is not a git repository"
