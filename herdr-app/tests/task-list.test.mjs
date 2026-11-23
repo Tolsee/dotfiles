@@ -145,10 +145,10 @@ test("sub-agents an agent started with hc nest under its task, depth first, live
     { address: "t14", parent: "t13", state: "live", title: "helper", status: "error" },
     { address: "t15", parent: "t9", state: "finished", name: "old", status: "done" },
   ];
-  assert.deepEqual(list.subAgents(terms, ["t9"]).map((k) => [k.address, k.name, k.title, k.status]), [
-    ["t12", "dev-16449", "DEV-16449 monolith gate", "idle"],
-    ["t13", "dev-16450", "Gateway memory", "working"],
-    ["t14", "t14", "helper", "blocked"],
+  assert.deepEqual(list.subAgents(terms, ["t9"]).map((k) => [k.address, k.name, k.id, k.title, k.status]), [
+    ["t12", "dev-16449", "DEV-16449", "monolith gate", "idle"],
+    ["t13", "dev-16450", "DEV-16450", "Gateway memory", "working"],
+    ["t14", "t14", "", "helper", "blocked"],
   ]);
   const g = list.groups([{ id: "s9", name: "Check", folder: "/p", tabs: [] }], [{ space: "s9", address: "t9", status: "working" }], {}, [], terms);
   assert.equal(g[0].tasks[0].subs.length, 3);

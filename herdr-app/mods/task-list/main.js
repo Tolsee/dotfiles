@@ -57,7 +57,11 @@ export function subAgents(terms, addresses) {
       if (k.parent !== addr || k.state !== "live" || seen.has(k.address)) continue;
       seen.add(k.address);
       const st = word(k.status);
-      out.push({ address: k.address, name: k.name ?? k.address, title: clean(k.title), status: st === "error" ? "blocked" : st === "done" ? "idle" : st });
+      // "DEV-1 Fix x" as a title, or a name like dev-1: the id goes right, as on task rows.
+      const t = splitName(clean(k.title));
+      const named = /^([a-z][a-z0-9]*-\d+)$/i.exec(k.name ?? "");
+      const id = t.id || (named ? named[1].toUpperCase() : "");
+      out.push({ address: k.address, name: k.name ?? k.address, id, title: t.title || k.name || k.address, status: st === "error" ? "blocked" : st === "done" ? "idle" : st });
       walk(k.address);
     }
   };
@@ -180,10 +184,10 @@ export default class TaskList extends View {
     const extra = task.agents.slice(1);
     const subs = task.subs ?? [];
     const second = task.doing || (task.agents.length ? "" : task.folder?.split("/").pop() ?? "");
-    return v_flex().id(`task-${s.id}`).px(8).py(5).gap(1).rounded(7).flex_none()
+    // The hover lights the task's own lines only, so a helper under it reads as its own target.
+    return v_flex().id(`task-${s.id}`).px(4).py(3).gap(1).rounded(7).flex_none()
       .when(on, (el) => el.bg(t.selected))
       .when(!on && need, (el) => el.bg((t.blocked ?? "#ff966c") + "1a"))
-      .when(!on && !need, (el) => el.hover((h) => h.bg(t.hover)))
       .when(task.merged || task.gone, (el) => el.opacity(0.45))
       .when(this.pressed === s.id, (el) => el.opacity(0.5))
       .on_mouse_down("left", (_e, cx) => { this.pressed = s.id; this.over = stream; cx.notify(); })
@@ -192,7 +196,9 @@ export default class TaskList extends View {
       })
       .on_mouse_up("left", (_e, cx) => this.drop(stream, s, cx))
       .on_mouse_down("right", () => openOverlay({ mod: "menu", kind: "popup", width: 200, height: 260, props: { tab: "space", target: { id: s.id } } }))
-      .child(h_flex().gap(8).items_center()
+      .child(v_flex().id(`head-${s.id}`).px(4).py(2).gap(1).rounded(5)
+        .when(!on && !need, (el) => el.hover((h) => h.bg(t.hover)))
+        .child(h_flex().gap(8).items_center()
         .child(this.glyph(t, s.status))
         .child(div().flex_1().min_w(0).truncate().text_color(t.foreground).when(on, (d) => d.font_semibold()).child(task.title))
         .when(Boolean(task.id), (el) => el.child(div().flex_none().text_size(10.5).text_color("#7a88cf").child(task.id))))
@@ -200,13 +206,18 @@ export default class TaskList extends View {
       .children(extra.map((a, i) => h_flex().id(`sub-${s.id}-${i}`).pl(19).gap(6).items_center().text_size(11).text_color(t.dim)
         .on_mouse_down("left", (_e, cx) => { cx.stop_propagation(); run("space.select", { id: s.id }); run("pane.focus", { pane: a.pane }); })
         .child(this.glyph(t, a.status))
-        .child(div().flex_1().min_w(0).truncate().child([a.app ?? a.program?.name, doing(a)].filter(Boolean).join(" · ")))))
-      // Sub-agents have no pane: a click peeks at the terminal.
-      .children(subs.map((k) => h_flex().id(`kid-${k.address}`).pl(19).gap(6).items_center().text_size(11).text_color(t.dim)
+        .child(div().flex_1().min_w(0).truncate().child([a.app ?? a.program?.name, doing(a)].filter(Boolean).join(" · "))))))
+      // Helpers (sub-agents) have no pane: a click peeks at the terminal, over the tab.
+      .when(subs.length > 0, (el) => el.child(div().pl(23).pt(2).text_size(10).text_color(t.dim)
+        .child(subs.length === 1 ? "1 helper" : `${subs.length} helpers`)))
+      .children(subs.map((k) => h_flex().id(`kid-${k.address}`).ml(18).pl(5).pr(4).py(1).gap(6).items_center().rounded(4).text_size(11).text_color(t.muted)
+        .hover((h) => h.bg(t.hover).text_color(t.foreground))
         .when(k.status === "blocked", (el) => el.text_color(t.blocked))
+        .tooltip(`Helper session ${k.name} (${k.address}), started by this task's agent. Click to peek at it.`)
         .on_mouse_down("left", (_e, cx) => { cx.stop_propagation(); run("terminal.peek", { terminal: k.address }); })
         .child(this.glyph(t, k.status))
-        .child(div().flex_1().min_w(0).truncate().child([k.name, k.title].filter(Boolean).join(" · ")))));
+        .child(div().flex_1().min_w(0).truncate().child(k.title))
+        .when(Boolean(k.id), (el) => el.child(div().flex_none().text_size(10).text_color("#7a88cf").child(k.id)))));
   }
 
   // Mouse released over `stream` (row s, or a header when s is null).
