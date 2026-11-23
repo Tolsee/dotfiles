@@ -63,6 +63,9 @@
 #                                         what <ref> would start: kind, ticket, branch, title,
 #                                         projects with the best guess first (prefix+t preview);
 #                                         --jev puts Jev's picks first, with their chances
+#   herdr-task clone <owner/name | name> the checkout of that GitHub repository under the roots,
+#                                         cloned with gh into the first root when there is none;
+#                                         a bare name takes the owner most checkouts come from
 #   herdr-task prepare <ref> --project DIR [--kind groom|short|review] [--title T] [--agent KIND] [--branch NAME]
 #                                         the worktree and saved ticket for <ref>; prints the
 #                                         path, space label and agent prompt (by kind, default
@@ -166,10 +169,10 @@ for dependency in jq git; do
 done
 herdr_bin="${HERDR_BIN_PATH:-$(command -v herdr || true)}"
 herdr_app_bin="${HERDR_APP_BIN:-herdr-app}"
-# The Herdr app's task mods and the Claude status line call projects, parse, prepare, links and
+# The Herdr app's task mods and the Claude status line call projects, parse, prepare, clone, links and
 # pr (and the sidebar's stream, streams), which need no herdr TUI; nor does start in the app.
 case "${1:-}" in
-    projects | parse | prepare | links | pr | stream | streams | doing | related) ;;
+    projects | parse | prepare | clone | links | pr | stream | streams | doing | related) ;;
     start) [[ -n "$herdr_bin" || ( -n "${HC_TERMINAL_ID:-}" && -z "${HERDR_ENV:-}" ) ]] || die "herdr is required" ;;
     *) [[ -n "$herdr_bin" ]] || die "herdr is required" ;;
 esac
@@ -1574,7 +1577,7 @@ jev_rank() {
 # Jev too (up to 3 s): its picks go first and chances maps each to its probability.
 cmd_parse() {
     local ref="" cwd="" jev="" kind title="" team="" here="" projects chances="{}" ranked
-    local ticket_id ticket_url ticket_slug branch ref_kind pr_slug pr_number pr_url pr_title="" pr_fork=""
+    local ticket_id ticket_url ticket_slug branch ref_kind pr_slug pr_number pr_url pr_title="" pr_fork="" clone=""
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --cwd) cwd=${2:-}; shift 2 ;;
@@ -1591,6 +1594,7 @@ cmd_parse() {
     if [[ "$kind" == pr ]]; then
         pr_resolve
         title=$pr_title team=$(repo_for_slug "$pr_slug")
+        [[ -z "$team" ]] && clone=$pr_slug  # not cloned yet: the popup offers to clone it
     fi
     [[ -n "$cwd" ]] && here=$(repo_of "$cwd")
     projects=$(json_projects "$team" "$here")
@@ -1603,9 +1607,47 @@ cmd_parse() {
     fi
     jq -nc --arg kind "$kind" --arg id "$ticket_id" --arg url "$ticket_url" --arg branch "$branch" \
         --arg title "$title" --argjson projects "$projects" --argjson chances "$chances" \
-        --arg pr "$pr_number" --arg pr_url "$pr_url" \
+        --arg pr "$pr_number" --arg pr_url "$pr_url" --arg clone "$clone" \
         '{kind: $kind, ticket_id: $id, ticket_url: $url, branch: $branch, title: $title, projects: $projects, chances: $chances,
-          pr: $pr, pr_url: $pr_url}'
+          pr: $pr, pr_url: $pr_url, clone: $clone}'
+}
+
+# default_owner: the GitHub owner most checkouts under the roots come from (the org).
+default_owner() {
+    local -a roots=()
+    local dir
+    [[ -n "$project_roots" ]] || return 0
+    IFS=: read -r -a roots <<<"$project_roots"
+    find "${roots[@]}" -mindepth 2 -maxdepth 2 -name .git 2>/dev/null | sed 's#/\.git$##' \
+        | while read -r dir; do printf '%s\n' "$(origin_slug "$dir")"; done \
+        | awk -F/ 'NF == 2 { n[$1]++ } END { for (o in n) print n[o], o }' | sort -k1,1nr -k2 | awk 'NR == 1 { print $2 }'
+}
+
+# clone <owner/name | name>: {path, repo}, the checkout of that GitHub repository under the
+# project roots, cloned with gh into the first root when there is none (prefix+t's Clone row).
+cmd_clone() {
+    local repo=${1:-} first dest found err
+    [[ -n "$repo" && $# -eq 1 ]] || die "usage: herdr-task clone <owner/name | name>"
+    [[ -n "$project_roots" ]] || die "no project roots to clone into: set HERDR_TASK_PROJECT_ROOTS"
+    repo=${repo#https://github.com/} repo=${repo#git@github.com:} repo=${repo%/} repo=${repo%.git}
+    if [[ "$repo" != */* ]]; then
+        first=$(default_owner)
+        [[ -n "$first" ]] || die "which owner is $repo under? search owner/$repo"
+        repo="$first/$repo"
+    fi
+    [[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || die "not a GitHub repository: $1"
+    found=$(repo_for_slug "$repo")
+    if [[ -z "$found" ]]; then
+        command -v gh >/dev/null 2>&1 || die "gh is required to clone"
+        first=${project_roots%%:*}
+        dest="$first/${repo#*/}"
+        [[ -e "$dest" ]] && die "$dest is in the way, and it is not a checkout of $repo"
+        mkdir -p "$first"
+        err=$(GH_NO_UPDATE_NOTIFIER=1 gh repo clone "$repo" "$dest" -- -q 2>&1 >/dev/null) \
+            || die "cloning $repo failed: $(tail -n1 <<<"$err")"
+        found=$dest
+    fi
+    jq -nc --arg path "$found" --arg repo "$repo" '{path: $path, repo: $repo}'
 }
 
 # prepare <ref> --project DIR [--kind K] [--title T] [--url URL] [--agent KIND]: the worktree for a ticket, branch or
@@ -1953,10 +1995,11 @@ case "${1:-}" in
     projects) shift; cmd_projects "$@" ;;
     parse) shift; cmd_parse "$@" ;;
     prepare) shift; cmd_prepare "$@" ;;
+    clone) shift; cmd_clone "$@" ;;
     stream) shift; cmd_stream "$@" ;;
     streams) shift; cmd_streams "$@" ;;
     doing) shift; cmd_doing "$@" ;;
     related) shift; cmd_related "$@" ;;
     -h|--help) awk 'NR > 1 && !/^#/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "$0" ;;
-    *) die "unknown command: $1 (start, tag, open, links, pr, review, ship, open-file, open-ticket, retag, prune, prune-worktree, projects, parse, prepare, stream, streams, doing, related; --help)" ;;
+    *) die "unknown command: $1 (start, tag, open, links, pr, review, ship, open-file, open-ticket, retag, prune, prune-worktree, projects, parse, prepare, clone, stream, streams, doing, related; --help)" ;;
 esac

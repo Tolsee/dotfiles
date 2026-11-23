@@ -448,6 +448,38 @@ check "prepare: a branch only on origin keeps its commits" "$(git -C "$ptmp/repo
 check "projects: from the worktree, its repo first" "$ptmp/repo" \
     "$("${app_env[@]}" bash "$task" projects --cwd "$ptmp/appwt/repo/abc-7-fix-login" | jq -r '.projects[0]')"
 
+# clone: an existing checkout as it is, else gh repo clone into the first root.
+git -C "$ptmp/repo" remote set-url origin https://github.com/acme/repo.git
+mkdir -p "$tmp/clonebin" "$tmp/croot"
+cat > "$tmp/clonebin/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FAKE_GH_LOG"
+[[ "$1 $2" == "repo clone" ]] || exit 1
+[[ "$3" == acme/missing ]] && { echo "GraphQL: Could not resolve to a Repository" >&2; exit 1; }
+git init -q "$4" && git -C "$4" remote add origin "https://github.com/$3.git"
+EOF
+chmod +x "$tmp/clonebin/gh"
+clone_env=("${app_env[@]}" PATH="$tmp/clonebin:$tmp/nobin:/usr/bin:/bin:/opt/homebrew/bin" HERDR_TASK_PROJECT_ROOTS="$ptmp/croot:$ptmp" FAKE_GH_LOG="$tmp/gh.log")
+: > "$tmp/gh.log"
+check "clone: a cloned repository is found, not cloned" "$ptmp/repo|ACME/repo|0" \
+    "$("${clone_env[@]}" bash "$task" clone ACME/repo | jq -r '"\(.path)|\(.repo)"')|$(grep -c . "$tmp/gh.log")"
+check "clone: a bare name takes the usual owner, into the first root" "$ptmp/croot/docker-ecr|acme/docker-ecr" \
+    "$("${clone_env[@]}" bash "$task" clone docker-ecr | jq -r '"\(.path)|\(.repo)"')"
+check "clone: gh got the repository" "repo clone acme/docker-ecr $ptmp/croot/docker-ecr -- -q" "$(tail -n1 "$tmp/gh.log")"
+check "clone: a link works, second time found" "$ptmp/croot/docker-ecr" \
+    "$("${clone_env[@]}" bash "$task" clone https://github.com/acme/docker-ecr.git | jq -r .path)"
+check "clone: gh's reason shows" "herdr-task: cloning acme/missing failed: GraphQL: Could not resolve to a Repository" \
+    "$("${clone_env[@]}" bash "$task" clone missing 2>&1 >/dev/null)"
+mkdir -p "$ptmp/croot/taken"
+check "clone: a folder in the way fails" 1 "$("${clone_env[@]}" bash "$task" clone other/taken >/dev/null 2>&1; echo $?)"
+check "clone: not a repository" 1 "$("${clone_env[@]}" bash "$task" clone 'a b' >/dev/null 2>&1; echo $?)"
+printf '#!/bin/sh\necho %s\n' "'{\"headRefName\":\"feat\",\"title\":\"Fork fix\",\"isCrossRepository\":false}'" > "$tmp/clonebin/gh"
+check "parse: a PR whose repository is not cloned offers to clone it" "|misha/linktree-fork" \
+    "$("${clone_env[@]}" bash "$task" parse https://github.com/misha/linktree-fork/pull/1 | jq -r '"\(.projects | map(select(test("linktree"))) | join(","))|\(.clone)"')"
+check "parse: a PR in a cloned repository has nothing to clone" "$ptmp/repo|" \
+    "$("${clone_env[@]}" bash "$task" parse https://github.com/acme/repo/pull/1 | jq -r '"\(.projects[0])|\(.clone)"')"
+git -C "$ptmp/repo" remote set-url origin "$tmp/origin.git"
+
 # start from the desktop app: prepare, then a space through herdr-app, no herdr server.
 cat > "$tmp/bin/herdr-app" <<'EOF'
 #!/usr/bin/env bash
