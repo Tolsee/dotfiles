@@ -71,15 +71,16 @@ Shared by all coding agents (Claude Code, Codex, Antigravity/Gemini). Source of 
 - Ticket and PR labels in the sidebar come back by themselves after a Herdr restart (`herdr-task retag` runs at startup); if one is missing, run `herdr-task retag` rather than reporting metadata by hand.
 - Ask first before creating workspaces, tabs or worktrees outside `herdr-task start`, starting another agent, sending input to a pane you did not create, or closing anything. Herdr owns notifications: do not add bell, sound or notify hooks.
 - This table is checked against `herdr/.config/herdr/config.toml` by `herdr/check-keymap`: change both together.
-- In the Herdr desktop app (`HC_TERMINAL_ID` is set), you run in herdr-core, not the TUI: the `herdr` CLI, `herdr-task` and the table's "you run instead" commands do not apply there. Use `hc` (`hc --skill`) for terminals and agents, and `herdr-app --skill` for the window. Its keys are the same Ctrl+B keys (`herdr-app/keys.json`, checked by `herdr-app/check-keys`).
+- In the Herdr desktop app (`HC_TERMINAL_ID` is set), you run in herdr-core, not the TUI: the `herdr` CLI, `herdr-task` and the table's "you run instead" commands do not apply there, except `herdr-task start`, which opens an app space there (see Git). Use `hc` (`hc --skill`) for terminals and agents, and `herdr-app --skill` for the window. Its keys are the same Ctrl+B keys (`herdr-app/keys.json`, checked by `herdr-app/check-keys`).
 
 ## Git
 
-- Inside Herdr (`HERDR_WORKSPACE_ID` is set) the pane's cwd is usually a task worktree that `herdr-task` created under `~/.herdr/worktrees`. Work there and never create another worktree for the same task.
+- Inside Herdr (`HERDR_WORKSPACE_ID` or `HC_TERMINAL_ID` is set) the pane's cwd is usually a task worktree that `herdr-task` created under `~/.herdr/worktrees`. Work there and never create another worktree for the same task.
 - Otherwise create worktrees with the harness's native worktree tool (e.g. Claude Code's EnterWorktree / Agent `isolation: "worktree"`). Never run `git worktree add` manually, and never create sibling directories (`../<repo>-something`). If no native tool exists, use `<repo>/.claude/worktrees/<branch>` (gitignored).
-- Asked to start or pick up a ticket while inside Herdr: run `herdr-task start <ticket link> --project <repo> --title "<title>"` (look the title up with the Linear MCP first). It creates the worktree workspace and starts a fresh agent there with the ticket as its first prompt; do not start editing in the current pane.
+- Asked to start or pick up a ticket while inside Herdr: run `herdr-task start <ticket link> --project <repo> --title "<title>"` (look the title up with the Linear MCP first). It creates the worktree workspace (in the desktop app, a space) and starts a fresh agent there with the ticket as its first prompt; do not start editing in the current pane.
 - A task branch carries the ticket id (for example `abc-123-short-title`) so Linear links it. Put the id in the PR title or body too.
 - One pane, one branch, one PR. When the ticket also needs a change in another repository, do not edit that repository from this pane: run `herdr-task start <ticket link> --project <repo> --title "<title>" --prompt "<one-paragraph brief of the change needed there>"` to open a sibling workspace with its own agent, then carry on here. Unrelated work in the same repository gets its own ticket and its own `herdr-task start`.
+- Same work or separate work: a helper for this task (same branch and PR: a review, a lookup, a parallel slice) is a child terminal, `hc run --bg --name <name> ...`, which keeps its parent so it shows under this task. Separate work (its own ticket, branch or PR) is a new task: `herdr-task start`, in the TUI and the desktop app alike. Never start a separate task with `hc run --no-parent`: it gets no space and no sidebar row.
 
 ## Advisor
 

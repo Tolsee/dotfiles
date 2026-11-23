@@ -71,6 +71,7 @@ chmod +x "$tmp/bin/herdr"
 export FAKE_LOG="$tmp/herdr.log" FAKE_REPO="$tmp/repo" FAKE_COUNTER="$tmp/counter"
 export HERDR_BIN_PATH="$tmp/bin/herdr" XDG_CACHE_HOME="$tmp/cache" HOME="$tmp/home"
 export HERDR_PANE_ID=w1:p1 HERDR_WORKSPACE_ID=w1
+unset HC_TERMINAL_ID   # run from the desktop app, start would take its app path
 task="$root/bin/herdr-task"
 
 cat > "$tmp/bin/record-open" <<'EOF'
@@ -446,6 +447,42 @@ check "prepare: a branch only on origin keeps its commits" "$(git -C "$ptmp/repo
     "$(git -C "$ptmp/appwt/repo/remote-only" rev-parse HEAD 2>/dev/null)"
 check "projects: from the worktree, its repo first" "$ptmp/repo" \
     "$("${app_env[@]}" bash "$task" projects --cwd "$ptmp/appwt/repo/abc-7-fix-login" | jq -r '.projects[0]')"
+
+# start from the desktop app: prepare, then a space through herdr-app, no herdr server.
+cat > "$tmp/bin/herdr-app" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FAKE_APP_LOG"
+[[ "$1" == ls ]] && printf '%s\n' "${FAKE_APP_LS:-not json}"
+exit 0
+EOF
+chmod +x "$tmp/bin/herdr-app"
+: > "$FAKE_LOG"
+app_start_env=("${app_env[@]}" HC_TERMINAL_ID=t9 HERDR_APP_BIN="$tmp/bin/herdr-app" FAKE_APP_LOG="$tmp/app.log")
+"${app_start_env[@]}" bash "$task" start ABC-9 --project "$ptmp/repo" --title "fix the app" 2>/dev/null
+check "start in the app: worktree made" "abc-9" "$(git -C "$ptmp/appwt/repo/abc-9" symbolic-ref --short HEAD 2>/dev/null)"
+check "start in the app: space with the agent on the ticket" 1 \
+    "$(grep -c "^do space.new --name ABC-9 fix the app --folder $ptmp/appwt/repo/abc-9 --tab claude --argv \[\"claude\"\] --task Work on .*ABC-9.* --focus false$" "$tmp/app.log")"
+check "start in the app: no TUI calls" 0 "$(grep -c . "$FAKE_LOG")"
+: > "$tmp/app.log"
+"${app_start_env[@]}" FAKE_APP_LS="{\"spaces\":[{\"id\":\"sp1\",\"machine\":null,\"folder\":\"$ptmp/appwt/repo/abc-9\"}]}" \
+    bash "$task" start ABC-9 --project "$ptmp/repo" --prompt "do x" 2>/dev/null
+check "start in the app: an open space gets no second agent" 0 "$(grep -c '^do space.new' "$tmp/app.log")"
+: > "$tmp/app.log"
+"${app_start_env[@]}" bash "$task" start "tidy docs" --project "$ptmp/repo" --prompt "Only the README." 2>/dev/null
+check "start in the app: --prompt is the task" 1 "$(grep -c -- '--task Only the README. --focus false$' "$tmp/app.log")"
+mkdir -p "$tmp/hcbin"
+printf '#!/bin/sh\necho "{\\"terminals\\":[{\\"address\\":\\"t5\\",\\"cwd\\":\\"%s/appwt/repo/abc-9/sub\\"}]}"\n' "$ptmp" > "$tmp/hcbin/hc"
+chmod +x "$tmp/hcbin/hc"
+: > "$tmp/app.log"
+"${app_start_env[@]}" PATH="$tmp/hcbin:$tmp/nobin:/usr/bin:/bin:/opt/homebrew/bin" \
+    FAKE_APP_LS='{"spaces":[{"id":"sp2","machine":null,"folder":"/elsewhere","tabs":[{"terminals":[{"terminal":"t5"}]}]}]}' \
+    bash "$task" start ABC-9 --project "$ptmp/repo" 2>/dev/null
+check "start in the app: a space with a terminal in the worktree counts" 0 "$(grep -c '^do space.new' "$tmp/app.log")"
+"${app_start_env[@]}" bash "$task" start ABC-10 --project "$ptmp/repo" --url https://linear.app/other/issue/ABC-10/x 2>/dev/null
+check "start in the app: --url is saved" "https://linear.app/other/issue/ABC-10/x" "$(git -C "$ptmp/repo" config --get branch.abc-10.linear-url)"
+check "start in the app needs no herdr TUI" 0 "$("${app_start_env[@]}" bash "$task" start ABC-11 --project "$ptmp/repo" >/dev/null 2>&1; echo $?)"
+check "start in the TUI ignores the app" 0 \
+    "$("${app_start_env[@]}" HERDR_ENV=1 HERDR_BIN_PATH=/usr/bin/true bash -c 'HERDR_TASK_SOURCE_ONLY=1 source "$1"; in_app && echo 1 || echo 0' _ "$task")"
 
 # --- streams: set, precedence, merged, Jev ---
 git -C "$ptmp/repo" worktree add -q -b stream-a "$ptmp/appwt/repo/stream-a" main 2>/dev/null
