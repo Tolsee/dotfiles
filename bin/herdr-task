@@ -165,7 +165,7 @@ done
 herdr_bin="${HERDR_BIN_PATH:-$(command -v herdr || true)}"
 # The Herdr app's task mods and the Claude status line call projects, parse, prepare, links and
 # pr (and the sidebar's stream, streams), which need no herdr TUI.
-case "${1:-}" in projects | parse | prepare | links | pr | stream | streams | doing) ;; *) [[ -n "$herdr_bin" ]] || die "herdr is required" ;; esac
+case "${1:-}" in projects | parse | prepare | links | pr | stream | streams | doing | related) ;; *) [[ -n "$herdr_bin" ]] || die "herdr is required" ;; esac
 
 server_running() {
     "$herdr_bin" status server --json | jq -e '.running == true' >/dev/null
@@ -1753,6 +1753,46 @@ cmd_doing() {
     fi
 }
 
+# related --agent DIR[@SINCE_MS] ...: where a task's Claude sessions (its agent and the helpers
+# it started) worked, from their logs under ~/.claude/projects/<DIR with every character other
+# than a letter or digit as "-">: each checkout a session's cwd was in (its git top level, first
+# seen first) and each PR it opened (pr-link entries, newest first). Logs written to since
+# SINCE_MS count; with none, the newest log. grep first: a long session's log is big.
+cmd_related() {
+    local spec dir since logdir f top newest prs=""
+    local -a logs=() folders=() files=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --agent)
+                spec=${2:?--agent needs DIR[@SINCE_MS]}; shift 2
+                dir=${spec%@*} since=0
+                [[ "$spec" == *@* ]] && since=${spec##*@}
+                [[ "$since" =~ ^[0-9]+$ ]] || since=0
+                logdir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/$(printf '%s' "$dir" | sed 's/[^A-Za-z0-9]/-/g')"
+                [[ -d "$logdir" ]] || continue
+                files=() newest=""
+                for f in "$logdir"/*.jsonl; do
+                    [[ -f "$f" ]] || continue
+                    [[ -z "$newest" || "$f" -nt "$newest" ]] && newest=$f
+                    if (( $(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f") * 1000 >= since )); then files+=("$f"); fi
+                done
+                [[ ${#files[@]} -gt 0 || -z "$newest" ]] || files=("$newest")
+                logs+=("${files[@]+"${files[@]}"}") ;;
+            *) die "unknown option: $1" ;;
+        esac
+    done
+    [[ ${#logs[@]} -gt 0 ]] || { printf '{"folders":[],"prs":[]}\n'; return 0; }
+    while IFS= read -r dir; do
+        [[ -d "$dir" ]] || continue
+        top=$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null) || continue
+        [[ " ${folders[*]+"${folders[*]}"} " == *" $top "* ]] || folders+=("$top")
+    done < <(grep -ho '"cwd":"[^"]*"' "${logs[@]}" 2>/dev/null | awk '!seen[$0]++' | sed 's/^"cwd":"//; s/"$//')
+    prs=$(grep -h '"type":"pr-link"' "${logs[@]}" 2>/dev/null \
+        | jq -sc 'sort_by(.timestamp) | reverse | unique_by(.prUrl) | sort_by(.timestamp) | reverse
+                  | map({url: .prUrl, number: .prNumber, repo: .prRepository})' 2>/dev/null) || prs="[]"
+    jq -nc --argjson prs "${prs:-[]}" '{folders: $ARGS.positional, prs: $prs}' --args "${folders[@]+"${folders[@]}"}"
+}
+
 # jev_stream <title> <own-option>: reads existing stream names on stdin and prints
 # "choice<TAB>probability" for the likeliest stream of the task titled <title>, <own-option>
 # standing for a stream of its own. Silent without TYPESAFE_API_KEY, with HERDR_TASK_JEV=0,
@@ -1865,6 +1905,7 @@ case "${1:-}" in
     stream) shift; cmd_stream "$@" ;;
     streams) shift; cmd_streams "$@" ;;
     doing) shift; cmd_doing "$@" ;;
+    related) shift; cmd_related "$@" ;;
     -h|--help) awk 'NR > 1 && !/^#/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "$0" ;;
-    *) die "unknown command: $1 (start, tag, open, links, pr, review, ship, open-file, open-ticket, retag, prune, prune-worktree, projects, parse, prepare, stream, streams, doing; --help)" ;;
+    *) die "unknown command: $1 (start, tag, open, links, pr, review, ship, open-file, open-ticket, retag, prune, prune-worktree, projects, parse, prepare, stream, streams, doing, related; --help)" ;;
 esac

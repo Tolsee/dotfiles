@@ -24,6 +24,7 @@ function el() {
 writeFileSync(join(dir, "herdr.mjs"), `
 export const state = { calls: [], focused: { space: "s1", cwd: "/repo" }, exec: async () => ({ code: 1, stdout: "" }) };
 export const focused = () => state.focused, spaces = () => [{ id: "s1", active: true, folder: "/repo", machine: null }];
+export const agents = () => state.agents ?? [], terminals = () => state.terminals ?? [];
 export const theme = () => new Proxy({}, { get: (_, k) => "#" + String(k) });
 export const openOverlay = (o) => state.calls.push(["overlay", o]);
 export const exec = (...a) => { state.calls.push(["exec", ...a]); return state.exec(...a); };
@@ -34,7 +35,7 @@ const src = readFileSync(join(here, "../mods/task-links/main.js"), "utf8")
   .replace('from "gpui-kit"', 'from "./ui.mjs"').replace('from "gpui-base"', 'from "./ui.mjs"')
   .replace('from "herdr"', 'from "./herdr.mjs"');
 writeFileSync(join(dir, "main.mjs"), src);
-const { default: TaskLinks, rowsOf, taskLinks } = await import(pathToFileURL(join(dir, "main.mjs")));
+const { default: TaskLinks, rowsOf, taskLinks, sessionDirs, sectionRows, otherPrs } = await import(pathToFileURL(join(dir, "main.mjs")));
 const { state } = await import(pathToFileURL(join(dir, "herdr.mjs")));
 
 const PR = {
@@ -158,4 +159,37 @@ test("long lists show a window of rows that follows the selection", () => {
   assert.equal(m.first(), 2);
   m.at = m.links.length - 1;
   assert.equal(m.first(), m.links.length - 9);
+});
+
+test("sessionDirs: the space's agents and the helpers they started, a claude -w worktree by its folder", () => {
+  const terms = [
+    { address: "t9", cwd: "/w/task", created_ms: 5, argv: ["zsh", "-lic", "claude"] },
+    { address: "t12", parent: "t9", state: "live", cwd: "/r/mono", created_ms: 7, argv: ["claude", "-w", "dev-1-x", "Work on DEV-1"] },
+    { address: "t13", parent: "t12", state: "live", cwd: "/r/mesh", created_ms: 8, argv: ["claude", "--worktree=dev-2"] },
+    { address: "t14", parent: "t9", state: "finished", cwd: "/r/old", argv: ["claude"] },
+    { address: "t20", cwd: "/elsewhere", argv: ["claude"] },
+  ];
+  const ag = [{ space: "s1", address: "t9" }, { space: "s2", address: "t20" }];
+  assert.deepEqual(sessionDirs("s1", ag, terms), ["/w/task@5", "/r/mono/.claude/worktrees/dev-1-x@7", "/r/mesh/.claude/worktrees/dev-2@8"]);
+});
+
+test("sections: a checkout's PR rows under its branch, else its branch; PRs no row shows go last", () => {
+  const withPr = { cwd: "/a", branch: "dev-1-x", pr: PR, links: [
+    { kind: "ticket", url: "t" }, { kind: "pr", url: PR.url }, { kind: "failing", url: "f" }, { kind: "checks", url: "c" }, { kind: "files", url: "x" }] };
+  assert.deepEqual(sectionRows(withPr).map((l) => [l.kind, l.group]), [["pr", "dev-1-x"], ["failing", "dev-1-x"], ["checks", "dev-1-x"]]);
+  const bare = { cwd: "/b", branch: "dev-2", pr: null, links: [{ kind: "branch", url: "b" }, { kind: "compare", url: "c" }, { kind: "files", url: "f" }] };
+  assert.deepEqual(sectionRows(bare).map((l) => l.kind), ["branch", "compare"]);
+  const prs = [{ url: PR.url, number: 7, repo: "o/r" }, { url: "https://github.com/o/r/pull/9", number: 9, repo: "o/r" }];
+  assert.deepEqual(otherPrs(prs, sectionRows(withPr)).map((l) => [l.kind, l.label, l.group]), [["pr-link", "#9", "Other PRs"]]);
+});
+
+test("a PR the fresh lookup finds for the focused checkout leaves Other PRs", async () => {
+  const m = new TaskLinks();
+  m.links = []; m.at = 0;
+  m.prs = [{ url: PR.url, number: 7, repo: "o/r" }];
+  m.show({ cwd: "/repo", links: [] }, await m.sections([], false));
+  assert.deepEqual(m.links.map((l) => l.kind), ["pr-link"]);
+  m.show({ cwd: "/repo", pr: PR, links: [{ kind: "pr", url: PR.url }] });
+  m.show(null, await m.sections([], true));
+  assert.deepEqual(m.links.map((l) => l.kind), ["pr"]);
 });
