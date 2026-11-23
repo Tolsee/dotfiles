@@ -470,6 +470,17 @@ check "start in the app: an open space gets no second agent" 0 "$(grep -c '^do s
 : > "$tmp/app.log"
 "${app_start_env[@]}" bash "$task" start "tidy docs" --project "$ptmp/repo" --prompt "Only the README." 2>/dev/null
 check "start in the app: --prompt is the task" 1 "$(grep -c -- '--task Only the README. --focus false$' "$tmp/app.log")"
+mkdir -p "$tmp/hcbin"
+printf '#!/bin/sh\necho "{\\"terminals\\":[{\\"address\\":\\"t5\\",\\"cwd\\":\\"%s/appwt/repo/abc-9/sub\\"}]}"\n' "$ptmp" > "$tmp/hcbin/hc"
+chmod +x "$tmp/hcbin/hc"
+: > "$tmp/app.log"
+"${app_start_env[@]}" PATH="$tmp/hcbin:$tmp/nobin:/usr/bin:/bin:/opt/homebrew/bin" \
+    FAKE_APP_LS='{"spaces":[{"id":"sp2","machine":null,"folder":"/elsewhere","tabs":[{"terminals":[{"terminal":"t5"}]}]}]}' \
+    bash "$task" start ABC-9 --project "$ptmp/repo" 2>/dev/null
+check "start in the app: a space with a terminal in the worktree counts" 0 "$(grep -c '^do space.new' "$tmp/app.log")"
+"${app_start_env[@]}" bash "$task" start ABC-10 --project "$ptmp/repo" --url https://linear.app/other/issue/ABC-10/x 2>/dev/null
+check "start in the app: --url is saved" "https://linear.app/other/issue/ABC-10/x" "$(git -C "$ptmp/repo" config --get branch.abc-10.linear-url)"
+check "start in the app needs no herdr TUI" 0 "$("${app_start_env[@]}" bash "$task" start ABC-11 --project "$ptmp/repo" >/dev/null 2>&1; echo $?)"
 check "start in the TUI ignores the app" 0 \
     "$("${app_start_env[@]}" HERDR_ENV=1 bash -c 'HERDR_TASK_SOURCE_ONLY=1 source "$1"; in_app && echo 1 || echo 0' _ "$task")"
 

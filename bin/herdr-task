@@ -167,8 +167,12 @@ done
 herdr_bin="${HERDR_BIN_PATH:-$(command -v herdr || true)}"
 herdr_app_bin="${HERDR_APP_BIN:-herdr-app}"
 # The Herdr app's task mods and the Claude status line call projects, parse, prepare, links and
-# pr (and the sidebar's stream, streams), which need no herdr TUI.
-case "${1:-}" in projects | parse | prepare | links | pr | stream | streams | doing | related) ;; *) [[ -n "$herdr_bin" ]] || die "herdr is required" ;; esac
+# pr (and the sidebar's stream, streams), which need no herdr TUI; nor does start in the app.
+case "${1:-}" in
+    projects | parse | prepare | links | pr | stream | streams | doing | related) ;;
+    start) [[ -n "$herdr_bin" || ( -n "${HC_TERMINAL_ID:-}" && -z "${HERDR_ENV:-}" ) ]] || die "herdr is required" ;;
+    *) [[ -n "$herdr_bin" ]] || die "herdr is required" ;;
+esac
 
 server_running() {
     "$herdr_bin" status server --json | jq -e '.running == true' >/dev/null
@@ -438,20 +442,26 @@ in_app() {
     [[ -n "${HC_TERMINAL_ID:-}" && -z "${HERDR_ENV:-}" ]]
 }
 
-# app_start <ref> <project> <title> <agent> <prompt>: start for the desktop app, the same as
+# app_start <ref> <project> <title> <url> <agent> <prompt>: start for the desktop app, the same as
 # its prefix+t (herdr-app/mods/task-start): prepare the worktree, then go to the space already
 # open there or open one with the agent on the task. The space is not focused: an agent
 # starting a sibling task carries on in its own.
 app_start() {
-    local ref=$1 project=$2 title=$3 agent=$4 prompt=$5 p path label space
+    local ref=$1 project=$2 title=$3 url=$4 agent=$5 prompt=$6 p path label space terms
     local -a args=(--project "$project" --agent "$agent")
     [[ -n "$title" ]] && args+=(--title "$title")
+    [[ -n "$url" ]] && args+=(--url "$url")
     p=$(cmd_prepare "$ref" "${args[@]}") || exit 1
     path=$(jq -r .path <<<"$p")
     label=$(jq -r .label <<<"$p")
     [[ -n "$prompt" ]] || prompt=$(jq -r .prompt <<<"$p")
-    space=$("$herdr_app_bin" ls 2>/dev/null | jq -r --arg d "$path" \
-        '[.spaces[]? | select(.machine == null and .folder == $d) | .id][0] // empty' || true)
+    # A space made there, else one with a terminal inside it (as the mod's placeOf does).
+    terms=$(hc ls --all 2>/dev/null | jq -c '[.terminals[]? | {key: .address, value: .cwd}] | from_entries' 2>/dev/null || true)
+    [[ -n "$terms" ]] || terms='{}'
+    space=$("$herdr_app_bin" ls 2>/dev/null | jq -r --arg d "$path" --argjson cwd "$terms" '
+        [.spaces[]? | select(.machine == null)] as $local
+        | ([$local[] | select(.folder == $d) | .id]
+           + [$local[] | select(any(.tabs[]?.terminals[]?; ($cwd[.terminal] // "") as $c | $c == $d or ($c | startswith($d + "/")))) | .id])[0] // empty' 2>/dev/null || true)
     if [[ -n "$space" ]]; then
         note "a space is already open at $path ($space), no new agent"
     elif [[ "$agent" == none ]]; then
@@ -480,7 +490,7 @@ cmd_start() {
     done
     [[ -n "$ref" ]] || die "usage: herdr-task start <ticket link | id | branch> [options]"
     if in_app; then
-        app_start "$ref" "${project:-$PWD}" "$title" "$agent" "$prompt"
+        app_start "$ref" "${project:-$PWD}" "$title" "$url_opt" "$agent" "$prompt"
         return
     fi
     project=${project:-$(current_repo)}
@@ -1598,20 +1608,21 @@ cmd_parse() {
           pr: $pr, pr_url: $pr_url}'
 }
 
-# prepare <ref> --project DIR [--kind K] [--title T] [--agent KIND]: the worktree for a ticket, branch or
+# prepare <ref> --project DIR [--kind K] [--title T] [--url URL] [--agent KIND]: the worktree for a ticket, branch or
 # task (the branch's own worktree if it has one), the ticket saved on its branch as start
 # does, env files copied. Prints {path, branch, label, existing, agent, prompt, ticket_id,
 # ticket_url}; the mod opens or focuses the space and starts the agent.
 # prepare --branch NAME ...: NAME is the branch as it is, never read as a ticket (a PR's head:
 # pr-5 or fix-123 are not Linear tickets).
 cmd_prepare() {
-    local ref="" project="" title="" agent="$default_agent" ticket_id ticket_url ticket_slug branch literal="" ref_kind kind=""
+    local ref="" project="" title="" url_opt="" agent="$default_agent" ticket_id ticket_url ticket_slug branch literal="" ref_kind kind=""
     local pr_slug="" pr_number="" pr_url="" pr_title="" pr_fork=""
     while [[ $# -gt 0 ]]; do
         case "$1" in
             -p|--project) project=$2; shift 2 ;;
             -k|--kind) kind=$2; shift 2 ;;
             -t|--title) title=$2; shift 2 ;;
+            -u|--url) url_opt=$2; shift 2 ;;
             -a|--agent) agent=$2; shift 2 ;;
             -b|--branch) literal=$2; ref=$2; shift 2 ;;
             -[a-z]|--[a-z]*) die "unknown option: $1" ;;  # option-shaped only: "- fix x" is a task
@@ -1628,6 +1639,7 @@ cmd_prepare() {
     else
         parse_ticket "$ref"
     fi
+    [[ -n "$url_opt" && -n "$ticket_id" ]] && ticket_url=$url_opt
     # Free text is the title and the first prompt; its slug is the branch.
     [[ "$ref_kind" != task ]] || title=${title:-$ref}
     # A PR link: its head branch (a fork's fetched as pr-<n>), titled "#<n> <title>", reviewed.
