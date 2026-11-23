@@ -74,9 +74,14 @@
 #                                         overwrites hand, jev only fills an unset stream; a
 #                                         refused write exits 0 with a note. An empty name with
 #                                         hand clears it
+#   herdr-task doing <text> [--cwd DIR]  what the task's agent is working on now, in a few
+#                                         words, saved on DIR's branch in git config (the
+#                                         sidebar shows it; the Claude prompt hook asks the
+#                                         agent to keep it current). Empty text clears it
 #   herdr-task streams [--jev] --task DIR=TITLE [--task ...]
 #                                         Herdr app (sidebar mod), JSON: {"tasks": {DIR:
-#                                         {stream, source, merged}}}; merged comes from the PR
+#                                         {stream, source, merged, doing, gone}}}; gone: DIR
+#                                         no longer exists; merged comes from the PR
 #                                         cache (refreshed by gh in the background); --jev files a task with no stream
 #                                         under an existing stream Jev picks (50% or more), else
 #                                         under its own title
@@ -160,7 +165,7 @@ done
 herdr_bin="${HERDR_BIN_PATH:-$(command -v herdr || true)}"
 # The Herdr app's task mods and the Claude status line call projects, parse, prepare, links and
 # pr (and the sidebar's stream, streams), which need no herdr TUI.
-case "${1:-}" in projects | parse | prepare | links | pr | stream | streams) ;; *) [[ -n "$herdr_bin" ]] || die "herdr is required" ;; esac
+case "${1:-}" in projects | parse | prepare | links | pr | stream | streams | doing) ;; *) [[ -n "$herdr_bin" ]] || die "herdr is required" ;; esac
 
 server_running() {
     "$herdr_bin" status server --json | jq -e '.running == true' >/dev/null
@@ -1726,6 +1731,28 @@ cmd_stream() {
     stream_set "$cwd" "$name" "$source"
 }
 
+# doing <text> [--cwd DIR]: what the agent is on now, a few words, on DIR's branch.
+cmd_doing() {
+    local text="" cwd=$PWD have="" b
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --cwd) cwd=${2:?--cwd needs a directory}; shift 2 ;;
+            -[a-z]|--[a-z]*) die "unknown option: $1" ;;
+            *) [[ -z "$have" ]] || die "unexpected argument: $1"; text=$1 have=1; shift ;;
+        esac
+    done
+    [[ -n "$have" ]] || die "usage: herdr-task doing <text> [--cwd DIR]"
+    b=$(stream_branch "$cwd")
+    [[ -n "$b" ]] || die "$cwd is not on a branch"
+    text=$(printf '%s' "$text" | tr '\n\t' '  ')
+    text=${text:0:80}
+    if [[ -z "${text// /}" ]]; then
+        git -C "$cwd" config --unset "branch.$b.herdr-doing" 2>/dev/null || true
+    else
+        git -C "$cwd" config "branch.$b.herdr-doing" "$text"
+    fi
+}
+
 # jev_stream <title> <own-option>: reads existing stream names on stdin and prints
 # "choice<TAB>probability" for the likeliest stream of the task titled <title>, <own-option>
 # standing for a stream of its own. Silent without TYPESAFE_API_KEY, with HERDR_TASK_JEV=0,
@@ -1754,7 +1781,7 @@ jev_stream() {
 # under the existing stream Jev picks with 50% or more, else under its own title (so it is not
 # asked again); with no key, Jev off or no answer, it stays unset.
 cmd_streams() {
-    local jev="" t dir title b top="" stream source merged result='{"tasks":{}}'
+    local jev="" t dir title b top="" stream source merged doing gone result='{"tasks":{}}'
     local -a dirs=() titles=() names=()
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -1791,8 +1818,10 @@ cmd_streams() {
     for i in "${!dirs[@]}"; do
         dir=${dirs[$i]}
         b=$(stream_branch "$dir")
-        stream="" source="" merged=false
+        stream="" source="" merged=false doing="" gone=false
+        [[ -d "$dir" ]] || gone=true
         if [[ -n "$b" ]]; then
+            doing=$(git -C "$dir" config --get "branch.$b.herdr-doing" 2>/dev/null || true)
             stream=$(git -C "$dir" config --get "branch.$b.herdr-stream" 2>/dev/null || true)
             source=$(git -C "$dir" config --get "branch.$b.herdr-stream-source" 2>/dev/null || true)
             top=$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null || true)
@@ -1803,7 +1832,8 @@ cmd_streams() {
             fi
         fi
         result=$(jq -c --arg d "$dir" --arg s "$stream" --arg src "$source" --argjson m "$merged" \
-            '.tasks[$d] = {stream: $s, source: $src, merged: $m}' <<<"$result")
+            --arg now "$doing" --argjson g "$gone" \
+            '.tasks[$d] = {stream: $s, source: $src, merged: $m, doing: $now, gone: $g}' <<<"$result")
     done
     printf '%s\n' "$result"
 }
@@ -1834,6 +1864,7 @@ case "${1:-}" in
     prepare) shift; cmd_prepare "$@" ;;
     stream) shift; cmd_stream "$@" ;;
     streams) shift; cmd_streams "$@" ;;
+    doing) shift; cmd_doing "$@" ;;
     -h|--help) awk 'NR > 1 && !/^#/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "$0" ;;
-    *) die "unknown command: $1 (start, tag, open, links, pr, review, ship, open-file, open-ticket, retag, prune, prune-worktree, projects, parse, prepare, stream, streams; --help)" ;;
+    *) die "unknown command: $1 (start, tag, open, links, pr, review, ship, open-file, open-ticket, retag, prune, prune-worktree, projects, parse, prepare, stream, streams, doing; --help)" ;;
 esac

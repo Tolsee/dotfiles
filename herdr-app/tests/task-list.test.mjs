@@ -169,3 +169,18 @@ test("a slow stream read loses to a newer read or a drag", async () => {
   await new Promise((r) => setImmediate(r));
   assert.equal(m.streams["/w/a"].stream, "Mine", "the read started before the drag is dropped");
 });
+
+test("doing: the saved line is line 2 for a ticket, the title for free text; a gone folder dims", () => {
+  const sp = [
+    { id: "a", name: "DEV-1 Fix login", folder: "/a" },
+    { id: "b", name: "Check project status", folder: "/b" },
+    { id: "c", name: "Old", folder: "/c", status: "blocked" },
+  ];
+  const ag = [{ space: "a", title: "Login fix", app: "claude-code" }, { space: "b", title: "Preview project status", app: "claude-code" }];
+  const g = list.groups(sp, ag, { "/a": { doing: "Writing the retry test" }, "/b": { doing: "Rewriting the crashloop monitor" }, "/c": { gone: true } });
+  const t = Object.fromEntries(g.flatMap((x) => x.tasks).map((k) => [k.space.id, [k.title, k.doing, k.gone]]));
+  assert.deepEqual(t.a, ["Fix login", "Writing the retry test", false]);
+  assert.deepEqual(t.b, ["Rewriting the crashloop monitor", "Check project status", false]);
+  assert.deepEqual(t.c, ["Old", "Folder removed", true]);
+  assert.equal(list.groups(sp.slice(0, 1), ag, {})[0].tasks[0].doing, "Login fix", "no saved line: the terminal title");
+});

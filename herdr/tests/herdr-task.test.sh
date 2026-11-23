@@ -473,6 +473,26 @@ check "stream set: empty ticket name does not clear" "Mine|hand|false" "$(sget "
 check "stream set: empty hand name clears" "||false" "$(sget "$sa")"
 check "streams: no git dir, no stream" "||false" "$(sget "$ptmp/nobin")"
 
+# --- doing: the sidebar's "doing now" line, and gone folders ---
+dget() { "${app_env[@]}" bash "$task" streams --task "$1=t" | jq -r --arg d "$1" '.tasks[$d] | "\(.doing)|\(.gone)"'; }
+check "doing: unset" "|false" "$(dget "$sa")"
+"${app_env[@]}" bash "$task" doing "Rewrite the crashloop monitor" --cwd "$sa"
+check "doing: saved on the branch" "Rewrite the crashloop monitor|false" "$(dget "$sa")"
+"${app_env[@]}" bash "$task" doing $'two\nlines' --cwd "$sa"
+check "doing: one line" "two lines|false" "$(dget "$sa")"
+"${app_env[@]}" bash "$task" doing "" --cwd "$sa"
+check "doing: empty clears" "|false" "$(dget "$sa")"
+check "doing: no text fails" 1 "$("${app_env[@]}" bash "$task" doing --cwd "$sa" >/dev/null 2>&1; echo $?)"
+check "streams: a missing folder is gone" "|true" "$(dget "$ptmp/no-such-folder")"
+(cd "$sa" && HERDR_ENV=1 HOME="$tmp/hookhome" sh "$root/ai/claude/hooks/herdr-task-doing.sh" </dev/null) > "$tmp/hook-out" 2>&1
+check "doing hook: silent without herdr-task" "" "$(cat "$tmp/hook-out")"
+mkdir -p "$tmp/hookhome/bin"; printf '#!/bin/sh\n' > "$tmp/hookhome/bin/herdr-task"; chmod +x "$tmp/hookhome/bin/herdr-task"
+git -C "$sa" config branch.stream-a.herdr-doing "Fix it"
+check "doing hook: asks with the current line" 'Herdr sidebar line for this task: "Fix it".' \
+    "$(cd "$sa" && HERDR_ENV=1 HOME="$tmp/hookhome" sh "$root/ai/claude/hooks/herdr-task-doing.sh" </dev/null | cut -d" " -f1-8)"
+check "doing hook: silent outside Herdr" "" \
+    "$(cd "$sa" && env -u HERDR_ENV -u HC_TERMINAL_ID HOME="$tmp/hookhome" sh "$root/ai/claude/hooks/herdr-task-doing.sh" </dev/null)"
+
 mkdir -p "$tmp/appcache/herdr-task/prs"
 mcf=$(pr_cache_file "$sb" stream-b)
 printf '{"state":"MERGED","number":3}\n' > "$tmp/appcache/herdr-task/prs/${mcf##*/}"

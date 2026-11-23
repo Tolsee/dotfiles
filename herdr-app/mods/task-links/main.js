@@ -27,7 +27,9 @@ export async function taskLinks({ cwd, on, fresh }) {
   const args = ["links", "--cwd", cwd];
   if (fresh === true) args.push("--fresh");
   else if (typeof fresh === "number") args.push("--max-age", String(fresh));
-  const r = await exec("sh", ["-c", 'exec "$HOME/bin/herdr-task" "$@"', "herdr-task", ...args], { cwd, on }).catch((e) => ({ code: 1, stderr: String(e) }));
+  // A missing cwd fails the spawn itself ("cannot run sh: No such file..."): say what is gone.
+  const r = await exec("sh", ["-c", 'exec "$HOME/bin/herdr-task" "$@"', "herdr-task", ...args], { cwd, on })
+    .catch((e) => ({ code: 1, stderr: /os error 2\b/.test(String(e)) ? `This task's folder is gone: ${cwd}` : String(e) }));
   if (r.code !== 0) throw new Error(String(r.stderr ?? "").trim().split("\n").pop()?.replace(/^herdr-task: /, "") || "herdr-task links failed");
   return JSON.parse(r.stdout);
 }

@@ -2,7 +2,9 @@
 // over an Agents list. Rows are grouped by stream of work (`herdr-task streams`): the ticket's
 // parent, which the task's agent files with `herdr-task stream set`, else Jev's pick, else
 // where you dragged it. Each row: the agent's state, the task's title (ticket id on the right),
-// and what the agent is doing now (its terminal title). Other agents in the space nest under it,
+// and what the agent is doing now: the line it saves with `herdr-task doing` (the Claude prompt
+// hook asks for it), else its terminal title. A task with no ticket shows that line as its title
+// and what it started as under it. A task whose folder is gone says so and dims. Other agents in the space nest under it,
 // and so do sub-agents its agent started with hc (no pane; click to peek).
 // Tasks waiting on you are tinted and counted up top; the count jumps to them in turn. Merged
 // tasks dim until pruned and never count as waiting on you. No PR or CI here: prefix+o and prefix+m have those.
@@ -14,7 +16,7 @@ import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, ScrollHandle } from "gpui-base";
 import { spaces, agents, panes, terminals, run, exec, openOverlay, theme, shared, setShared } from "herdr";
 
-const CACHE = "task-list.streams"; // folder -> { stream, source, merged }, so a reopen draws at once
+const CACHE = "task-list.streams"; // folder -> { stream, source, merged, doing, gone }, so a reopen draws at once
 const REFRESH = 60000; // ms between stream reads when nothing changed (Jev and git config only)
 const NEW = "\u0000new"; // drop target: a stream of the task's own
 const TICKET = /^([A-Z][A-Z0-9]*-\d+)\s+(.*)$/;
@@ -80,11 +82,17 @@ export function groups(sp, ag, streams, ps = [], terms = []) {
     const folder = place(s, ps);
     const info = streams[folder] ?? {};
     const { id, title } = splitName(s.name);
+    const now = (info.doing ?? "").trim();
     const task = {
       space: s, folder, id, title, agents: mine, merged: Boolean(info.merged), source: info.source ?? "",
       subs: subAgents(terms, mine.map((a) => a.address)),
-      doing: doing(mine[0]),
+      doing: now || doing(mine[0]),
+      gone: Boolean(info.gone),
     };
+    // No ticket: the first prompt was the only title, so the current work leads and the start
+    // goes under it.
+    if (now && !id && now !== title) { task.title = now; task.doing = title; }
+    if (task.gone) task.doing = "Folder removed";
     const key = info.stream ?? "";
     task.stream = key;
     if (!byStream.has(key)) byStream.set(key, []);
@@ -168,7 +176,7 @@ export default class TaskList extends View {
   }
 
   row(task, stream, t) {
-    const s = task.space, on = s.active, need = needsYou(s.status) && !task.merged; // merged: finished work, not a call for you
+    const s = task.space, on = s.active, need = needsYou(s.status) && !task.merged && !task.gone; // finished work, not a call for you
     const extra = task.agents.slice(1);
     const subs = task.subs ?? [];
     const second = task.doing || (task.agents.length ? "" : task.folder?.split("/").pop() ?? "");
@@ -176,7 +184,7 @@ export default class TaskList extends View {
       .when(on, (el) => el.bg(t.selected))
       .when(!on && need, (el) => el.bg((t.blocked ?? "#ff966c") + "1a"))
       .when(!on && !need, (el) => el.hover((h) => h.bg(t.hover)))
-      .when(task.merged, (el) => el.opacity(0.45))
+      .when(task.merged || task.gone, (el) => el.opacity(0.45))
       .when(this.pressed === s.id, (el) => el.opacity(0.5))
       .on_mouse_down("left", (_e, cx) => { this.pressed = s.id; this.over = stream; cx.notify(); })
       .on_mouse_move((_e, cx) => {
@@ -231,9 +239,9 @@ export default class TaskList extends View {
     const sp = spaces(), ag = agents();
     const list = groups(sp, ag, this.streams, panes(), terminals());
     const order = list.flatMap((g) => g.tasks.map((k) => k.space.id));
-    const merged = new Set(list.flatMap((g) => g.tasks.filter((k) => k.merged).map((k) => k.space.id)));
+    const merged = new Set(list.flatMap((g) => g.tasks.filter((k) => k.merged || k.gone).map((k) => k.space.id)));
     // A blocked sub-agent waits on you too (its done goes to its parent, so it doesn't count).
-    const kids = list.flatMap((g) => g.tasks.filter((k) => !k.merged).flatMap((k) => k.subs.filter((x) => x.status === "blocked").map((x) => ({ space: k.space.id, peek: x.address }))));
+    const kids = list.flatMap((g) => g.tasks.filter((k) => !k.merged && !k.gone).flatMap((k) => k.subs.filter((x) => x.status === "blocked").map((x) => ({ space: k.space.id, peek: x.address }))));
     const waiting = [...ag.filter((a) => needsYou(a.status) && !merged.has(a.space)), ...kids].sort((a, b) => order.indexOf(a.space) - order.indexOf(b.space));
     const dragging = this.pressed !== null;
     return v_flex().size_full().min_h(0).bg(t.chrome).text_size(13)
