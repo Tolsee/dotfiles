@@ -482,7 +482,7 @@ check "start in the app: a space with a terminal in the worktree counts" 0 "$(gr
 check "start in the app: --url is saved" "https://linear.app/other/issue/ABC-10/x" "$(git -C "$ptmp/repo" config --get branch.abc-10.linear-url)"
 check "start in the app needs no herdr TUI" 0 "$("${app_start_env[@]}" bash "$task" start ABC-11 --project "$ptmp/repo" >/dev/null 2>&1; echo $?)"
 check "start in the TUI ignores the app" 0 \
-    "$("${app_start_env[@]}" HERDR_ENV=1 bash -c 'HERDR_TASK_SOURCE_ONLY=1 source "$1"; in_app && echo 1 || echo 0' _ "$task")"
+    "$("${app_start_env[@]}" HERDR_ENV=1 HERDR_BIN_PATH=/usr/bin/true bash -c 'HERDR_TASK_SOURCE_ONLY=1 source "$1"; in_app && echo 1 || echo 0' _ "$task")"
 
 # --- streams: set, precedence, merged, Jev ---
 git -C "$ptmp/repo" worktree add -q -b stream-a "$ptmp/appwt/repo/stream-a" main 2>/dev/null

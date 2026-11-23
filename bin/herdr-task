@@ -465,10 +465,10 @@ app_start() {
     if [[ -n "$space" ]]; then
         note "a space is already open at $path ($space), no new agent"
     elif [[ "$agent" == none ]]; then
-        "$herdr_app_bin" do space.new --name "$label" --folder "$path" --focus false >/dev/null
+        "$herdr_app_bin" "do" space.new --name "$label" --folder "$path" --focus false >/dev/null
         note "opened space '$label' at $path"
     else
-        "$herdr_app_bin" do space.new --name "$label" --folder "$path" --tab "$agent" \
+        "$herdr_app_bin" "do" space.new --name "$label" --folder "$path" --tab "$agent" \
             --argv "$(jq -nc --arg a "$agent" '[$a]')" --task "$prompt" --focus false >/dev/null
         note "opened space '$label' at $path with $agent on the task"
     fi
