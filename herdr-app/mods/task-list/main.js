@@ -5,7 +5,9 @@
 // and what the agent is doing now: the line it saves with `herdr-task doing` (the Claude prompt
 // hook asks for it), else its terminal title. A task with no ticket shows that line as its title
 // and what it started as under it. A task whose folder is gone says so and dims. Other agents in the space nest under it,
-// and so do sub-agents its agent started with hc (no pane; click to peek).
+// and so do its children, the sessions its agent started with hc: click one to open it in a
+// split beside its parent (terminal.keep), click it again from that pane to hide it (it keeps
+// running), right-click for Open, Hide or End (the task-child popup).
 // Tasks waiting on you are tinted and counted up top; the count jumps to them in turn. Merged
 // tasks dim until pruned and never count as waiting on you. No PR or CI here: prefix+o and prefix+m have those.
 //
@@ -14,7 +16,7 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, ScrollHandle } from "gpui-base";
-import { spaces, agents, panes, terminals, run, exec, openOverlay, theme, shared, setShared } from "herdr";
+import { spaces, agents, panes, terminals, focused, run, exec, openOverlay, theme, shared, setShared } from "herdr";
 
 const CACHE = "task-list.streams"; // folder -> { stream, source, merged, doing, gone }, so a reopen draws at once
 const REFRESH = 60000; // ms between stream reads when nothing changed (Jev and git config only)
@@ -61,13 +63,33 @@ export function subAgents(terms, addresses) {
       const t = splitName(clean(k.title));
       const named = /^([a-z][a-z0-9]*-\d+)$/i.exec(k.name ?? "");
       const id = t.id || (named ? named[1].toUpperCase() : "");
-      out.push({ address: k.address, name: k.name ?? k.address, id, title: t.title || k.name || k.address, status: st === "error" ? "blocked" : st === "done" ? "idle" : st });
+      out.push({ address: k.address, parent: addr, name: k.name ?? k.address, id, title: t.title || k.name || k.address, status: st === "error" ? "blocked" : st === "done" ? "idle" : st });
       walk(k.address);
     }
   };
   for (const a of addresses) walk(a);
   return out;
 }
+
+// The commands that show child `k` of `task`: its pane when it has one, else a split right of
+// its parent's pane (the task's agent for a grandchild whose parent has no pane), else a tab.
+export function childOpen(k, task, ps) {
+  const go = ["space.select", { id: task.space.id }];
+  if (ps.some((p) => p.terminal === k.address)) return [go, ["pane.focus", { terminal: k.address }]];
+  const beside = ps.find((p) => p.terminal === k.parent) ?? ps.find((p) => p.pane === task.agents[0]?.pane);
+  return beside
+    ? [go, ["pane.focus", { pane: beside.pane }], ["terminal.keep", { terminal: k.address, place: "right" }]]
+    : [go, ["terminal.keep", { terminal: k.address, place: "tab" }]];
+}
+
+// A click on child `k`: from its own pane, hide it (still running, back under its parent);
+// otherwise show it.
+export function childClick(k, task, ps, here) {
+  const shown = ps.some((p) => p.terminal === k.address);
+  return shown && here === k.address ? [["terminal.park", { terminal: k.address }]] : childOpen(k, task, ps);
+}
+
+const runAll = (cmds) => cmds.forEach(([c, a]) => run(c, a));
 
 // Where a space works now: its first terminal's live folder, else where it was made (a space
 // made in one worktree may have moved on to another repository).
@@ -168,9 +190,9 @@ export default class TaskList extends View {
     if (!waiting.length) return;
     const a = waiting[this.jump % waiting.length];
     this.jump++;
+    if (a.child) return runAll(childOpen(a.child, a.task, panes()));
     run("space.select", { id: a.space });
-    if (a.peek) run("terminal.peek", { terminal: a.peek });
-    else run("pane.focus", { pane: a.pane });
+    run("pane.focus", { pane: a.pane });
   }
 
   glyph(t, status) {
@@ -181,8 +203,11 @@ export default class TaskList extends View {
 
   row(task, stream, t) {
     const s = task.space, on = s.active, need = needsYou(s.status) && !task.merged && !task.gone; // finished work, not a call for you
-    const extra = task.agents.slice(1);
     const subs = task.subs ?? [];
+    // A child with a pane is an agent of the space too: it stays under the children.
+    const kidAddrs = new Set(subs.map((k) => k.address));
+    const extra = task.agents.slice(1).filter((a) => !kidAddrs.has(a.address));
+    const ps = panes(), here = focused()?.terminal ?? null;
     const second = task.doing || (task.agents.length ? "" : task.folder?.split("/").pop() ?? "");
     // The hover lights the task's own lines only, so a helper under it reads as its own target.
     return v_flex().id(`task-${s.id}`).px(4).py(3).gap(1).rounded(7).flex_none()
@@ -207,17 +232,21 @@ export default class TaskList extends View {
         .on_mouse_down("left", (_e, cx) => { cx.stop_propagation(); run("space.select", { id: s.id }); run("pane.focus", { pane: a.pane }); })
         .child(this.glyph(t, a.status))
         .child(div().flex_1().min_w(0).truncate().child([a.app ?? a.program?.name, doing(a)].filter(Boolean).join(" · "))))))
-      // Helpers (sub-agents) have no pane: a click peeks at the terminal, over the tab.
+      // Children: a click opens one beside its parent, or hides it from its own pane.
       .when(subs.length > 0, (el) => el.child(div().pl(23).pt(2).text_size(10).text_color(t.dim)
         .child(subs.length === 1 ? "1 helper" : `${subs.length} helpers`)))
-      .children(subs.map((k) => h_flex().id(`kid-${k.address}`).ml(18).pl(5).pr(4).py(1).gap(6).items_center().rounded(4).text_size(11).text_color(t.muted)
+      .children(subs.map((k) => { const shown = ps.some((p) => p.terminal === k.address); return h_flex().id(`kid-${k.address}`).ml(18).pl(5).pr(4).py(1).gap(6).items_center().rounded(4).text_size(11).text_color(t.muted)
         .hover((h) => h.bg(t.hover).text_color(t.foreground))
         .when(k.status === "blocked", (el) => el.text_color(t.blocked))
-        .tooltip(`Helper session ${k.name} (${k.address}), started by this task's agent. Click to peek at it.`)
-        .on_mouse_down("left", (_e, cx) => { cx.stop_propagation(); run("terminal.peek", { terminal: k.address }); })
+        .tooltip(`Child session ${k.name} (${k.address}), started by this task's agent. ${shown ? (here === k.address ? "Click to hide its pane (it keeps running)." : "Click to go to its pane.") : "Click to open it beside its parent."} Right-click: open, hide or end.`)
+        .on_mouse_down("left", (_e, cx) => { cx.stop_propagation(); runAll(childClick(k, task, ps, here)); })
+        .on_mouse_down("right", (_e, cx) => {
+          cx.stop_propagation();
+          openOverlay({ mod: "task-child", kind: "popup", width: 220, height: shown ? 120 : 88, props: { terminal: k.address, name: k.name, shown, open: childOpen(k, task, ps) } });
+        })
         .child(this.glyph(t, k.status))
-        .child(div().flex_1().min_w(0).truncate().child(k.title))
-        .when(Boolean(k.id), (el) => el.child(div().flex_none().text_size(10).text_color("#7a88cf").child(k.id)))));
+        .child(div().flex_1().min_w(0).truncate().when(shown, (d) => d.text_color(t.foreground)).child(k.title))
+        .when(Boolean(k.id), (el) => el.child(div().flex_none().text_size(10).text_color("#7a88cf").child(k.id))); }));
   }
 
   // Mouse released over `stream` (row s, or a header when s is null).
@@ -252,7 +281,7 @@ export default class TaskList extends View {
     const order = list.flatMap((g) => g.tasks.map((k) => k.space.id));
     const merged = new Set(list.flatMap((g) => g.tasks.filter((k) => k.merged || k.gone).map((k) => k.space.id)));
     // A blocked sub-agent waits on you too (its done goes to its parent, so it doesn't count).
-    const kids = list.flatMap((g) => g.tasks.filter((k) => !k.merged && !k.gone).flatMap((k) => k.subs.filter((x) => x.status === "blocked").map((x) => ({ space: k.space.id, peek: x.address }))));
+    const kids = list.flatMap((g) => g.tasks.filter((k) => !k.merged && !k.gone).flatMap((k) => k.subs.filter((x) => x.status === "blocked").map((x) => ({ space: k.space.id, child: x, task: k }))));
     const waiting = [...ag.filter((a) => needsYou(a.status) && !merged.has(a.space)), ...kids].sort((a, b) => order.indexOf(a.space) - order.indexOf(b.space));
     const dragging = this.pressed !== null;
     return v_flex().size_full().min_h(0).bg(t.chrome).text_size(13)
