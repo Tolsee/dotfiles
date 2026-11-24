@@ -7,7 +7,9 @@
 //      (`herdr-task prepare --kind`).
 //   3. Project: Jev's picks first with their chances (`parse --jev`, asked once on step 1's
 //      Enter), then the ticket team's last repository, the focused one and the rest. Type to
-//      search (letters in order: "dtf" finds dotfiles).
+//      search (letters in order: "dtf" finds dotfiles). A repository that is not cloned yet gets
+//      a Clone row: the PR's own repository first, or the search as a name ("docker-ecr", under
+//      the owner most checkouts come from) or as owner/name (`herdr-task clone`).
 // Enter on step 3 runs `herdr-task prepare` (worktree, ticket saved on the branch, env files),
 // then goes to the space already open there, or opens one with the agent on the task. The
 // worktree and ticket rules stay in herdr-task, shared with the TUI and Rex.
@@ -75,6 +77,22 @@ export function filtered(projects, query) {
     .filter((r) => r.s !== null).sort((a, b) => a.s - b.s || a.i - b.i).map((r) => r.path);
 }
 
+// The Clone rows for the project step, as "clone:owner/name" (or "clone:name"): the PR's
+// repository when it is not cloned (`parse`'s clone) and the search allows it, then the search
+// itself when it reads as a repository: a bare name no checkout has, or any owner/name (the
+// checkouts' owners are not known here; herdr-task clone finds one already cloned).
+const REPO = /^[A-Za-z0-9_.-]+(\/[A-Za-z0-9_.-]+)?$/;
+export const CLONE = "clone:";
+export function cloneRows(clone, query, projects) {
+  const q = query.trim(), out = [];
+  if (clone && (!q || score(q, clone) !== null)) out.push(clone);
+  const name = (x) => x.split("/").pop().toLowerCase(), want = q.toLowerCase();
+  const taken = out.some((c) => c.toLowerCase() === want || (!want.includes("/") && name(c) === want))
+    || (!want.includes("/") && projects.some((p) => name(p) === want));
+  if (q && REPO.test(q) && !taken) out.push(q);
+  return out.map((c) => CLONE + c);
+}
+
 // The space already working in `path`: one made there, else the one with a pane inside it,
 // and then that pane, so its tab comes up too. Local spaces only.
 export function placeOf(path) {
@@ -136,8 +154,12 @@ export default class TaskStart extends View {
   }
 
   // The project rows on screen: herdr-task's list narrowed by the search.
+  // A PR's own repository, not cloned yet, comes first; a searched name to clone comes last.
   rows() {
-    return filtered(this.preview?.projects ?? [], this.search.value());
+    const list = this.preview?.projects ?? [], q = this.search.value();
+    const found = filtered(list, q), clones = cloneRows(this.preview?.clone, q, list);
+    const pr = clones.filter((c) => c === CLONE + this.preview?.clone);
+    return [...pr, ...found, ...clones.filter((c) => !pr.includes(c))];
   }
 
   pickFirst() {
@@ -187,9 +209,9 @@ export default class TaskStart extends View {
     this.preview = { ...preview, ref };
     // A PR is reviewed unless a type of work was picked by hand, also when Enter came first.
     if (preview.kind === "pr" && !this.kindPicked) this.kind = KINDS.findIndex((x) => x.id === "review");
-    const list = preview.projects ?? [];
-    if (!(this.picked && list.includes(this.sel))) {
-      this.sel = filtered(list, this.search.value())[0] ?? null;
+    const rows = this.rows();
+    if (!(this.picked && rows.includes(this.sel))) {
+      this.sel = rows[0] ?? null;
       this.picked = false;
     }
   }
@@ -256,7 +278,7 @@ export default class TaskStart extends View {
       this.waiting = !this.error;
       return;
     }
-    const project = this.project();
+    let project = this.project();
     if (!project) {
       this.error = this.preview?.projects?.length ? "No project matches the search."
         : "No project to start it in. Set HERDR_TASK_PROJECT_ROOTS in ~/.secrets.zshrc.";
@@ -269,6 +291,13 @@ export default class TaskStart extends View {
     cx.notify();
     cx.spawn(async (cx) => {
       try {
+        if (project.startsWith(CLONE)) {
+          this.cloning = project.slice(CLONE.length);
+          cx.notify();
+          const c = await herdrTask(["clone", this.cloning], { timeout: LONG });
+          if (c.code !== 0) throw failure(c, "clone");
+          project = JSON.parse(c.stdout).path;
+        }
         const r = await herdrTask(["prepare", ref, "--project", project, "--kind", kind], { timeout: LONG });
         if (r.code !== 0) throw failure(r, "prepare");
         const p = JSON.parse(r.stdout);
@@ -283,6 +312,7 @@ export default class TaskStart extends View {
         this.error = String(e?.message ?? e);
       }
       this.busy = false;
+      this.cloning = null;
       cx.notify();
     });
   }
@@ -363,7 +393,18 @@ export default class TaskStart extends View {
 
     const rows = this.rows(), sel = this.project(), at = Math.max(0, rows.indexOf(sel));
     const top = this.first(rows.length, at), best = p?.projects?.[0], chances = p?.chances ?? {};
+    const cloneRow = (row, i) => {
+      const on = row === sel, slug = row.slice(CLONE.length);
+      return h_flex().id(`ts-${i}`).h(30).px(10).gap(10).items_center().rounded(7).cursor_pointer()
+        .when(on, (el) => el.bg(t.hover)).hover((s) => s.bg(t.hover))
+        .on_click((_e, cx) => { this.sel = row; this.picked = true; cx.notify(); })
+        .child(icon("plus").text_color(on ? t.accent : t.dim))
+        .child(div().flex_none().text_color(t.foreground).when(on, (d) => d.font_semibold()).child(`Clone ${slug}`))
+        .child(div().flex_1().truncate().text_size(11.5).text_color(t.dim).child(slug.includes("/") ? "from GitHub" : "from GitHub, your org"))
+        .when(row === CLONE + p?.clone, (el) => el.child(div().text_size(11).text_color(t.dim).child("the PR's repository")));
+    };
     const projectRow = (repo, i) => {
+      if (repo.startsWith(CLONE)) return cloneRow(repo, i);
       const on = repo === sel, parts = repo.split("/"), chance = chances[repo];
       return h_flex().id(`ts-${i}`).h(30).px(10).gap(10).items_center().rounded(7).cursor_pointer()
         .when(on, (el) => el.bg(t.hover)).hover((s) => s.bg(t.hover))
@@ -379,7 +420,7 @@ export default class TaskStart extends View {
     const hints = {
       task: [["↵", "next"], ["esc", "close"]],
       kind: [["↵", "next"], ["↑↓", "move"], ["g s r", "pick"], ["⇧tab", "back"], ["esc", "close"]],
-      project: [["↵", this.busy ? "starting…" : this.waiting ? "waiting for projects…" : "start"], ["↑↓", "move"], ["⇧tab", "back"], ["esc", "close"]],
+      project: [["↵", this.cloning ? `cloning ${this.cloning}…` : this.busy ? "starting…" : this.waiting ? "waiting for projects…" : "start"], ["↑↓", "move"], ["⇧tab", "back"], ["esc", "close"]],
     }[this.step];
 
     return v_flex().id("task-start").track_focus(this.handle).w_full().p(16).gap(12).bg(t.popover).text_size(13)

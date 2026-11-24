@@ -251,3 +251,59 @@ test("start: a PR link is reviewed unless a type of work was picked by hand", ()
   n.take({ kind: "pr", pr: "7", projects: ["/r/api"] }, "x");
   assert.equal(start.KINDS[n.kind].id, "short");
 });
+
+test("start: Clone rows for a PR's repository and for a searched name", () => {
+  const list = ["/r/api", "/r/dotfiles"];
+  assert.deepEqual(start.cloneRows("misha/fork", "", list), ["clone:misha/fork"], "the PR's repository, no search");
+  assert.deepEqual(start.cloneRows("", "docker-ecr", list), ["clone:docker-ecr"]);
+  assert.deepEqual(start.cloneRows("", "acme/docker-ecr", list), ["clone:acme/docker-ecr"]);
+  assert.deepEqual(start.cloneRows("", "api", list), [], "a checkout with that name");
+  assert.deepEqual(start.cloneRows("", "other/api", list), ["clone:other/api"], "owner/name: another owner's api may not be cloned");
+  assert.deepEqual(start.cloneRows("", "two words", list), [], "not a repository name");
+  assert.deepEqual(start.cloneRows("misha/fork", "fork", list), ["clone:misha/fork"], "the PR's row covers its name");
+  assert.deepEqual(start.cloneRows("misha/fork", "zzz", list), ["clone:zzz"], "a search that misses the PR hides its row");
+  const cx = { notify() {}, spawn() {}, timer: { after() {} }, read_from_clipboard: () => "", focus_handle: () => ({ focus() {} }) };
+  const m = new start.default();
+  m.init({}, cx);
+  m.take({ kind: "pr", pr: "1", projects: list, clone: "misha/fork" }, "x");
+  assert.equal(m.project(), "clone:misha/fork", "the PR's repository is the pick");
+  m.search.set_value("dtf");
+  m.pickFirst();
+  assert.deepEqual(m.rows(), ["/r/dotfiles", "clone:dtf"], "a searched clone comes after the matches");
+});
+
+test("start popup: Enter on a Clone row clones, then prepares in the new checkout", async () => {
+  reset();
+  const replies = {
+    parse: { kind: "branch", branch: "b", projects: ["/r/api"] },
+    clone: { path: "/r/docker-ecr", repo: "acme/docker-ecr" },
+    prepare: { path: "/wt/docker-ecr/b", branch: "b", label: "b", existing: false, agent: "claude", prompt: "p" },
+  };
+  state.exec = async (_c, args) => ({ code: 0, stdout: JSON.stringify(replies[args[3]]), stderr: "" });
+  const tasks = [];
+  const cx = { notify() {}, spawn(f) { tasks.push(f(cx)); }, timer: { after() {} }, read_from_clipboard: () => "", focus_handle: () => ({ focus() {} }) };
+  const m = new start.default();
+  m.init({}, cx);
+  m.input.set_value("b");
+  m.parse(cx);
+  await Promise.all(tasks);
+  m.search.set_value("docker-ecr");
+  m.pickFirst();
+  m.start(cx);
+  await Promise.all(tasks);
+  const execs = state.calls.filter((c) => c[0] === "exec");
+  assert.deepEqual(execs.slice(-2).map(taskArgs), [["clone", "docker-ecr"], ["prepare", "b", "--project", "/r/docker-ecr", "--kind", "groom"]]);
+  assert.equal(execs.at(-2)[3]?.timeout, 300000, "a clone may take a while");
+  assert.equal(m.cloning, null);
+
+  reset();
+  state.exec = async (_c, args) => args[3] === "clone"
+    ? { code: 1, stdout: "", stderr: "herdr-task: cloning acme/nope failed: GraphQL: Could not resolve to a Repository\n" }
+    : { code: 0, stdout: JSON.stringify(replies[args[3]]), stderr: "" };
+  m.search.set_value("nope");
+  m.pickFirst();
+  m.start(cx);
+  await Promise.all(tasks);
+  assert.equal(m.error, "cloning acme/nope failed: GraphQL: Could not resolve to a Repository");
+  assert.ok(!state.calls.some((c) => c[0] === "exec" && c[2][3] === "prepare"), "no prepare after a failed clone");
+});
