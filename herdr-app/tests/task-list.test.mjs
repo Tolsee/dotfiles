@@ -20,8 +20,9 @@ function el() {
 }
 `);
 writeFileSync(join(dir, "herdr.mjs"), `
-export const state = { calls: [], spaces: [], agents: [], panes: [], terminals: [], shared: {}, exec: async () => ({ code: 1, stdout: "", stderr: "" }) };
+export const state = { calls: [], spaces: [], agents: [], panes: [], terminals: [], focused: null, shared: {}, exec: async () => ({ code: 1, stdout: "", stderr: "" }) };
 export const spaces = () => state.spaces, agents = () => state.agents, panes = () => state.panes, terminals = () => state.terminals;
+export const focused = () => state.focused ?? null;
 export const theme = () => new Proxy({}, { get: (_, k) => "#" + String(k) });
 export const run = (...a) => state.calls.push(["run", ...a]);
 export const exec = (...a) => { state.calls.push(["exec", ...a]); return state.exec(...a); };
@@ -183,4 +184,47 @@ test("doing: the saved line is line 2 for a ticket, the title for free text; a g
   assert.deepEqual(t.b, ["Rewriting the crashloop monitor", "Check project status", false]);
   assert.deepEqual(t.c, ["Old", "Folder removed", true]);
   assert.equal(list.groups(sp.slice(0, 1), ag, {})[0].tasks[0].doing, "Login fix", "no saved line: the terminal title");
+});
+
+test("children: a click opens one beside its parent, again from its pane hides it", () => {
+  const task = { space: { id: "s1" }, agents: [{ address: "t9", pane: "p1" }] };
+  const ps = [{ pane: "p1", terminal: "t9" }, { pane: "p2", terminal: "t13" }];
+  const kid = { address: "t12", parent: "t9" };
+  assert.deepEqual(list.childClick(kid, task, ps, "t9"), [
+    ["space.select", { id: "s1" }], ["pane.focus", { pane: "p1" }], ["terminal.keep", { terminal: "t12", place: "right" }]]);
+  const shown = { address: "t13", parent: "t9" };
+  assert.deepEqual(list.childClick(shown, task, ps, "t9"), [["space.select", { id: "s1" }], ["pane.focus", { terminal: "t13" }]], "elsewhere: go to its pane");
+  assert.deepEqual(list.childClick(shown, task, ps, "t13"), [["terminal.park", { terminal: "t13" }]], "from its pane: hide it");
+  assert.deepEqual(list.childOpen({ address: "t14", parent: "t12" }, task, ps).at(-2), ["pane.focus", { pane: "p1" }], "a grandchild whose parent has no pane opens beside the task's agent");
+  assert.deepEqual(list.childOpen(kid, { space: { id: "s1" }, agents: [] }, []), [["space.select", { id: "s1" }], ["terminal.keep", { terminal: "t12", place: "tab" }]], "no pane to split: a tab");
+  assert.equal(list.subAgents([{ address: "t12", parent: "t9", state: "live" }], ["t9"])[0].parent, "t9");
+});
+
+test("children: the jump to a blocked child opens it instead of peeking", () => {
+  state.calls = []; state.shared = {};
+  state.spaces = [{ id: "s1", name: "DEV-1 One", folder: "/w/a", tabs: [{ id: "tb" }] }];
+  state.agents = [{ space: "s1", address: "t9", pane: "p1", status: "working" }];
+  state.panes = [{ pane: "p1", terminal: "t9", tab: "tb", cwd: "/w/a" }];
+  state.terminals = [{ address: "t12", parent: "t9", state: "live", status: "error" }];
+  const tasks = [];
+  const m = new list.default();
+  m.init({}, cx(tasks));
+  const g = list.groups(state.spaces, state.agents, {}, state.panes, state.terminals);
+  m.next([{ space: "s1", child: g[0].tasks[0].subs[0], task: g[0].tasks[0] }]);
+  const runs = state.calls.filter((c) => c[0] === "run").map((c) => c[1]);
+  assert.deepEqual(runs, ["space.select", "pane.focus", "terminal.keep"]);
+  state.terminals = []; state.agents = []; state.panes = [];
+});
+
+test("children: one with a pane counts once in Needs you, and its done is not for you", () => {
+  state.calls = []; state.shared = {}; state.focused = null;
+  state.spaces = [{ id: "s1", name: "DEV-1 One", folder: "/w/a", tabs: [{ id: "tb" }] }];
+  state.panes = [{ pane: "p1", terminal: "t9", tab: "tb", cwd: "/w/a" }, { pane: "p2", terminal: "t12", tab: "tb", cwd: "/w/a" }, { pane: "p3", terminal: "t13", tab: "tb", cwd: "/w/a" }];
+  state.agents = [{ space: "s1", address: "t9", pane: "p1", status: "working" }, { space: "s1", address: "t12", pane: "p2", status: "blocked" }, { space: "s1", address: "t13", pane: "p3", status: "done" }];
+  state.terminals = [{ address: "t12", parent: "t9", state: "live", status: "blocked" }, { address: "t13", parent: "t9", state: "live", status: "done" }];
+  const g = list.groups(state.spaces, state.agents, {}, state.panes, state.terminals);
+  const w = list.waitingOf(g, state.agents);
+  assert.deepEqual(w.map((x) => x.child?.address ?? x.address), ["t12"], "t12 once, as a child; t13's done is not for you");
+  assert.ok(w[0].child, "the jump opens it as a child");
+  state.terminals = []; state.agents = []; state.panes = [];
 });
