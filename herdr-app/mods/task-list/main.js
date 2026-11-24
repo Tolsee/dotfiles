@@ -89,6 +89,18 @@ export function childClick(k, task, ps, here) {
   return shown && here === k.address ? [["terminal.park", { terminal: k.address }]] : childOpen(k, task, ps);
 }
 
+// Who waits on you, in list order: agents blocked or done, outside merged or gone tasks, and
+// blocked children (a child's done goes to its parent). A child with a pane is in agents() too:
+// it counts once, as a child.
+export function waitingOf(list, ag) {
+  const order = list.flatMap((g) => g.tasks.map((k) => k.space.id));
+  const merged = new Set(list.flatMap((g) => g.tasks.filter((k) => k.merged || k.gone).map((k) => k.space.id)));
+  const kids = list.flatMap((g) => g.tasks.filter((k) => !k.merged && !k.gone).flatMap((k) => k.subs.filter((x) => x.status === "blocked").map((x) => ({ space: k.space.id, child: x, task: k }))));
+  const children = new Set(list.flatMap((g) => g.tasks.flatMap((k) => k.subs.map((x) => x.address))));
+  return [...ag.filter((a) => needsYou(a.status) && !merged.has(a.space) && !children.has(a.address)), ...kids]
+    .sort((a, b) => order.indexOf(a.space) - order.indexOf(b.space));
+}
+
 const runAll = (cmds) => cmds.forEach(([c, a]) => run(c, a));
 
 // Where a space works now: its first terminal's live folder, else where it was made (a space
@@ -278,11 +290,7 @@ export default class TaskList extends View {
     this.refresh(cx);
     const sp = spaces(), ag = agents();
     const list = groups(sp, ag, this.streams, panes(), terminals());
-    const order = list.flatMap((g) => g.tasks.map((k) => k.space.id));
-    const merged = new Set(list.flatMap((g) => g.tasks.filter((k) => k.merged || k.gone).map((k) => k.space.id)));
-    // A blocked sub-agent waits on you too (its done goes to its parent, so it doesn't count).
-    const kids = list.flatMap((g) => g.tasks.filter((k) => !k.merged && !k.gone).flatMap((k) => k.subs.filter((x) => x.status === "blocked").map((x) => ({ space: k.space.id, child: x, task: k }))));
-    const waiting = [...ag.filter((a) => needsYou(a.status) && !merged.has(a.space)), ...kids].sort((a, b) => order.indexOf(a.space) - order.indexOf(b.space));
+    const waiting = waitingOf(list, ag);
     const dragging = this.pressed !== null;
     return v_flex().size_full().min_h(0).bg(t.chrome).text_size(13)
       .child(h_flex().h(31).pl(16).pr(10).items_center().justify_between().text_size(11.5).text_color(t.dim)
