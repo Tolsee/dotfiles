@@ -10,8 +10,9 @@
 // Opens on what git knows and the cached PR (tens of ms), then fills in gh's answer (~1 s).
 //
 // Below them, a section for each other checkout the task's Claude sessions worked in (its agent
-// and the helpers it started with hc, `herdr-task related` reads their logs): that branch's PR,
-// failing checks and checks, or the branch when it has no PR. Then the PRs they opened that no
+// and the children it started with hc, `herdr-task related` reads their logs): the ticket saved
+// on that branch (unless a row above has it), then its PR, failing checks and checks, or the
+// branch when it has no PR. Then the PRs they opened that no
 // section shows. Local spaces only.
 //
 // Keys: j/k or ↑/↓ move, 1-9 pick, Enter opens, y copies the link, d opens the diff
@@ -64,11 +65,18 @@ export function sessionDirs(spaceId, ag, terms) {
   return out;
 }
 
-// One section's rows for another checkout: its PR with failing checks and checks, else its branch.
+// One section's rows for another checkout: the ticket saved on its branch, then its PR with
+// failing checks and checks, else its branch.
 export function sectionRows(facts) {
   const name = facts.branch ?? facts.cwd?.split("/").pop();
-  const rows = rowsOf(facts).filter((l) => (facts.pr ? ["pr", "failing", "checks"] : ["branch", "compare"]).includes(l.kind));
+  const rows = rowsOf(facts).filter((l) => ["ticket", ...(facts.pr ? ["pr", "failing", "checks"] : ["branch", "compare"])].includes(l.kind));
   return rows.map((l) => ({ ...l, group: name }));
+}
+
+// A ticket shows once: a child on the task's own ticket (or a sibling's) adds no second row.
+export function oneTicketEach(rows, shown = []) {
+  const seen = new Set(shown.filter((l) => l.kind === "ticket").map((l) => l.url));
+  return rows.filter((l) => l.kind !== "ticket" || (!seen.has(l.url) && seen.add(l.url)));
 }
 
 // PRs the sessions opened that no row shows yet.
@@ -163,8 +171,9 @@ export default class TaskLinks extends View {
   async sections(folders, fresh) {
     const all = await Promise.all(folders.map((cwd) => taskLinks({ cwd, on: null, fresh: fresh || undefined }).then((f) => ({ ...f, cwd })).catch(() => null)));
     // A checkout on its default branch with no PR is not work of this task.
-    const rows = all.filter((f) => f && (f.branch || f.pr)).flatMap(sectionRows);
-    return [...rows, ...otherPrs(this.prs ?? [], [...(this.facts ? rowsOf(this.facts) : []), ...rows])];
+    const own = this.facts ? rowsOf(this.facts) : [];
+    const rows = oneTicketEach(all.filter((f) => f && (f.branch || f.pr)).flatMap(sectionRows), own);
+    return [...rows, ...otherPrs(this.prs ?? [], [...own, ...rows])];
   }
 
   open(link) {

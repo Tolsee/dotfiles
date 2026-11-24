@@ -35,7 +35,7 @@ const src = readFileSync(join(here, "../mods/task-links/main.js"), "utf8")
   .replace('from "gpui-kit"', 'from "./ui.mjs"').replace('from "gpui-base"', 'from "./ui.mjs"')
   .replace('from "herdr"', 'from "./herdr.mjs"');
 writeFileSync(join(dir, "main.mjs"), src);
-const { default: TaskLinks, rowsOf, taskLinks, sessionDirs, sectionRows, otherPrs } = await import(pathToFileURL(join(dir, "main.mjs")));
+const { default: TaskLinks, rowsOf, taskLinks, sessionDirs, sectionRows, otherPrs, oneTicketEach } = await import(pathToFileURL(join(dir, "main.mjs")));
 const { state } = await import(pathToFileURL(join(dir, "herdr.mjs")));
 
 const PR = {
@@ -173,14 +173,24 @@ test("sessionDirs: the space's agents and the helpers they started, a claude -w 
   assert.deepEqual(sessionDirs("s1", ag, terms), ["/w/task@5", "/r/mono/.claude/worktrees/dev-1-x@7", "/r/mesh/.claude/worktrees/dev-2@8"]);
 });
 
-test("sections: a checkout's PR rows under its branch, else its branch; PRs no row shows go last", () => {
+test("sections: a checkout's ticket and PR rows under its branch, else its branch; PRs no row shows go last", () => {
   const withPr = { cwd: "/a", branch: "dev-1-x", pr: PR, links: [
     { kind: "ticket", url: "t" }, { kind: "pr", url: PR.url }, { kind: "failing", url: "f" }, { kind: "checks", url: "c" }, { kind: "files", url: "x" }] };
-  assert.deepEqual(sectionRows(withPr).map((l) => [l.kind, l.group]), [["pr", "dev-1-x"], ["failing", "dev-1-x"], ["checks", "dev-1-x"]]);
+  assert.deepEqual(sectionRows(withPr).map((l) => [l.kind, l.group]), [["ticket", "dev-1-x"], ["pr", "dev-1-x"], ["failing", "dev-1-x"], ["checks", "dev-1-x"]]);
   const bare = { cwd: "/b", branch: "dev-2", pr: null, links: [{ kind: "branch", url: "b" }, { kind: "compare", url: "c" }, { kind: "files", url: "f" }] };
   assert.deepEqual(sectionRows(bare).map((l) => l.kind), ["branch", "compare"]);
   const prs = [{ url: PR.url, number: 7, repo: "o/r" }, { url: "https://github.com/o/r/pull/9", number: 9, repo: "o/r" }];
   assert.deepEqual(otherPrs(prs, sectionRows(withPr)).map((l) => [l.kind, l.label, l.group]), [["pr-link", "#9", "Other PRs"]]);
+});
+
+test("sections: a ticket the task or an earlier child already shows gets no second row", () => {
+  const rows = [
+    { kind: "ticket", url: "own", group: "a" }, { kind: "pr", url: "p1", group: "a" },
+    { kind: "ticket", url: "sub", group: "b" }, { kind: "branch", url: "b", group: "b" },
+    { kind: "ticket", url: "sub", group: "c" }, { kind: "branch", url: "c", group: "c" },
+  ];
+  assert.deepEqual(oneTicketEach(rows, [{ kind: "ticket", url: "own" }]).map((l) => `${l.kind}:${l.group}`),
+    ["pr:a", "ticket:b", "branch:b", "branch:c"]);
 });
 
 test("a PR the fresh lookup finds for the focused checkout leaves Other PRs", async () => {
