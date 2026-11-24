@@ -20,7 +20,7 @@
     "cmd-,": "app.settings",
     "cmd-d": "pane.split:right",
     "cmd-shift-d": "pane.split:down",
-    "cmd-shift-w": "pane.close",
+    "cmd-shift-w": "mod.open:pane-close",
     "cmd-shift-enter": "pane.zoom",
     "cmd-alt-left": "pane.go:left",
     "cmd-alt-right": "pane.go:right",
@@ -101,7 +101,7 @@
     "ctrl-b %": "pane.split:right",
     "ctrl-b -": "pane.split:down",
     "ctrl-b \"": "pane.split:down",
-    "ctrl-b x": "pane.close",
+    "ctrl-b x": "mod.open:pane-close",
     "ctrl-b z": "pane.zoom",
     "ctrl-b a": "agent.next",
     "ctrl-b shift-a": "agent.prev"
