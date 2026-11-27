@@ -203,3 +203,12 @@ test("a PR the fresh lookup finds for the focused checkout leaves Other PRs", as
   m.show(null, await m.sections([], true));
   assert.deepEqual(m.links.map((l) => l.kind), ["pr"]);
 });
+
+test("otherPrs: merged and closed PRs drop out, open ones carry their state", () => {
+  const prs = [1, 2, 3, 4].map((n) => ({ number: n, url: `u${n}`, repo: "o/r" }));
+  const states = { u1: { state: "MERGED" }, u2: { state: "CLOSED" }, u3: { state: "OPEN", reviewDecision: "APPROVED" } };
+  const out = otherPrs(prs, [], states);
+  assert.deepEqual(out.map((l) => l.label), ["#3", "#4"]);
+  assert.equal(out[0].pr.reviewDecision, "APPROVED");
+  assert.equal(out[1].pr, undefined);
+});
