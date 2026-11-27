@@ -9,7 +9,7 @@ Reach a shared understanding of the problem and scope before touching code, reco
 
 ## 1. Read
 
-Read the ticket, its comments, linked PRs and its project (Linear MCP). A free-text task has no ticket: what the user typed is the ticket. Look up facts in the repository with `Explore`, and long Linear or PR histories with `fetcher` (Model routing in `~/.claude/CLAUDE.md`); a question the code or the tracker can answer is never asked of the user.
+Read the ticket, its comments, linked PRs, its parent and its project (Linear MCP). A ticket with no parent whose siblings sit under an existing ticket gets that parent (`save_issue` with `parentId`). A free-text task has no ticket: what the user typed is the ticket. Look up facts in the repository with `Explore`, and long Linear or PR histories with `fetcher` (Model routing in `~/.claude/CLAUDE.md`); a question the code or the tracker can answer is never asked of the user.
 
 Done when you can state in one line who hurts, what should change, and what already exists for it.
 
@@ -41,7 +41,7 @@ Done when the four items are settled or the user said enough.
 
 Rewrite the ticket description (Linear MCP `save_issue`), no longer than it was: Problem, Decisions, Out of scope, Acceptance checks. Sharpen the title when it misnames the work. Deep questions you deferred go under "Open", one line each. No local spec file.
 
-No ticket yet (free-text task): ask through the picker whether to create one, recommending the team this repository's recent tickets belong to (Linear MCP `list_issues` by branch or project name; ask when none). On yes, `save_issue` with the title and the same four sections, then run `herdr-task tag <ticket url> --title "<title>"` so the workspace, the sidebar and the branch carry the ticket. On no, carry on untagged.
+No ticket yet (free-text task): ask through the picker whether to create one, recommending the team this repository's recent tickets belong to (Linear MCP `list_issues` by branch or project name; ask when none). On yes, `save_issue` with the title, the same four sections and `parentId` set to the ticket the work belongs to (see Git in AGENTS.md), then run `herdr-task tag <ticket url> --title "<title>"` so the workspace, the sidebar and the branch carry the ticket. On no, carry on untagged.
 
 ## 5. Plan and gate
 
