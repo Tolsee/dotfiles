@@ -9,9 +9,12 @@
 
 import { View, div, svg } from "gpui-kit";
 import { h_flex } from "gpui-base";
-import { spaces, agents, panes, focused, theme, run, exec, openOverlay, nextCommand, window } from "herdr";
+import { spaces, agents, panes, focused, theme, run, exec, openOverlay, nextCommand, window, shared, setShared } from "herdr";
 
 const LINEAR = "#7a88cf"; // the TUI sidebar's ticket color
+// GitHub's own PR colors (dark theme): open green, draft gray, merged purple, closed red.
+export const PR_COLORS = { open: "#3fb950", draft: "#8b949e", merged: "#a371f7", closed: "#f85149" };
+export const prColor = (pr) => PR_COLORS[pr.state === "MERGED" ? "merged" : pr.state === "CLOSED" ? "closed" : pr.isDraft ? "draft" : "open"];
 const REFRESH = 20000; // herdr-status interval
 const HISTORY = 16; // panes remembered for last pane
 const icon = (name) => svg(`mods/workspace-chrome/${name}.svg`).size(13);
@@ -27,6 +30,9 @@ async function taskLinks(cwd, on, args) {
 
 export default class TaskStatus extends View {
   init(_props, cx) {
+    // The tab bar's Files and Changes buttons come from shared "workspace.panels" (both when
+    // unset, and the welcome saves both). This layout does not use them: switch them off.
+    if ((shared("workspace.panels") ?? ["files", "changes"]).length) setShared("workspace.panels", []);
     this.key = null; // [cwd, machine, branch] the facts below belong to
     this.ticket = null; // { id, url }
     this.pr = null; // gh pr view JSON
@@ -141,9 +147,8 @@ export default class TaskStatus extends View {
         .child(svg("mods/task-status/linear.svg").size(13)), this.ticket.url));
     }
     if (pr) {
-      // The icon's color is the PR's state; the tooltip has its number and state.
-      const tint = { merged: t.done, closed: t.blocked, draft: t.dim }[prState];
-      parts.push(link("pr", h_flex().gap(6).items_center().when(Boolean(tint), (e) => e.text_color(tint))
+      // The icon's color is GitHub's for the PR's state; the tooltip has its number and state.
+      parts.push(link("pr", h_flex().gap(6).items_center().text_color(prColor(pr))
         .tooltip(`#${pr.number}${prState ? ` ${prState}` : ""}`).child(icon("git-compare")), pr.url));
     }
     if (review) {

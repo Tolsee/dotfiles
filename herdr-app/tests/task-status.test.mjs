@@ -52,7 +52,7 @@ const src = readFileSync(join(here, "../mods/task-status/main.js"), "utf8")
   .replace('from "gpui-kit"', 'from "./ui.mjs"').replace('from "gpui-base"', 'from "./ui.mjs"')
   .replace('from "herdr"', 'from "./herdr.mjs"');
 writeFileSync(join(dir, "main.mjs"), src);
-const { default: TaskStatus } = await import(pathToFileURL(join(dir, "main.mjs")));
+const { default: TaskStatus, prColor, PR_COLORS } = await import(pathToFileURL(join(dir, "main.mjs")));
 const { state } = await import(pathToFileURL(join(dir, "herdr.mjs")));
 
 const cx = { notify() {}, spawn(f) { this.task = f(cx); }, timer: { every() {} } };
@@ -248,4 +248,21 @@ test("a command that throws does not stop the command loop", async () => {
     state.spaces = [];
     state.calls = [];
   }
+});
+
+test("the PR icon takes GitHub's color for its state", () => {
+  assert.equal(prColor({ state: "OPEN" }), PR_COLORS.open);
+  assert.equal(prColor({ state: "OPEN", isDraft: true }), PR_COLORS.draft);
+  assert.equal(prColor({ state: "MERGED" }), PR_COLORS.merged);
+  assert.equal(prColor({ state: "CLOSED", isDraft: true }), PR_COLORS.closed);
+  assert.deepEqual(PR_COLORS, { open: "#3fb950", draft: "#8b949e", merged: "#a371f7", closed: "#f85149" });
+});
+
+test("the tab bar's Files and Changes buttons are switched off, set or not", () => {
+  for (const before of [undefined, ["files", "changes"], ["files"]]) {
+    state.shared = before === undefined ? {} : { "workspace.panels": before };
+    fresh();
+    assert.deepEqual(state.shared["workspace.panels"], []);
+  }
+  state.shared = {};
 });
