@@ -13,7 +13,19 @@ cwd=$(printf '%s' "$input" | jq -r '.cwd // empty')
 marker="${TMPDIR:-/tmp}/pr-watch-$sid"
 [ -e "$marker" ] && exit 0
 grep -q 'gh pr create' "$transcript" || exit 0
-grep -qE 'babysit-pr|steward|ship-local|gh pr checks[^"]*--watch|gh event listen|ScheduleWakeup' "$transcript" && exit 0
+# A watcher is a tool call that starts one (the babysit skills, a wakeup, a monitor, gh's own
+# watch) or the user's typed slash command, never a mention of one. grep narrows the lines first.
+if grep -E 'babysit-pr|steward|ship|ScheduleWakeup|Monitor|CronCreate|--watch|gh event listen' "$transcript" 2>/dev/null | jq -s -e '
+    def tools: (.message.content? // []) | if type == "array" then . else [] end;
+    def text: (.message.content? // "") | if type == "string" then . else "" end;
+    any(.[];
+        (tools | any(.[]; .type == "tool_use" and (
+            (.name | IN("ScheduleWakeup", "Monitor", "CronCreate"))
+            or (.name == "Skill" and ((.input.skill // "") | test("babysit-pr|steward|ship")))
+            or (.name == "Bash" and ((.input.command // "") | test("gh pr checks.*--watch|gh event listen"))))))
+        or (text | test("<command-name>/?(babysit-pr|steward|ship)")))' >/dev/null 2>&1; then
+    exit 0
+fi
 pr=$("$HOME/bin/herdr-task" pr --cwd "$cwd" --max-age -1 2>/dev/null) || exit 0
 [ "$(printf '%s' "$pr" | jq -r '.state // empty' 2>/dev/null)" = OPEN ] || exit 0
 num=$(printf '%s' "$pr" | jq -r '.number')
