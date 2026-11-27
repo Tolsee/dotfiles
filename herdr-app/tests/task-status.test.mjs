@@ -75,7 +75,10 @@ test("blocked agents, ticket, PR, review and CI, joined like the TUI", () => {
   m.checks = { kind: "checks", ci: "fail", url: "https://github.com/o/r/pull/7/checks" };
   const tree = m.render();
   const out = texts(tree);
-  assert.deepEqual(out.slice(0, -1), ["2 blocked", "·", "ABC-12", "·", "#7 draft", "·", "approved", "·", "CI", "·"]);
+  // Ticket, PR, review and CI are icons (no text): the tooltip says what they are, the id finds them.
+  assert.deepEqual(out.slice(0, -1), ["2 blocked", "·", "·", "·", "·", "·"]);
+  assert.ok(find(tree, "ticket") && find(tree, "pr") && find(tree, "review") && find(tree, "ci"));
+  assert.ok(!out.includes("approved") && !out.includes("CI") && !out.includes("ABC-12"));
   find(tree, "ticket")._click();
   find(tree, "ci")._click();
   assert.deepEqual(state.calls.filter((c) => c[0] === "exec").map((c) => c[2][0]),
@@ -103,9 +106,9 @@ test("ticket, PR and CI come from herdr-task links on the space's machine, cache
   ]);
   assert.deepEqual(m.ticket, { id: "ABC-12", url: "https://l/ABC-12", title: "" });
   const tree = m.render();
-  assert.ok(texts(tree).includes("#9 merged"));
+  assert.ok(find(tree, "pr"));
   assert.equal(m.checks.ci, "pass", "CI is the links answer's checks row");
-  assert.ok(texts(tree).includes("CI"));
+  assert.ok(find(tree, "ci"));
   state.calls = [];
   find(tree, "ci")._click();
   assert.deepEqual(state.calls.map((c) => c[2][0]), ["u/checks"]);
@@ -121,7 +124,7 @@ test("no CI badge without a checks row", () => {
   const m = fresh();
   m.pr = { number: 7, url: "u", state: "OPEN" };
   m.checks = null;
-  assert.ok(!texts(m.render()).includes("CI"));
+  assert.ok(!find(m.render(), "ci"));
 });
 
 test("worktree keys open the app's worktree dialog for the focused space and folder", () => {
