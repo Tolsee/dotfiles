@@ -160,7 +160,8 @@ and the TUI keeps working as before. Pick the **Tasks** layout (Settings, or
 | Tab row, `herdr-status` and the time on its right | Tab row, the `task-status` mod on its right: blocked agents, Linear ticket, PR, review, CI, time. Ticket, PR and CI are clickable |
 | TokyoNight Moon, `#82aaff` accent, flat bordered panes, no gaps | `themes/tokyo-night-moon.json`, the same colors, 1px borders, no gaps, JetBrains Mono 14 like Ghostty |
 
-**Keys:** `herdr-app/keys.json` keeps the app's own Cmd shortcuts and adds the TUI keys as
+**Keys:** `herdr-app/keys.json` keeps only the Mac basics as Cmd shortcuts (quit, hide, new space,
+settings, font zoom, and copy, paste and search in a terminal) and has every other action on the TUI's
 `Ctrl+B` sequences: `ctrl-b c` new tab, `ctrl-b h/j/k/l` move between panes, `ctrl-b v`/`-` split,
 `ctrl-b z` zoom, `ctrl-b w` picker, `ctrl-b a` next agent, `ctrl-b ( )` spaces, and the rest.
 `ctrl-b ctrl-b` sends Ctrl+B to the program. Press the second key within a second (the app's

@@ -1,4 +1,4 @@
-// The close-or-hide mod (prefix+x, cmd+shift+w): a child session's pane is hidden, any other closed.
+// The close-or-hide mod (prefix+x): a child session's pane is hidden, any other closed.
 // Run: node --test herdr-app/tests/close-or-hide.test.mjs
 import { test } from "node:test";
 import assert from "node:assert/strict";

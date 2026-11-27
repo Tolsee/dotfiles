@@ -1,4 +1,4 @@
-// prefix+x and cmd+shift+w (keys.json "mod.open:close-or-hide"): close the focused pane, except a
+// prefix+x (keys.json "mod.open:close-or-hide"): close the focused pane, except a
 // child session's (a terminal another started with hc), which is hidden instead: its pane goes
 // away and it keeps running under its parent (terminal.park), as the Tasks sidebar's click does.
 // (The app's pane.close would end it.) Acts at once and closes itself; nothing to see.
