@@ -52,7 +52,7 @@ const src = readFileSync(join(here, "../mods/task-status/main.js"), "utf8")
   .replace('from "gpui-kit"', 'from "./ui.mjs"').replace('from "gpui-base"', 'from "./ui.mjs"')
   .replace('from "herdr"', 'from "./herdr.mjs"');
 writeFileSync(join(dir, "main.mjs"), src);
-const { default: TaskStatus, prColor, PR_COLORS } = await import(pathToFileURL(join(dir, "main.mjs")));
+const { default: TaskStatus, prColor, PR_COLORS, prAge } = await import(pathToFileURL(join(dir, "main.mjs")));
 const { state } = await import(pathToFileURL(join(dir, "herdr.mjs")));
 
 const cx = { notify() {}, spawn(f) { this.task = f(cx); }, timer: { every() {} } };
@@ -265,4 +265,13 @@ test("the tab bar's Files and Changes buttons are switched off, set or not", () 
     assert.deepEqual(state.shared["workspace.panels"], []);
   }
   state.shared = {};
+});
+
+test("prAge: how old the PR answer is, in the status bar's short form", () => {
+  const now = 1_000_000_000_000;
+  const at = (secs) => now / 1000 - secs;
+  assert.equal(prAge(at(30), now), "now");
+  assert.equal(prAge(at(120), now), "2m");
+  assert.equal(prAge(at(7200), now), "2h");
+  assert.equal(prAge(at(3 * 86400), now), "3d");
 });
