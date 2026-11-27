@@ -136,19 +136,23 @@ export default class TaskStatus extends View {
         .child(div().size(6).rounded(3).bg(t.blocked)).child(`${blocked} blocked`));
     }
     if (this.ticket) {
-      parts.push(link("ticket", h_flex().gap(6).items_center().text_color(LINEAR)
-        .child(svg("mods/task-status/linear.svg").size(12)).child(this.ticket.id), this.ticket.url));
+      // Links are icons; the tooltip has the ticket id.
+      parts.push(link("ticket", h_flex().gap(6).items_center().text_color(LINEAR).tooltip(this.ticket.id)
+        .child(svg("mods/task-status/linear.svg").size(13)), this.ticket.url));
     }
     if (pr) {
-      parts.push(link("pr", h_flex().gap(6).items_center()
-        .child(icon("git-compare")).child(`#${pr.number}${prState ? ` ${prState}` : ""}`), pr.url));
+      // The icon's color is the PR's state; the tooltip has its number and state.
+      const tint = { merged: t.done, closed: t.blocked, draft: t.dim }[prState];
+      parts.push(link("pr", h_flex().gap(6).items_center().when(Boolean(tint), (e) => e.text_color(tint))
+        .tooltip(`#${pr.number}${prState ? ` ${prState}` : ""}`).child(icon("git-compare")), pr.url));
     }
     if (review) {
-      parts.push(h_flex().gap(6).items_center().text_color(review[2]).child(icon(review[0])).child(review[1]));
+      // An icon, not its word: the tooltip says it.
+      parts.push(h_flex().id("review").gap(6).items_center().text_color(review[2]).tooltip(`Review: ${review[1]}`).child(icon(review[0])));
     }
     const badge = ci && { pass: ["check", t.done], fail: ["x", t.blocked], pending: ["clock", t.working ?? t.muted] }[ci];
     if (badge) {
-      parts.push(link("ci", h_flex().gap(6).items_center().text_color(badge[1]).child(icon(badge[0])).child("CI"), this.checks.url ?? `${pr.url}/checks`));
+      parts.push(link("ci", h_flex().gap(6).items_center().text_color(badge[1]).tooltip("CI checks").child(icon(badge[0])), this.checks.url ?? `${pr.url}/checks`));
     }
     const time = (this.clock = clockText());
     // Separators between the parts, then the clock, as the TUI's " · " joins its segments.

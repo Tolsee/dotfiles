@@ -148,6 +148,7 @@ export default class TaskList extends View {
     this.streams = shared(CACHE) ?? {};
     this.scroll = ScrollHandle.new();
     this.pressed = null; // space id being dragged
+    this.folded = new Set(); // stream names folded to their header
     this.over = null; // stream name under the pointer while dragging
     this.jump = 0;
     this.asked = "";
@@ -276,13 +277,23 @@ export default class TaskList extends View {
     cx.notify();
   }
 
-  header(name, t) {
+  // A click on a header (no drag going on) folds its stream to the header and a count; a drop
+  // on it still files the dragged task there.
+  header(name, t, count) {
     const target = this.pressed !== null && this.over === name;
-    return div().id(`stream-${name || "none"}`).px(10).pt(12).pb(4).truncate().text_size(11.5).font_semibold()
+    const folded = this.folded.has(name);
+    return h_flex().id(`stream-${name || "none"}`).px(10).pt(12).pb(4).gap(5).items_center().text_size(11.5).font_semibold()
+      .cursor_pointer()
       .text_color(target ? t.accent : t.muted)
       .on_mouse_move((_e, cx) => { if (this.pressed !== null && this.over !== name) { this.over = name; cx.notify(); } })
-      .on_mouse_up("left", (_e, cx) => this.drop(name, null, cx))
-      .child(name || "No stream yet");
+      .on_mouse_up("left", (_e, cx) => {
+        if (this.pressed !== null) return this.drop(name, null, cx);
+        if (folded) this.folded.delete(name); else this.folded.add(name);
+        cx.notify();
+      })
+      .child(svg(`mods/workspace-chrome/${folded ? "chevron-right" : "chevron-down"}.svg`).size(11).flex_none())
+      .child(div().flex_1().min_w(0).truncate().child(name || "No stream yet"))
+      .when(folded, (el) => el.child(div().flex_none().text_size(10.5).font_normal().text_color(t.dim).child(String(count))));
   }
 
   render(cx) {
@@ -306,7 +317,7 @@ export default class TaskList extends View {
         .child(div().text_size(10.5).font_normal().text_color(t.dim).child("jump"))))
       .child(v_flex().flex_1().min_h(0).px(8).pb(14).overflow_y_scrollbar().track_scroll(this.scroll)
         .on_mouse_up("left", (_e, cx) => { this.pressed = null; this.over = null; cx.notify(); })
-        .children(list.flatMap((g) => [...(g.name === null ? [] : [this.header(g.name, t)]), ...g.tasks.map((k) => this.row(k, k.stream, t))]))
+        .children(list.flatMap((g) => [...(g.name === null ? [] : [this.header(g.name, t, g.tasks.length)]), ...(g.name !== null && this.folded.has(g.name) ? [] : g.tasks.map((k) => this.row(k, k.stream, t)))]))
         .when(dragging, (el) => el.child(div().id("stream-new").mt(10).mx(2).px(10).py(8).rounded(7).border_1()
           .border_color(this.over === NEW ? t.accent : t.border).text_size(11.5).text_color(t.dim)
           .on_mouse_move((_e, cx) => { if (this.over !== NEW) { this.over = NEW; cx.notify(); } })
