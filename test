@@ -9,6 +9,7 @@
 #   mcps    ai/mcps installer tests
 #   app     the Herdr app's mods, installer and check-keys against stand-ins (herdr-app/tests)
 #   claude  agent files pin a model and can't spawn; jev-model-router policy (ai/claude/tests)
+#   knip    unused files, exports and dependencies in the JS and TS (knip.json; npm ci first)
 #
 # A check whose tool is missing (fzf, node, tomlkit, ...) is skipped; TEST_STRICT=1 (CI) makes
 # a skip a failure.
@@ -118,7 +119,12 @@ check_claude() {
     node --test --experimental-strip-types --disable-warning=ExperimentalWarning ai/claude/tests/*.test.ts
 }
 
-all=(lint config herdr fzf aws mcps app claude)
+check_knip() {
+    [[ -x node_modules/.bin/knip ]] || { skip knip "run npm ci first"; return 0; }
+    node_modules/.bin/knip
+}
+
+all=(lint config herdr fzf aws mcps app claude knip)
 selected=("$@")
 [[ ${#selected[@]} -gt 0 ]] || selected=("${all[@]}")
 for name in "${selected[@]}"; do

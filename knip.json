@@ -1,0 +1,12 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": [
+    "herdr-app/mods/*/main.js",
+    "herdr-app/tests/*.test.mjs",
+    "ai/claude/tests/*.test.ts",
+    "ai/claude/skills/jev-model-router/hooks/jev-model-router.ts",
+    "ai/codex/review/stable-execpath.mjs"
+  ],
+  "project": ["herdr-app/**/*.{js,mjs}", "ai/**/*.{ts,mjs}"],
+  "ignoreDependencies": ["herdr", "gpui-kit", "gpui-base", "claude-code"]
+}

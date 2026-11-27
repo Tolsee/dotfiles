@@ -28,6 +28,8 @@ jobs:
           curl -fsSL https://github.com/junegunn/fzf/releases/download/v0.67.0/fzf-0.67.0-linux_amd64.tar.gz \
             | sudo tar -xz -C /usr/local/bin fzf
           python -m pip install -q 'tomlkit>=0.13,<1'
+      - name: Install knip
+        run: npm ci --no-fund --no-audit
       - name: ./test
         id: test
         shell: bash
