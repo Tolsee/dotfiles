@@ -925,11 +925,15 @@ pr_get() {
     err="$file.$$.err"
     if out=$(cd "$top" && GH_NO_UPDATE_NOTIFIER=1 gh pr view --json "$pr_fields" 2>"$err"); then
         printf '%s\n' "$out" > "$file.$$" && mv -f "$file.$$" "$file"
+        rm -f "$file.error"
         printf '%s\n' "$out"
     elif grep -qi 'no pull requests found' "$err" 2>/dev/null; then
         : > "$file.$$" && mv -f "$file.$$" "$file"
-    elif [[ -f "$file" ]]; then
-        cat "$file"
+        rm -f "$file.error"
+    else
+        # For the status bar: the cached answer stays, its age shows, and the error says why it is old.
+        head -n1 "$err" > "$file.error" 2>/dev/null
+        [[ -f "$file" ]] && cat "$file"
     fi
     rm -f "$err"
 }
@@ -998,7 +1002,7 @@ def latest: group_by([.workflowName, .name, .context] | map(. // "") | join("\u0
 # picker's "label<TAB>url" lines instead, each url once.
 cmd_links() {
     local cwd=$PWD max=-1 status=true fzf=false tokens="{}" top branch remote head base slug="" dirty=0 pr=""
-    local ticket_id="" ticket_url="" ticket_title="" ticket_guessed=false facts
+    local ticket_id="" ticket_url="" ticket_title="" ticket_guessed=false facts pr_file pr_updated="" pr_error=""
     while [[ $# -gt 0 ]]; do
         case $1 in
             --cwd) cwd=$2; shift 2 ;;
@@ -1023,19 +1027,25 @@ cmd_links() {
             branch_ticket "$top" "$branch"
             [[ -z "$ticket_id" || -n "$ticket_url" ]] || ticket_url="https://linear.app/issue/$ticket_id"
             pr=$(pr_get "$top" "$branch" "$max")
+            pr_file=$(pr_cache_file "$top" "$branch")
+            [[ -f "$pr_file" ]] && pr_updated=$(stat -c %Y "$pr_file" 2>/dev/null || stat -f %m "$pr_file" 2>/dev/null || true)
+            [[ -f "$pr_file.error" ]] && pr_error=$(cat "$pr_file.error")
         fi
     else
         top="" branch="" base=""
     fi
     facts=$(jq -n --arg cwd "$cwd" --arg top "$top" --arg branch "$branch" --arg base "$base" --arg slug "$slug" \
         --argjson dirty "${dirty:-0}" --arg id "$ticket_id" --arg url "$ticket_url" --arg title "$ticket_title" \
-        --arg pr "$pr" --argjson guessed "$ticket_guessed" --argjson tokens "$tokens" '
+        --arg pr "$pr" --argjson guessed "$ticket_guessed" --argjson tokens "$tokens" \
+        --arg pr_updated "$pr_updated" --arg pr_error "$pr_error" '
         def opt: if . == "" then null else . end;
         {cwd: $cwd, top: ($top | opt), branch: ($branch | opt), base: ($base | opt), slug: ($slug | opt), dirty: $dirty,
          ticket: (if (($id == "" or $guessed) and ($tokens.linear_url // "") != "") then
                     {id: ($tokens.linear_id // "ticket"), url: $tokens.linear_url, title: ($tokens.linear_title // "")}
                   elif $id == "" then null else {id: $id, url: $url, title: $title} end),
-         pr: (if $pr == "" then null else ($pr | fromjson? // null) end)}' | jq -c "$links_jq")
+         pr: (if $pr == "" then null else ($pr | fromjson? // null) end),
+         pr_updated: (if $pr_updated == "" then null else ($pr_updated | tonumber) end),
+         pr_error: ($pr_error | opt)}' | jq -c "$links_jq")
     if [[ "$fzf" != true ]]; then
         printf '%s\n' "$facts"
         return

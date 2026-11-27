@@ -11,7 +11,7 @@
  */
 
 export type Model = 'haiku' | 'sonnet' | 'opus'
-export type Tier = 'mechanical' | 'ordinary' | 'deep'
+type Tier = 'mechanical' | 'ordinary' | 'deep'
 
 /**
  * Agent types whose definition fixes the model: ai/claude/agents/*.md plus the
@@ -33,7 +33,7 @@ export const PINNED: Readonly<Record<string, Model>> = {
 export const JUDGED: ReadonlySet<string> = new Set(['general-purpose', 'claude', 'Plan'])
 
 /** A brief whose description starts with this runs on Opus, no questions asked. */
-export const OPUS_TAG = /^\s*\[opus\]/i
+const OPUS_TAG = /^\s*\[opus\]/i
 
 const TIER_MODEL: Record<Tier, Model> = { mechanical: 'haiku', ordinary: 'sonnet', deep: 'sonnet' }
 

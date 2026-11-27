@@ -14,6 +14,11 @@ import { spaces, agents, panes, focused, theme, run, exec, openOverlay, nextComm
 const LINEAR = "#7a88cf"; // the TUI sidebar's ticket color
 // GitHub's own PR colors (dark theme): open green, draft gray, merged purple, closed red.
 export const PR_COLORS = { open: "#3fb950", draft: "#8b949e", merged: "#a371f7", closed: "#f85149" };
+// How old the PR answer is, for the status bar: "now" under a minute, else "5m", "2h", "3d".
+export const prAge = (updated, now = Date.now()) => {
+  const s = Math.max(0, Math.floor(now / 1000 - updated));
+  return s < 60 ? "now" : s < 3600 ? `${Math.floor(s / 60)}m` : s < 86400 ? `${Math.floor(s / 3600)}h` : `${Math.floor(s / 86400)}d`;
+};
 export const prColor = (pr) => PR_COLORS[pr.state === "MERGED" ? "merged" : pr.state === "CLOSED" ? "closed" : pr.isDraft ? "draft" : "open"];
 const REFRESH = 20000; // herdr-status interval
 const HISTORY = 16; // panes remembered for last pane
@@ -96,6 +101,8 @@ export default class TaskStatus extends View {
     if (key !== this.key) return; // the focus moved on while this ran
     this.ticket = facts?.ticket ?? null;
     this.pr = facts?.pr ?? null;
+    this.updated = facts?.pr_updated ?? null; // epoch seconds the PR answer was fetched
+    this.prError = facts?.pr_error ?? null; // why the last refresh failed, the answer above is older
     this.checks = facts?.links?.find((l) => l.kind === "checks") ?? null;
   }
 
@@ -158,6 +165,13 @@ export default class TaskStatus extends View {
     const badge = ci && { pass: ["check", t.done], fail: ["x", t.blocked], pending: ["clock", t.working ?? t.muted] }[ci];
     if (badge) {
       parts.push(link("ci", h_flex().gap(6).items_center().text_color(badge[1]).tooltip("CI checks").child(icon(badge[0])), this.checks.url ?? `${pr.url}/checks`));
+    }
+    if (pr && this.updated) {
+      // How old the PR answer is; red when the last refresh failed, with the reason on hover.
+      const age = prAge(this.updated);
+      parts.push(this.prError
+        ? h_flex().id("pr-age").gap(4).items_center().text_color(t.blocked).tooltip(`Refresh failed, showing ${age} old: ${this.prError}`).child(icon("x")).child(age)
+        : div().id("pr-age").text_color(t.dim).tooltip("When GitHub's PR answer was last fetched").child(age));
     }
     const time = (this.clock = clockText());
     // Separators between the parts, then the clock, as the TUI's " · " joins its segments.

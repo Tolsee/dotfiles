@@ -10,7 +10,8 @@ hosting terminal. Herdr owns notifications; keep additional agent sound hooks of
 
 ## Task loop
 
-One task, one worktree workspace, one agent. `prefix` is Ctrl+B.
+One task, one worktree workspace, one agent. `prefix` is Ctrl+B. The loop is shared with the app
+and Rex: see [`docs/workflow.md`](../docs/workflow.md).
 
 | Key | Action |
 | --- | --- |

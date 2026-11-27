@@ -26,7 +26,7 @@ Prefix `ctrl+b`, the same letters as Herdr (`herdr/.config/herdr/config.toml`).
 
 ## Tasks
 
-`bin/rex-task` shares `herdr-task`'s conventions: the ticket is saved on its branch
+The loop is shared with Herdr: see [`docs/workflow.md`](../docs/workflow.md). `bin/rex-task` shares `herdr-task`'s conventions: the ticket is saved on its branch
 (`git config branch.<b>.linear-*`) and worktrees go to `~/.herdr/worktrees`, so a task started
 in either tool opens in the other. Switching the app to a new session needs Settings > Server >
 Client Info > Remote Control; without it the session is created and `prefix+w` lists it.
