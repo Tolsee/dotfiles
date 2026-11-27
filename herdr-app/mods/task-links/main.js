@@ -79,11 +79,12 @@ export function oneTicketEach(rows, shown = []) {
   return rows.filter((l) => l.kind !== "ticket" || (!seen.has(l.url) && seen.add(l.url)));
 }
 
-// PRs the sessions opened that no row shows yet.
-export function otherPrs(prs, rows) {
+// PRs the sessions opened that no row shows yet. `states` maps a PR url to gh's answer: merged
+// and closed PRs are history and drop out, the rest carry their state for the badges.
+export function otherPrs(prs, rows, states = {}) {
   const shown = new Set(rows.filter((l) => l.kind === "pr").map((l) => l.url));
-  return prs.filter((p) => p.url && !shown.has(p.url))
-    .map((p) => ({ kind: "pr-link", label: `#${p.number}`, detail: p.repo ?? "", url: p.url, group: "Other PRs" }));
+  return prs.filter((p) => p.url && !shown.has(p.url) && !["MERGED", "CLOSED"].includes(states[p.url]?.state))
+    .map((p) => ({ kind: "pr-link", label: `#${p.number}`, detail: p.repo ?? "", url: p.url, pr: states[p.url], group: "Other PRs" }));
 }
 
 export default class TaskLinks extends View {
@@ -93,6 +94,7 @@ export default class TaskLinks extends View {
     cx.timer.after(600, () => this.handle.focus());
     this.at = 0;
     this.links = [];
+    this.states = {};
     this.loading = true;
     this.error = null;
     this.reload(cx);
@@ -173,7 +175,19 @@ export default class TaskLinks extends View {
     // A checkout on its default branch with no PR is not work of this task.
     const own = this.facts ? rowsOf(this.facts) : [];
     const rows = oneTicketEach(all.filter((f) => f && (f.branch || f.pr)).flatMap(sectionRows), own);
-    return [...rows, ...otherPrs(this.prs ?? [], [...own, ...rows])];
+    if (fresh) await this.prStates(this.prs ?? []);
+    return [...rows, ...otherPrs(this.prs ?? [], [...own, ...rows], this.states)];
+  }
+
+  // State and review of each listed PR, one gh call each, once per popup.
+  async prStates(prs) {
+    this.states ??= {};
+    await Promise.all(prs.filter((p) => p.url && !this.states[p.url]).map(async (p) => {
+      try {
+        const r = await exec("gh", ["pr", "view", p.url, "--json", "state,isDraft,reviewDecision"]);
+        if (r.code === 0) this.states[p.url] = JSON.parse(r.stdout);
+      } catch {}
+    }));
   }
 
   open(link) {
@@ -221,7 +235,7 @@ export default class TaskLinks extends View {
   badges(t, link) {
     const out = [];
     const tag = (text, color) => div().px(6).py(1).rounded(4).border_1().border_color(color).text_size(10.5).text_color(color).child(text);
-    if (link.kind === "pr") {
+    if ((link.kind === "pr" || link.kind === "pr-link") && link.pr) {
       const pr = link.pr;
       const state = pr.state === "MERGED" ? ["merged", t.ansi5] : pr.state === "CLOSED" ? ["closed", t.dim] : pr.isDraft ? ["draft", t.dim] : ["open", t.done];
       out.push(tag(...state));
